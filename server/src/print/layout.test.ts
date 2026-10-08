@@ -1,5 +1,5 @@
 import { PDFDocument, rgb } from '@cantoo/pdf-lib';
-import { PAYMENT_SCREENSHOT_CAP, type Line, type Material } from '@baox/contract';
+import { type Line, type Material } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { pdfContent } from './compose';
 import { A4, CONTINUATION_CELLS, HEADER_BOX, droppedMaterialsNotice, extraPagesNotice, planPages } from './layout';
@@ -73,8 +73,8 @@ describe('the notices for what the sheet could not carry', () => {
 });
 
 describe('the 支付截图 continuation page (#333)', () => {
-  it('has a cell for every screenshot a group may hold, three to a row in reading order, inside the page', () => {
-    expect(CONTINUATION_CELLS).toHaveLength(PAYMENT_SCREENSHOT_CAP);
+  it('is a grid of six cells, three to a row in reading order, inside the page', () => {
+    expect(CONTINUATION_CELLS).toHaveLength(6);
     const [first, second, third, fourth] = CONTINUATION_CELLS;
     expect([second?.y, third?.y]).toEqual([first?.y, first?.y]);
     expect(fourth?.x).toBe(first?.x);

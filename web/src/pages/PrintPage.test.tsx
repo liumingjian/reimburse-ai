@@ -112,14 +112,14 @@ describe('打印稿预览', () => {
     expect(enlarged.getAttribute('src')).toBe(screen.getByTestId('page-image-pg7').getAttribute('src'));
   });
 
-  // #333: two or more 支付截图 move to a continuation page right after the invoice's page; it tiles and opens like any other.
+  // #333, ADR-0032: two or more 支付截图 move to a continuation page right after the invoice's page; it tiles and opens like any other.
   test('住宿发票有 3 张支付截图：发票页之后紧跟支付截图续页，续页同样平铺、全屏查看，没有放置按钮', async () => {
     window.location.hash = '#/task/T1/print';
     const adapter = createMockAdapter({ seed: 'review', fault: null });
     const invoice = (await adapter.getSnapshot('T1')).materials.find((material) => material.fileName === '全季酒店_发票.pdf');
-    for (const name of ['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png']) expect((await adapter.addPaymentScreenshot('T1', invoice?.materialId ?? '', png(name))).ok).toBe(true);
-    // The seed answered 确认没有; the upload superseded it (#332), so the group is declared and the projects resubmitted.
-    expect((await adapter.completePaymentScreenshots('T1', invoice?.materialId ?? '')).ok).toBe(true);
+    const seeded = await adapter.getSnapshot('T1');
+    expect((await adapter.addPaymentScreenshots('T1', invoice?.materialId ?? '', ['IMG_5011.png', 'IMG_5012.png', 'IMG_5013.png'].map((name) => png(name)), seeded.step.stepToken)).ok).toBe(true);
+    // The projects are resubmitted after the upload.
     const project = await adapter.getSnapshot('T1');
     const projects = Object.fromEntries(project.projectAssignment.assignments.map((item) => [item.lineId, item.projectNumber]));
     expect((await adapter.submitProjectAssignment('T1', { purpose: project.projectAssignment.purpose ?? '', projects }, project.step.stepToken)).ok).toBe(true);
@@ -149,7 +149,7 @@ describe('打印稿预览', () => {
   // #330: the print page is no screenshot entry. Only a 住宿 invoice takes one (from its 待确认项), sheet or not.
   test.each([false, true])('不是住宿发票的凭证不收支付截图（打印稿已生成：%s）', async (printSheet) => {
     const adapter = createMockAdapter(printSheet ? { seed: 'actions', fault: null, printSheet: true } : { seed: 'actions', fault: null });
-    const outcome = await adapter.addPaymentScreenshot('T1', 'm03', png());
+    const outcome = await adapter.addPaymentScreenshots('T1', 'm03', [png()], (await adapter.getSnapshot('T1')).step.stepToken);
     expect(outcome).toMatchObject({ ok: false, error: { code: 'screenshot_not_applicable', message: PAYMENT_SCREENSHOT_ERRORS.notApplicable } });
   });
 

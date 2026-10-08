@@ -55,7 +55,7 @@ describe('端点表', () => {
       expect(endpoint.path.startsWith(prefix), name).toBe(true);
     }
     expect(HTTP_ENDPOINTS.uploadBatch.body).toBe('multipart');
-    expect(HTTP_ENDPOINTS.addPaymentScreenshot.body).toBe('multipart');
+    expect(HTTP_ENDPOINTS.addPaymentScreenshots.body).toBe('multipart');
     expect(HTTP_ENDPOINTS.subscribe.body).toBe('sse');
   });
 });

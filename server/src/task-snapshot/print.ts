@@ -1,4 +1,4 @@
-import { PAYMENT_SCREENSHOT_CAP, STAY_TRIO_COPY, isStayScreenshotItem, screenshotGroupOf, type PaymentScreenshot, type PendingItem, type Placement, type PrintPage, type PrintSheet } from '@baox/contract';
+import { STAY_TRIO_COPY, isStayScreenshotItem, screenshotGroupOf, type PaymentScreenshot, type PendingItem, type Placement, type PrintPage, type PrintSheet } from '@baox/contract';
 import { CATEGORIES } from '../parse/slots';
 import { headingOf, printedScreenshots, type PrintFacts, type SheetState, type StoredPage, type StoredPlacement } from '../print/facts';
 import { droppedMaterialsNotice, extraPagesNotice, unrecordedScreenshotNotice } from '../print/layout';
@@ -15,7 +15,7 @@ export const fileUrl = (taskId: string, sha256: string): string => `/api/tasks/$
 export function withScreenshotGroups(items: readonly PendingItem[], facts: Pick<PrintFacts, 'screenshots'>, locked: boolean): PendingItem[] {
   return items.map((item) => ({
     ...item,
-    screenshotGroup: isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(facts.screenshots, item.materialId).map((shot) => shot.screenshotId), cap: PAYMENT_SCREENSHOT_CAP, locked } : null,
+    screenshotGroup: isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(facts.screenshots, item.materialId).map((shot) => shot.screenshotId), locked } : null,
   }));
 }
 

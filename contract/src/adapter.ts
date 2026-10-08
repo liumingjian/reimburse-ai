@@ -115,9 +115,10 @@ export interface AppAdapter {
   confirmReview(taskId: string, digest: string, stepToken: string, acceptDeadlineWarnings?: boolean): Promise<ActionOutcome>;
   // 确认后追加材料：先经页面二次确认，再请服务端使整单明细确认失效并回到上传阶段。
   reopenUpload(taskId: string, stepToken: string): Promise<ActionOutcome>;
-  // 支付截图只进打印稿，不带 stepToken、不改变确认状态。一次一张；多选时页面按顺序逐张上传。
-  // 整单明细确认后或已开始写入报销系统后，增、删、「已传齐」都被拒绝（screenshot_locked）。
-  addPaymentScreenshot(taskId: string, voucherMaterialId: string, file: File): Promise<ActionOutcome>;
+  // 在住宿发票的支付截图待确认项里上传（ADR-0032）：这些截图作为新的上传批次、归到这张发票，并立即重新盘点；带 stepToken。
+  // 整单明细确认后或已开始写入报销系统后被拒绝（screenshot_locked / erp_started）。
+  addPaymentScreenshots(taskId: string, voucherMaterialId: string, files: readonly File[], stepToken: string): Promise<ActionOutcome>;
+  // #331 存在 payment_screenshot 表里的旧截图组：只能删、只能点「已传齐」，不带 stepToken。
   removePaymentScreenshot(taskId: string, screenshotId: string): Promise<ActionOutcome>;
   // 「已传齐」：这张住宿发票的支付截图组已传完整，缺支付截图的待确认项随之处理完毕。组里至少要有一张。
   completePaymentScreenshots(taskId: string, voucherMaterialId: string): Promise<ActionOutcome>;

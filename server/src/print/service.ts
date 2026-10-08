@@ -1,12 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_CAP, PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, screenshotGroupOf, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, screenshotGroupOf, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from './straighten';
 import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn, type SheetPage } from './compose';
 import { headingOf, printedScreenshots, screenshotsLocked, sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
-import { storedMime } from '../upload-rules';
 import { CONTINUATION_CELLS, planPages, prefersRotation, REGIONS, type Box, type PagePlan, type Region } from './layout';
 import type { StayTrio } from '../stay-trio';
 
@@ -80,11 +79,11 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
   };
 }
 
-// 支付截图 (payment screenshots, #213, #331). Only a 住宿 invoice takes them, from its missing-screenshot 待确认项: the
-// invoice has a trio screenshot part exactly when the check asks for one (open or resolved). Any other voucher is
-// refused. A group holds up to PAYMENT_SCREENSHOT_CAP, one per upload, in upload order.
+// 支付截图 (payment screenshots, #213, #331) stored in the `payment_screenshot` table, in upload order. New screenshots
+// are materials (ADR-0032, `tasks.addPaymentScreenshots`); a group already in the table can still be emptied or declared
+// complete. Only a 住宿 invoice has one: the invoice has a trio screenshot part exactly when the check asks for one.
 //
-// Every change to a group (add, remove, 「已传齐」) is refused while it is locked (`screenshotsLocked`). So a sheet, which
+// Every change to a group (remove, 「已传齐」) is refused while it is locked (`screenshotsLocked`). So a sheet, which
 // exists only under a standing confirmation, is never recomposed by one; it picks the group up when it is generated.
 //
 // `groupEditable` refuses (throws) unless `voucherMaterialId` is a 住宿 invoice whose group may still change.
@@ -93,17 +92,10 @@ function groupEditable(state: PrintState, voucherMaterialId: string): void {
   if (screenshotsLocked(state.confirmation, state.erpAttempted)) throw new PrintRefusal('screenshot_locked', STAY_TRIO_COPY.changeLocked);
 }
 
-export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
-  groupEditable(state, voucherMaterialId);
-  if (screenshotGroupOf(state.facts.screenshots, voucherMaterialId).length >= PAYMENT_SCREENSHOT_CAP) throw new PrintRefusal('screenshot_cap', PAYMENT_SCREENSHOT_ERRORS.cap);
+// Whether an upload is a screenshot: named as a JPG or PNG (or unnamed with such a type), and its bytes are one.
+export async function isScreenshotImage(file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<boolean> {
   const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
-  if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
-  const sha256 = writeBlob(state.dataDir, file.bytes);
-  const screenshotId = randomUUID();
-  return async (tx, at, revision) => {
-    await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
-    await tx.insertInto('payment_screenshot').values({ screenshot_id: screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
-  };
+  return named && (await isJpegOrPng(file.bytes));
 }
 
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {

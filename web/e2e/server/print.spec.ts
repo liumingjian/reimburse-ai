@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
-import { answerStayGaps, expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, paymentScreenshot, signIn, test } from './fixture';
 
 // Slice 11 (#190) on the real server: 去打印. A task with a hotel invoice, its folio and a taxi photo is brought to
 // choose_action through the API; the page then generates the merged sheet, and the user rotates, crops and downloads
@@ -28,7 +28,7 @@ async function act(page: Page, snapshot: TaskSnapshot, name: string, body: Recor
   return TaskSnapshotSchema.parse(await response.json());
 }
 
-// `screenshots`: how many 支付截图 the hotel invoice gets in its 待确认项 (then 「已传齐」) before the list is confirmed.
+// `screenshots`: how many 支付截图 are uploaded with the materials (ADR-0032); together they pay the hotel invoice.
 async function confirmedTask(page: Page, materials = samples, screenshots = 0): Promise<string> {
   const created = TaskSnapshotSchema.parse(await (await page.request.post('/api/tasks', { data: { homeCity: '杭州' } })).json());
   const taskId = created.task.taskId;
@@ -37,8 +37,15 @@ async function confirmedTask(page: Page, materials = samples, screenshots = 0): 
     const uploaded = await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: sample.fileName, mimeType, buffer: readFileSync(join(GENERATED_DIR, sample.file)) } } });
     expect(uploaded.ok()).toBe(true);
   }
+  for (let n = 1; n <= screenshots; n += 1) {
+    // 3640.00 in equal parts, the last taking the odd cents, each paid on a night of the 08-09 to 08-22 stay.
+    const part = Math.floor(364000 / screenshots);
+    const amount = ((n === screenshots ? 364000 - part * (screenshots - 1) : part) / 100).toFixed(2);
+    const buffer = await paymentScreenshot(page, { amount, paidAt: `2026-08-${String(8 + n).padStart(2, '0')} 12:00:0${n}`, payee: '上海某某酒店管理有限公司', number: `42000000002026080${n}00000000000${n}` });
+    const uploaded = await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: `付款${n}.png`, mimeType: 'image/png', buffer } } });
+    expect(uploaded.ok()).toBe(true);
+  }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  if (screenshots > 0) await attachScreenshots(page, taskId, screenshots);
   // Waits out inventory and answers the 住宿 trio gaps it raises.
   await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
@@ -47,18 +54,6 @@ async function confirmedTask(page: Page, materials = samples, screenshots = 0): 
   const confirmed = await act(page, review, 'confirm-review', { digest: review.confirmation.digest });
   expect(confirmed).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' } });
   return taskId;
-}
-
-async function attachScreenshots(page: Page, taskId: string, count: number) {
-  await expect.poll(async () => (await snapshotOf(page, taskId)).inventory.status, { timeout: 60_000 }).toBe('done');
-  const invoice = (await snapshotOf(page, taskId)).materials.find((material) => material.fileName === samples[0]!.fileName);
-  for (let n = 1; n <= count; n += 1) {
-    const file = { name: `IMG_50${10 + n}.png`, mimeType: 'image/png', buffer: readFileSync(join(GENERATED_DIR, `print-pg${n}.png`)) };
-    const uploaded = await page.request.post(`/api/tasks/${taskId}/payment-screenshots`, { multipart: { voucherMaterialId: invoice?.materialId ?? '', file } });
-    expect(uploaded.ok()).toBe(true);
-  }
-  const declared = await page.request.post(`/api/tasks/${taskId}/actions/complete-payment-screenshots`, { data: { voucherMaterialId: invoice?.materialId } });
-  expect(declared.ok()).toBe(true);
 }
 
 async function expectLoaded(image: Locator) {
@@ -170,8 +165,8 @@ test('去打印：生成合并打印稿，旋转、四角裁剪，下载 PDF；�
   expect((await snapshotOf(page, taskId)).confirmation).toEqual(confirmation);
 });
 
-// #333: three 支付截图 move to a continuation page right after the hotel invoice's page. It tiles, opens full screen and
-// is in the downloaded PDF like any other page.
+// #333, ADR-0032: three 支付截图 uploaded with the materials are read, placed with the hotel invoice by date, and move to
+// a continuation page right after its page. It tiles, opens full screen and is in the downloaded PDF like any other page.
 test('住宿发票有 3 张支付截图：发票页后紧跟支付截图续页，可全屏查看，下载的 PDF 含续页', async ({ page }) => {
   test.setTimeout(180_000);
   await signIn(page);

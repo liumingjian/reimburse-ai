@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { blobPath } from './data-dir';
 import { api, byFileName, sample } from './test/api';
 import { presetParser } from './test/parse-presets';
-import { paymentScreenshots } from './test/payment-screenshots';
+import { paymentScreenshots, postStayScreenshots, seedTableScreenshots } from './test/payment-screenshots';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
@@ -165,11 +165,11 @@ describe('print settings', () => {
 
     const png = readFileSync(join(GENERATED_DIR, 'print-pg1.png'));
     // Only a 住宿 invoice takes a 支付截图 (#330): the folio and the taxi voucher are refused on a generated sheet too.
-    await refused(await screenshot(task, hotel.bottom.materialId, new File([png], 'IMG_5011.png', { type: 'image/png' })), 'screenshot_not_applicable');
-    await refused(await screenshot(task, taxi.top.materialId, new File([png], 'IMG_5012.png', { type: 'image/png' })), 'screenshot_not_applicable');
-    // The hotel invoice's group is locked with the confirmed list (#331); screenshots on the sheet are covered in
-    // stay-trio.test.ts, where they are added before the list is confirmed.
-    await refused(await screenshot(task, hotel.top.materialId, new File([png], 'IMG_5011.png', { type: 'image/png' })), 'screenshot_locked');
+    const upload = async (materialId: string) => postStayScreenshots(alice, await client.current(task.task.taskId), materialId, [new File([png], 'IMG_5011.png', { type: 'image/png' })]);
+    await refused(await upload(hotel.bottom.materialId), 'screenshot_not_applicable');
+    await refused(await upload(taxi.top.materialId), 'screenshot_not_applicable');
+    // The hotel invoice's screenshots are locked with the confirmed list (#331).
+    await refused(await upload(hotel.top.materialId), 'screenshot_locked');
     const removed = await client.current(task.task.taskId);
     expect(removed.printSheet.notices).toEqual(['No.2 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
     expect((await download(removed.printSheet.url ?? '')).getPageCount()).toBe(2);
@@ -184,15 +184,14 @@ describe('print settings', () => {
   }, 240_000);
 });
 
-function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string, file: File): Promise<Response> {
-  const form = new FormData();
-  form.append('voucherMaterialId', voucherMaterialId);
-  form.append('file', file);
-  return alice.request(`/api/tasks/${snapshot.task.taskId}/payment-screenshots`, { method: 'POST', body: form });
+// A #331 table screenshot, seeded as tasks from before ADR-0032 hold them.
+async function screenshot(snapshot: TaskSnapshot, voucherMaterialId: string, file: File): Promise<TaskSnapshot> {
+  await seedTableScreenshots(server, snapshot.task.taskId, voucherMaterialId, [file]);
+  return client.current(snapshot.task.taskId);
 }
 
-// #333: a 住宿 invoice's 支付截图 group on the sheet. The group is only open to change before the list is confirmed, so
-// every case climbs from the 待确认项: upload, 「已传齐」, then assign and confirm.
+// #333: a 住宿 invoice's #331 table group on the sheet, seeded as tasks from before ADR-0032 hold it. The group is only
+// open to change before the list is confirmed, so every case climbs from the 待确认项: 「已传齐」, then assign and confirm.
 describe('支付截图 on the sheet', () => {
   const shot = (n: number) => new File([readFileSync(join(GENERATED_DIR, `print-pg${n}.png`))], `IMG_50${10 + n}.png`, { type: 'image/png' });
 
@@ -200,7 +199,7 @@ describe('支付截图 on the sheet', () => {
     const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
     let latest = scene.reached;
-    for (let n = 1; n <= count; n += 1) latest = await client.accepted(await screenshot(latest, invoice.materialId, shot(n)));
+    for (let n = 1; n <= count; n += 1) latest = await screenshot(latest, invoice.materialId, shot(n));
     const declared = await client.accepted(await print(latest, 'complete-payment-screenshots', { voucherMaterialId: invoice.materialId }));
     const review = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(declared.lines.map((line) => [line.lineId, 'P-2307'])) });
     const ready = await scene.accept('confirm-review', { digest: review.confirmation.digest });
@@ -267,7 +266,7 @@ describe('支付截图 on the sheet', () => {
     // Invalidating the list unlocks the group; reverting the change revives the confirmation (see 'the sheet follows
     // the confirmation'), but the sheet composed under it printed two screenshots, and the invoice now has three.
     const moved = await client.accepted(await client.act(generated, 'set-home-city', { homeCity: '上海' }));
-    const added = await client.accepted(await screenshot(moved, invoice.materialId, shot(3)));
+    const added = await screenshot(moved, invoice.materialId, shot(3));
     const back = await client.accepted(await client.act(added, 'set-home-city', { homeCity: '杭州' }));
     expect(back.confirmation).toEqual(generated.confirmation);
     expect(back.printSheet.status).toBe('stale');
