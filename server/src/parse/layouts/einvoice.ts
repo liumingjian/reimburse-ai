@@ -36,7 +36,9 @@ const TYPE_OF_TITLE: Readonly<Record<string, string>> = { 增值税专用发票:
 // 全电 QR 发票类型 codes: 31 电子发票（增值税专用发票）, 32 电子发票（普通发票）.
 const TYPE_OF_QR: Readonly<Record<string, string>> = { '31': '专票', '32': '普票' };
 
-const COLUMNS: Readonly<Record<string, string>> = { 项目名称: 'name', 单位: 'unit', 数量: 'qty', 单价: 'price', 金额: 'net', '税率/征收率': 'rate', 税额: 'tax' };
+// 规格型号 is never read, but it is a column: a cell printed under it (a hotel's `间`) belongs to no other column, and
+// without it the cell fell back into 项目名称 (`住宿费间`, #344).
+const COLUMNS: Readonly<Record<string, string>> = { 项目名称: 'name', 规格型号: 'spec', 单位: 'unit', 数量: 'qty', 单价: 'price', 金额: 'net', '税率/征收率': 'rate', 税额: 'tax' };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = { invoiceNumber: '发票号码', issueDate: '开票日期', totalAmount: '价税合计', invoiceType: '票种' };
 
