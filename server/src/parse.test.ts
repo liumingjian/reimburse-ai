@@ -41,7 +41,7 @@ const inventory = async (stage: 'inventory' | 'pending' | 'project', materials: 
 describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
   it('parses m01, m03, m05 and r201 into their face fields; m06 and m11 stay unrecognised', async () => {
     await useParser(inlineExecutor());
-    const snapshot = await inventory('pending', ['m01', 'm03', 'm05', 'm06', 'm11', 'r201']);
+    const snapshot = await inventory('pending', ['m01', 'm02', 'm03', 'm05', 'm06', 'm11', 'r201']);
 
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', role: 'primary_voucher', status: 'ok' });
@@ -100,7 +100,7 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
       expect(snapshot.inventory.ungroupedMaterialIds).toContain(material.materialId);
     }
     // m03, m05 and r201 are ride-hailing invoices without itineraries: no expense city, so each waits on category_city_missing (#188).
-    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 6, okCount: 1, pendingMaterialCount: 5, voucherCount: 1, openPendingItemCount: 5 });
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 7, okCount: 2, pendingMaterialCount: 5, voucherCount: 1, openPendingItemCount: 5 });
     // Unrecognised materials leave 待确认项 open: the task moves on to pending items.
     expect(snapshot.stage).toBe('pending');
     expect(snapshot.step.kind).toBe('answer_pending');
@@ -112,11 +112,12 @@ describe('an e-invoice whose text runs are split', () => {
   // glyph. Both fixtures carry the same face as any other e-invoice, so both must parse the same way.
   it('parses r01 (发票号码 label apart from its digits) and r02 (letter-spaced title) into their face fields', async () => {
     await useParser(inlineExecutor());
-    const snapshot = await inventory('project', ['r01', 'r02']);
+    const snapshot = await inventory('pending', ['r01', 'r02']);
 
     const splitNumber = byFileName(snapshot, sample('r01').name);
-    // Its only items are the 住宿 trio's (#213), answered by `inventory`.
-    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'ok' });
+    // Its only open item is the 住宿 trio's missing 结账单 (#213): no folio is printed for these fixtures, and a 住宿
+    // invoice cannot go without one.
+    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${splitNumber.materialId}`, `stay_screenshot_missing.${splitNumber.materialId}`] });
     expect(fieldValues(splitNumber, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127801',
       issueDate: '2026-08-20',
@@ -132,7 +133,7 @@ describe('an e-invoice whose text runs are split', () => {
     });
 
     const spacedTitle = byFileName(snapshot, sample('r02').name);
-    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'ok' });
+    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${spacedTitle.materialId}`, `stay_screenshot_missing.${spacedTitle.materialId}`] });
     expect(fieldValues(spacedTitle, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127802',
       issueDate: '2026-08-21',
@@ -151,7 +152,7 @@ describe('an e-invoice whose text runs are split', () => {
     for (const material of [splitNumber, spacedTitle]) {
       for (const field of material.fields) expect(field).toMatchObject({ source: EINVOICE, parserVersion: einvoice.version, evidence: 'explicit' });
     }
-    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 2, pendingMaterialCount: 0, voucherCount: 2, openPendingItemCount: 0 });
+    expect(snapshot.inventory.summary).toMatchObject({ materialCount: 2, okCount: 0, pendingMaterialCount: 2, voucherCount: 2, openPendingItemCount: 2 });
   });
 });
 
@@ -237,10 +238,11 @@ describe('a whole trip uploaded in one go', () => {
   // #206: the failure this spec exists for showed up only on a real multi-material upload — 材料 18 份 / 通过 0 份 /
   // 主要报销凭证 0 份, every material split into text runs no anchor could match, and nothing in the suite caught it.
   // This is that guard at the highest seam: the split-run fixtures uploaded together the way a trip arrives —
-  // invoices, an itinerary and a rail ticket — must produce 费用事件 (expense events), not a queue of 待确认项.
-  it('parses every material, forms an expense event per voucher and per leg, and moves past 待确认项', async () => {
+  // invoices, an itinerary and a rail ticket — must produce 费用事件 (expense events), not a queue of 待确认项. The
+  // only items left open are the two hotel invoices' missing 结账单 (#213): no folio is printed for these fixtures.
+  it('parses every material, forms an expense event per voucher and per leg, and asks only for the hotels’ 结账单', async () => {
     await useParser(inlineExecutor());
-    const snapshot = await inventory('project', ['r01', 'r02', 'm03', 'r205', 'r204']);
+    const snapshot = await inventory('pending', ['r01', 'r02', 'm03', 'r205', 'r204']);
 
     const splitNumber = byFileName(snapshot, sample('r01').name);
     const spacedTitle = byFileName(snapshot, sample('r02').name);
@@ -249,8 +251,7 @@ describe('a whole trip uploaded in one go', () => {
     const rail = byFileName(snapshot, sample('r204').name);
 
     for (const invoice of [splitNumber, spacedTitle]) {
-      // Their only items are the 住宿 trio's (#213), answered by `inventory`.
-      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'ok' });
+      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${invoice.materialId}`, `stay_screenshot_missing.${invoice.materialId}`] });
     }
     expect(rideInvoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '市内交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [], linkedMaterialIds: [itinerary.materialId] });
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', role: 'reference', status: 'ok', pendingItemIds: [], linkedMaterialIds: [rideInvoice.materialId] });
@@ -271,18 +272,16 @@ describe('a whole trip uploaded in one go', () => {
     // The counts a user reads on the inventory page: a silent drop back to 通过 0 份 / 主要报销凭证 0 份 fails here.
     expect(snapshot.inventory.summary).toMatchObject({
       materialCount: 5,
-      okCount: 5,
-      pendingMaterialCount: 0,
+      okCount: 3,
+      pendingMaterialCount: 2,
       voucherCount: 4,
       referenceCount: 1,
-      openPendingItemCount: 0,
+      openPendingItemCount: 2,
     });
     expect(snapshot.inventory.ungroupedMaterialIds).toEqual([]);
-    // The only items are the 住宿 trio's (#213), answered by `inventory`.
+    // The only items are the 住宿 trio's (#213).
     expect(snapshot.pendingItems.filter((item) => !item.itemId.startsWith('stay_'))).toEqual([]);
-
-    // Nothing left to answer, so the task leaves 待确认项 behind and goes on to 项目归属.
-    expect(snapshot.stage).toBe('project');
+    expect(snapshot.stage).toBe('pending');
   });
 });
 
@@ -319,13 +318,13 @@ describe('the e-invoice QR code, a second evidence source', () => {
 
   it('an undecodable QR is advisory: the invoice is ok, raises no 待确认项 and forms its candidate line', async () => {
     // The fixture's QR box is a placeholder, so no code decodes.
-    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: ['m01'], projectBook: 'as_is' });
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: ['m01', 'm02'], projectBook: 'as_is' });
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher', categoryLabel: '住宿', checkText: expect.stringContaining('二维码无法识读') });
     expect(snapshot.pendingItems.filter((item) => !item.itemId.startsWith('stay_'))).toEqual([]);
     // A clean inventory goes on to 项目归属; with an empty personal book, to maintaining it first (#188).
     expect(snapshot).toMatchObject({ stage: 'project', step: { kind: 'maintain_project_book' } });
-    expect(snapshot.events).toEqual([expect.objectContaining({ no: 1, voucherMaterialId: hotel.materialId, category: { code: 'accommodation', label: '住宿' }, date: '2026-08-22', grossAmount: '3640.00' })]);
+    expect(snapshot.events).toEqual([expect.objectContaining({ no: 1, voucherMaterialId: hotel.materialId, category: { code: 'accommodation', label: '住宿' }, date: '2026-08-09', grossAmount: '3640.00' })]);
     expect(snapshot.lines).toEqual([
       expect.objectContaining({
         no: 1,

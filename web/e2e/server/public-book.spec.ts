@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { ProjectBookSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
-import { answerStayGaps, expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, hotelFolio, signIn, test } from './fixture';
 
 // Slice 14b (#194) on the real server: the admin adds a 公共项目簿 (public project book) entry in the project book; a user
 // assigns a line to it; the admin deactivates it before the user submits, which forces a re-select; the submission
@@ -57,11 +57,11 @@ test('管理员添加公共项目，用户把明细归入它；提交前停用�
   await dialog.getByRole('button', { name: '创建并上传材料' }).click();
   await expect(user).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(user.url())?.[1] ?? '';
-  await user.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
+  await user.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([{ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) }, hotelFolio()]);
   await expect(user.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
   await user.getByRole('button', { name: '开始材料盘点' }).click();
-  // #213: the 住宿 invoice comes alone, so inventory asks for its 结账单 and 支付截图; answered with 确认没有, since this
-  // test is about the public project book.
+  // #213: the 住宿 invoice comes with its 结账单 but no 支付截图; that item is answered with 确认没有, since this test is
+  // about the public project book.
   await answerStayGaps(user, taskId);
   await expect.poll(async () => (await snapshotOf(user, taskId)).step.kind).toBe('assign_projects');
   await user.goto(`/#/task/${taskId}/project`);

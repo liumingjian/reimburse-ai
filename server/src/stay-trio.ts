@@ -13,8 +13,10 @@ import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from '.
 // cent); a screenshot is present only when one is stored for that invoice. A folio no invoice pairs with is a stay
 // missing its invoice; it has no voucher, so no screenshot is asked of it.
 //
-// A missing invoice or folio is answered by supplying it (the item is then not derived at all) or by the choice
-// `STAY_TRIO_CONFIRM_NONE`, which records the absence. That record is what the print stage reads.
+// A missing folio blocks: it alone gives the stay's check-in and check-out, so the invoice is answered only by
+// supplying its folio (the item is then not derived at all) or by excluding the invoice. A 确认没有 stored before that
+// rule no longer fits and leaves the item open. A missing invoice is answered by supplying it or by the choice
+// `STAY_TRIO_CONFIRM_NONE`, which records the absence.
 //
 // The 支付截图 is a group per invoice (#331), so its item is derived for every invoice, supplied or not: the filer may
 // add several over several visits, and the item stays open until the group is declared complete (「已传齐」) or the
@@ -27,8 +29,8 @@ import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from '.
 
 export type TrioPart = {
   present: boolean;
-  // A stored 确认没有 answer stands for this element. For a folio it stands whether or not the folio is present right
-  // now (it keeps the item settled if the folio goes away); for a screenshot only while the group is empty (#332).
+  // A stored 确认没有 answer stands for this element: for an invoice whether or not it is present right now (it keeps the
+  // item settled if the invoice goes away); for a screenshot only while the group is empty (#332). Never for a folio.
   noneConfirmed: boolean;
 };
 
@@ -78,7 +80,8 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
     kind: 'choice',
     resolver: '要你处理',
     fields: [],
-    choices: [{ key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone }, EXCLUDE],
+    // A 住宿 invoice cannot go without its folio: only the folio dates the stay. Its item's only way out is excluding.
+    choices: 'confirmNone' in copy ? [{ key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone }, EXCLUDE] : [EXCLUDE],
     allocation: null,
     screenshotGroup: null,
     manualKinds: [],

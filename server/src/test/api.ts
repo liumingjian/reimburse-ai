@@ -57,11 +57,12 @@ export function api(client: () => TestClient) {
     },
 
     // The 住宿 trio check (#213) asks a hotel invoice for its 结账单 and 支付截图. A test about something else answers
-    // every open trio item with 确认没有 and goes on from the resulting snapshot.
+    // every open trio item it can with 确认没有 and goes on from the resulting snapshot. A missing 结账单 cannot be confirmed
+    // away: a test with a hotel invoice uploads its folio (m02).
     async withoutStayGaps(snapshot: TaskSnapshot): Promise<TaskSnapshot> {
       let latest = snapshot;
       for (const item of snapshot.pendingItems) {
-        if (item.status !== 'open' || stayTrioElementOf(item.itemId) === null) continue;
+        if (item.status !== 'open' || [null, 'folio'].includes(stayTrioElementOf(item.itemId))) continue;
         latest = await accepted(await this.act(latest, 'answer-pending', { itemId: item.itemId, answer: { choice: STAY_TRIO_CONFIRM_NONE } }));
       }
       return latest;

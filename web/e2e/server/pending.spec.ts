@@ -60,18 +60,18 @@ test('同一张发票传了两份：重复发票只能排除，排除后留下�
   const hotel = sample('m01');
   // The same invoice as a second file (a trailing PDF comment changes only the content hash).
   const copy = { ...hotel, name: '全季酒店_发票_副本.pdf', buffer: Buffer.concat([hotel.buffer, Buffer.from('\n% copy\n')]) };
-  const { task } = await inventoried(page, [hotel, copy]);
+  const { task } = await inventoried(page, [hotel, copy, sample('m02')]);
   await page.goto(`/#/task/${task.taskId}/pending`);
 
   await expect(page.getByRole('heading', { name: `「${copy.name}」与「${hotel.name}」是同一张发票` })).toBeVisible();
   await page.getByRole('button', { name: '排除这份材料' }).click();
 
-  // Excluding the copy lets the remaining invoice form its event; #213's trio check then asks it for its 结账单 and
-  // 支付截图, answered here with 确认没有 because this test is about the duplicate.
+  // Excluding the copy lets the remaining invoice form its event and pair with its 结账单; #213's trio check then asks
+  // it for its 支付截图, answered here with 确认没有 because this test is about the duplicate.
   await answerStayGaps(page, task.taskId);
   await page.reload();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   const snapshot = await snapshotOf(await page.request.get(`/api/tasks/${task.taskId}`));
-  expect(snapshot.materials.map((material) => material.status)).toEqual(['ok', 'excluded']);
+  expect(snapshot.materials.map((material) => material.status)).toEqual(['ok', 'excluded', 'ok']);
   expect(snapshot.lines).toEqual([expect.objectContaining({ grossAmount: '3640.00' })]);
 });

@@ -28,7 +28,7 @@ const PURPOSE = '上海产品评审出差';
 
 // Hotel e-invoice + rail ticket, inventoried, every line on P-2307, purpose submitted
 // (stage review), then confirmed (stage actions).
-const at = async (stage: 'project' | 'review' | 'actions') => (await scenario(server, alice).at(stage, { materials: ['m01', 'm07'], purpose: PURPOSE })).reached;
+const at = async (stage: 'project' | 'review' | 'actions') => (await scenario(server, alice).at(stage, { materials: ['m01', 'm02', 'm07'], purpose: PURPOSE })).reached;
 
 function submit(snapshot: TaskSnapshot, purpose: string): Promise<TaskSnapshot> {
   return client.act(snapshot, 'submit-project-assignment', { purpose, projects: Object.fromEntries(snapshot.lines.map((line) => [line.lineId, 'P-2307'])) }).then((r) => client.accepted(r));
@@ -45,7 +45,7 @@ describe('confirmation status', () => {
     const { task } = await client.createTask('杭州');
     const listed = async () => TaskListSchema.parse(await (await alice.request('/api/tasks')).json()).tasks.find((item) => item.taskId === task.taskId);
     expect(await listed()).toMatchObject({ summaryStatus: 'unavailable', period: null, grossTotal: null });
-    const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m07')]);
+    const uploaded = await client.upload(task.taskId, [sample('m01'), sample('m02'), sample('m07')]);
     await client.accepted(await client.act(uploaded, 'start-inventory'));
     const inventoried = await client.withoutStayGaps(await client.settled(task.taskId));
     const review = await submit(inventoried, PURPOSE);

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
-import { answerStayGaps, expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, hotelFolio, signIn, test } from './fixture';
 
 // Slice 09 (#188) on the real server: with an empty 个人项目簿 the project page opens on the book gate; add a project
 // with a manually entered name, assign every line to it and submit the reimbursement purpose (报销事由).
@@ -25,15 +25,15 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
   await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
   const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
 
-  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) });
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles([{ name: hotelInvoice.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, hotelInvoice.file)) }, hotelFolio()]);
   await expect(page.getByText(hotelInvoice.fileName, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
-  // #213: the 住宿 invoice comes alone, so inventory asks for its 结账单 and 支付截图 and holds the material at 待确认;
-  // answered with 确认没有, after which the material passes and the task goes on to the project book.
+  // #213: the 住宿 invoice comes with its 结账单 but no 支付截图, so inventory asks for the screenshots and holds the
+  // material at 待确认; answered with 确认没有, after which the material passes and the task goes on to the project book.
   await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText('需处理1 份');
   await answerStayGaps(page, taskId);
   await page.reload();
-  await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText('通过1 份');
+  await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText('通过2 份');
   await expect.poll(async () => (await snapshotOf(page, taskId)).step.kind).toBe('maintain_project_book');
 
   // The book gate: add P-2307, then start assigning.
