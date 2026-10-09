@@ -304,6 +304,10 @@ export const DISCOUNTED_DINING_RECEIPT = {
   ...DINING_RECEIPT, id: 'm14', title: '消费清单', total: '300.00', discount: '60.00',
 };
 
+export const MISMATCHED_DINING_RECEIPT = {
+  ...DINING_RECEIPT, id: 'm15', total: '239.99', paid: '239.99',
+};
+
 export const OFFICE_SUPPLIES_INVOICE = {
   ...DINING_INVOICE,
   id: 'm12',
