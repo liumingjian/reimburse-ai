@@ -21,6 +21,7 @@ import {
   DINING_RECEIPT_PHOTO,
   OFFICE_SUPPLIES_INVOICE,
   PRINT_PAGES,
+  DINING_PRINT_PAGES,
   PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
@@ -397,7 +398,7 @@ ${bottom ? bottom.css : ''}
   return { id: page.id, ...A4, css, body };
 }
 
-export const PRINT_DOCS = PRINT_PAGES.map(printPage);
+export const PRINT_DOCS = [...PRINT_PAGES, ...DINING_PRINT_PAGES].map(printPage);
 export const VARIANT_DOCS = PRINT_VARIANTS.map((variant) => ({ ...printPage(variant), id: variant.file.replace(/\.png$/, '') }));
 
 // The merged print sheet: one A4 page (210mm x 297mm, no margin) per page image.
