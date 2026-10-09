@@ -100,6 +100,27 @@ const STATES = [
   ['06-project-add-dialog', '?seed=project', '#/task/T1/project', (p) => click(p, btn(p, '新增项目'))],
   ['06-project-empty-book-gate', '?seed=project&book=empty', '#/task/T1/project'],
   ['06-project-after-actions', '?seed=actions', '#/task/T1/project'],
+  ['06-dining', '?seed=upload', '#/task/T1/upload', async (p, shot) => {
+    await upload(p, ['餐饮_发票.pdf', '餐饮_小票.pdf'].map((name) => path.join(samples, name)));
+    await click(p, btn(p, '开始材料盘点'));
+    await click(p, p.getByRole('link', { name: '进入项目归属', exact: true }));
+    await click(p, btn(p, '查看餐饮材料 No.1'));
+    await settle(p, 3000);
+    await shot('-invoice');
+    await click(p, p.getByRole('tab', { name: '餐饮小票：餐饮_小票.pdf' }));
+    await settle(p, 3000);
+    await shot('-receipt');
+    await click(p, btn(p, '关闭预览'));
+    await p.getByLabel('报销事由', { exact: true }).fill('客户招待');
+    await p.getByLabel('选择明细 No.1', { exact: true }).check();
+    await click(p, p.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: /P-2307/ }));
+    await click(p, btn(p, '确认项目归属'));
+    await click(p, btn(p, '确认整单明细'));
+    await click(p, p.getByRole('link', { name: '去打印', exact: true }));
+    await settle(p, 3000);
+    await shot('-print');
+    return 'done';
+  }],
   ['07-review', '?seed=review', '#/task/T1/review'],
   ['07-review-actions', '?seed=actions', '#/task/T1/review'],
   ['07-review-not-ready', '?seed=project', '#/task/T1/review'],
