@@ -633,8 +633,6 @@ export function inventoryView(
     });
   }
 
-  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation → hospitality;
-  // within a category, voucher upload order. Invoice labels follow voucher upload order.
   const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation', 'hospitality'];
   const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
 
@@ -732,8 +730,6 @@ export function inventoryView(
       return [{ ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck }];
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
-    // An evidence item sits on a material that is otherwise clean: it keeps its role, but is pending while the
-    // item is open.
     const laterItems = [...(trio.items.get(m.materialId) ?? []), ...(payments?.items.get(m.materialId) ?? []), ...(diningItems.get(m.materialId) ?? [])];
     const note = payments?.notes.get(m.materialId);
     const assignment = payments?.assignments.get(m.materialId);

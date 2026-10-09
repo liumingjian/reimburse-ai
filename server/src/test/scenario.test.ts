@@ -13,7 +13,6 @@ afterEach(() => server.close());
 
 describe('scenario builder', () => {
   it('names the stage a task stopped in when a later stage was asked for', async () => {
-    // m12 raises an open item besides the stay trio (住宿三件套), so the task never leaves pending.
     await expect(scenario(server).at('review', { materials: ['m01', 'm12'] })).rejects.toThrow(
       /asked for stage review, but after answering the 住宿 trio the task is at pending \/ answer_pending \(open items: /,
     );

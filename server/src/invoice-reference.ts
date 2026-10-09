@@ -1,5 +1,3 @@
-// Amounts are canonical money strings from resolved fields. An equal amount pairs only when it identifies
-// exactly one invoice and one reference; duplicate amounts stay unpaired.
 export function pairInvoiceReferences<Invoice, Reference>({
   invoices,
   references,

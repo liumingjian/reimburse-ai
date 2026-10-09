@@ -22,9 +22,6 @@ import {
   stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具沿用原型任务，并增加餐饮发票及小票档案。默认任务仍有 11 份材料；完整示例有 15 份。
-// 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
-// mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
 // Inventory phases, as the server projects them (server/src/inventory-view.ts): reading the PDFs, then the photos when
 // the task has any. None before the first inventory.
@@ -101,7 +98,6 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
 };
 
-// Recognition profiles keyed by fixture material id.
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',

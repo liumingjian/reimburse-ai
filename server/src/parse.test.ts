@@ -10,9 +10,6 @@ import { testClient, type TestClient } from './test/harness';
 import { withQr } from './test/qr-pdf';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
-// Slice 04 (#183): the background parser job after start-inventory, and the `vat_invoice/einvoice` layout, through
-// `app.request()`. Samples (m01–m12) replay their preset parse outcomes, which test/parse-presets.test.ts holds to
-// the real parser; a test on regression fixtures (r*) or altered bytes parses for real with `useParser`.
 
 let server: ScenarioServer;
 let signedIn: TestClient;
@@ -92,7 +89,6 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
       totalAmount: '48.98',
     });
 
-    // No v1 layout covers the 曹操 itinerary; a 办公用品 (office supplies) e-invoice is outside the v1 kinds.
     for (const prefix of ['m06', 'm12']) {
       const material = byFileName(snapshot, sample(prefix).name);
       expect(material).toMatchObject({ kind: null, layout: null, role: 'pending', status: 'pending', fields: [] });

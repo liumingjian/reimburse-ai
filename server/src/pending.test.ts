@@ -46,7 +46,6 @@ async function refused(response: Response, code: string) {
   return failure;
 }
 
-// The 办公用品 (office supplies) e-invoice m12 as printed; no v1 layout recognises it.
 const M12 = {
   invoiceNumber: '26312000000103317791',
   issueDate: '2026-08-14',

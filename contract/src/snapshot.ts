@@ -167,7 +167,6 @@ export const MaterialSchema = z.object({
 export type Material = z.infer<typeof MaterialSchema>;
 
 export const ExpenseCategorySchema = z.object({
-  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport / hospitality）；页面只显示 label。
   code: z.string().min(1),
   label: z.string().min(1),
 });
