@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { PRINT_PAGES, PRINT_SHEET_FILE, PRINT_VARIANTS, DINING_PRINT_PAGES, DINING_PRINT_SHEET_FILE } from './data.mjs';
+import { PRINT_PAGES, PRINT_SHEET_FILE, PRINT_VARIANTS, DINING_PRINT_PAGES, diningPrintSheetFile } from './data.mjs';
 import { DOCS, PRINT_DOCS, VARIANT_DOCS, documentOf, printSheetDocument } from './templates.mjs';
 
 const CHROME_CANDIDATES = [
@@ -39,6 +39,7 @@ export const MATERIAL_FILES = {
   m13: 'm13-dining-receipt.pdf',
   m14: 'm14-discounted-dining-receipt.pdf',
   m16: 'm16-dining-receipt-photo.jpg',
+  m15: 'm15-mismatched-dining-receipt.pdf',
 };
 
 // Regression fixtures (#200 onwards): they reproduce how a real face is drawn — the text-run splits of a real PDF, or a
@@ -65,7 +66,7 @@ export const EXPECTED_FILES = [
   ...PRINT_PAGES.map((page) => page.file),
   ...PRINT_VARIANTS.map((page) => page.file),
   PRINT_SHEET_FILE,
-  DINING_PRINT_SHEET_FILE,
+  ...DINING_PRINT_PAGES.map(diningPrintSheetFile),
   ...DINING_PRINT_PAGES.map((page) => page.file),
 ].sort();
 
@@ -187,11 +188,13 @@ export async function generate(only = null) {
     produced.push(variant.file);
     console.log(`生成 ${variant.file}`);
   }
-  if (wanted('dining')) {
-    const diningHtml = join(work, 'print-dining-sheet.html');
-    writeFileSync(diningHtml, printSheetDocument(DINING_PRINT_PAGES.map((page) => pathToFileURL(join(OUTPUT_DIR, page.file)).href)));
-    await chrome(binary, profile, ['--allow-file-access-from-files', '--no-pdf-header-footer', `--print-to-pdf=${join(OUTPUT_DIR, DINING_PRINT_SHEET_FILE)}`], pathToFileURL(diningHtml).href);
-    produced.push(DINING_PRINT_SHEET_FILE);
+  for (const page of DINING_PRINT_PAGES) {
+    if (!wanted(page.id)) continue;
+    const file = diningPrintSheetFile(page);
+    const diningHtml = join(work, file.replace('.pdf', '.html'));
+    writeFileSync(diningHtml, printSheetDocument([pathToFileURL(join(OUTPUT_DIR, page.file)).href]));
+    await chrome(binary, profile, ['--allow-file-access-from-files', '--no-pdf-header-footer', `--print-to-pdf=${join(OUTPUT_DIR, file)}`], pathToFileURL(diningHtml).href);
+    produced.push(file);
   }
   // A partial run stops here: the merged print sheet needs every page image to come from this same run.
   if (only) {

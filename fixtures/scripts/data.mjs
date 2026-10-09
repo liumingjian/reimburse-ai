@@ -304,6 +304,10 @@ export const DISCOUNTED_DINING_RECEIPT = {
   ...DINING_RECEIPT, id: 'm14', title: '消费清单', total: '300.00', discount: '60.00',
 };
 
+export const MISMATCHED_DINING_RECEIPT = {
+  ...DINING_RECEIPT, id: 'm15', total: '239.99', paid: '239.99',
+};
+
 export const OFFICE_SUPPLIES_INVOICE = {
   ...DINING_INVOICE,
   id: 'm12',
@@ -367,8 +371,10 @@ export const PRINT_PAGES = [
 
 export const DINING_PRINT_PAGES = [
   { id: 'dining', file: 'print-dining.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm13', rotateTop: false, rotateBottom: false },
+  { id: 'dining-discounted', file: 'print-dining-discounted.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm14', rotateTop: false, rotateBottom: false },
+  { id: 'dining-photo', file: 'print-dining-photo.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm16', rotateTop: false, rotateBottom: false },
 ];
-export const DINING_PRINT_SHEET_FILE = 'print-dining-sheet.pdf';
+export const diningPrintSheetFile = (page) => `print-${page.id}-sheet.pdf`;
 
 export function headerOf(page) {
   return `${page.nos} · ${page.date} · ${page.category} · ${page.amount}`;
