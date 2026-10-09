@@ -1,5 +1,7 @@
 # Dining preview and print evidence
 
+See [verification](verification.md) for tested revisions, independent review, and outstanding evidence limits.
+
 The before images come from `web/scripts/ui-shots.mjs` on main at `094732d561991f95d211a0ccb2429e5ad631a786`, at 1440 × 900.
 The pending list includes the dining invoice as unsupported. The default print sheet has no dining page.
 
