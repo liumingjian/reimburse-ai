@@ -296,6 +296,14 @@ export const DINING_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
+export const DINING_RECEIPT = {
+  id: 'm13', title: '结账单', merchant: '小河餐厅', date: '2026-08-18', time: '19:20:00', total: '240.00', paid: '240.00', discount: null,
+};
+
+export const DISCOUNTED_DINING_RECEIPT = {
+  ...DINING_RECEIPT, id: 'm14', title: '消费清单', total: '300.00', discount: '60.00',
+};
+
 export const OFFICE_SUPPLIES_INVOICE = {
   ...DINING_INVOICE,
   id: 'm12',

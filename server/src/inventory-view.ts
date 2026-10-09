@@ -4,6 +4,7 @@ import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
 import { factsOf, isDerivedSource } from './parse/facts';
 import { pairHotelStays } from './hotel-stay';
+import { pairInvoiceReferences } from './invoice-reference';
 import { KINDS, type EventDraft } from './kind-policy';
 import { CATEGORIES, fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
@@ -644,6 +645,19 @@ export function inventoryView(
   // Pairing: a hotel invoice and its folio form one stay (`hotel-stay.ts`).
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
+  const diningInvoices = ordered.filter(({ draft }) => draft.category.code === 'hospitality');
+  const diningReceipts = includedWorked.filter((w) => w.resolved?.kind === 'dining_receipt' && !w.reference && !w.items.some(isOpen));
+  const diningPairs = pairInvoiceReferences({
+    invoices: diningInvoices,
+    references: diningReceipts,
+    invoiceAmount: ({ draft }) => draft.grossAmount,
+    referenceAmount: (w) => w.values['paidAmount'],
+  });
+  const receiptByInvoice = new Map(diningPairs.map(({ invoice, reference }) => [invoice.material.materialId, reference.m.materialId]));
+  for (const { invoice, reference } of diningPairs) {
+    linked.set(invoice.material.materialId, [reference.m.materialId]);
+    linked.set(reference.m.materialId, [invoice.material.materialId]);
+  }
 
   // 支付截图 materials, placed with the 住宿 invoices (ADR-0032), only over a finished run like the trio below.
   const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
@@ -688,7 +702,7 @@ export function inventoryView(
   const diningItems = new Map<string, PendingItem[]>();
   if (results && waiting === 0) {
     for (const { material, draft } of ordered) {
-      if (draft.category.code !== 'hospitality') continue;
+      if (draft.category.code !== 'hospitality' || receiptByInvoice.has(material.materialId)) continue;
       const item = settle(choice(`${DINING_ITEM_CODES.receiptMissing}.${material.materialId}`, material.materialId, DINING_COPY.receiptMissing.title(material.fileName), DINING_COPY.receiptMissing.why(draft.grossAmount), [EXCLUDE]), answers);
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
@@ -729,7 +743,8 @@ export function inventoryView(
     const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
     const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
-    const referenceMaterialIds = stay ? [stay.folioId] : legReferences;
+    const receiptId = receiptByInvoice.get(material.materialId);
+    const referenceMaterialIds = stay ? [stay.folioId] : receiptId ? [receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
     events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({

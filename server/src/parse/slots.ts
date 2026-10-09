@@ -104,6 +104,14 @@ export const SLOTS: Readonly<Record<MaterialKind, readonly Slot[]>> = {
   hotel_folio: HOTEL_FOLIO_SLOTS,
   taxi_receipt: TAXI_RECEIPT_SLOTS,
   payment_screenshot: PAYMENT_SCREENSHOT_SLOTS,
+  dining_receipt: [
+    { key: 'paidAmount', label: '实付金额', required: true, format: 'money' },
+    { key: 'merchantName', label: '商户名称', required: false, format: 'text' },
+    { key: 'receiptDate', label: '消费日期', required: false, format: 'date' },
+    { key: 'receiptTime', label: '消费时间', required: false, format: 'text' },
+    { key: 'originalTotal', label: '原价合计', required: false, format: 'money' },
+    { key: 'discount', label: '优惠金额', required: false, format: 'money' },
+  ],
 };
 
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.

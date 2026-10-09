@@ -1,0 +1,6 @@
+{
+  "about": "#360: paid 240.00 after a printed 60.00 discount on a 300.00 original total",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "facts": { "merchantName": "小河餐厅", "receiptDate": "2026-08-18", "receiptTime": "19:20:00", "paidAmount": "240.00", "originalTotal": "300.00", "discount": "60.00" }
+}

@@ -59,7 +59,7 @@ export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
 // 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 had five kinds;
 // ADR-0032 adds the 支付截图 (payment screenshot). A 版式 (layout) belongs to exactly one kind.
-export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot'] as const;
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot', 'dining_receipt'] as const;
 export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
@@ -497,7 +497,7 @@ export const DINING_COPY = {
   receiptMissing: {
     title: (fileName: string) => `餐饮发票「${fileName}」缺少餐饮小票`,
     why: (totalAmount: string | undefined) =>
-      `餐饮报销要发票和餐饮小票两样。这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票，不能仅凭发票报销。餐饮小票的实付金额要与发票价税合计一分不差。请排除这份材料；餐饮小票的上传识别暂未支持。`,
+      `餐饮报销要发票和餐饮小票两样。这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票，不能仅凭发票报销。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传餐饮小票后重新盘点，或排除这份材料。`,
   },
 } as const;
 

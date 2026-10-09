@@ -16,6 +16,8 @@ import {
   HOTEL_FOLIO_PHOTO,
   HOTEL_INVOICE,
   DINING_INVOICE,
+  DINING_RECEIPT,
+  DISCOUNTED_DINING_RECEIPT,
   OFFICE_SUPPLIES_INVOICE,
   PRINT_PAGES,
   PRINT_VARIANTS,
@@ -308,6 +310,12 @@ function taxiPhoto(data) {
   return { id: data.id, ...PHOTO, css, body };
 }
 
+function diningReceipt(data) {
+  const css = `.receipt { width: 794px; height: 1123px; padding: 64px 160px; font-family: ${FONT}; font-size: 18px; color: #222; background: #fff; } .receipt h1 { text-align: center; font-size: 28px; margin-bottom: 32px; } .receipt p { margin: 18px 0; } .receipt table { width: 100%; border-collapse: collapse; margin: 28px 0; } .receipt td, .receipt th { text-align: left; border-bottom: 1px dashed #999; padding: 12px 4px; font-weight: 400; }`;
+  const body = `<div class="receipt"><h1>${esc(data.title)}</h1><p>商户：${esc(data.merchant)}</p><p>日期：${esc(data.date)}</p><p>时间：${esc(data.time)}</p><table><tr><th>菜品</th><th>数量</th><th>金额</th></tr><tr><td>家常菜</td><td>3</td><td>${esc(data.total)}</td></tr></table><p>合计：${esc(data.total)}</p>${data.discount ? `<p>优惠：${esc(data.discount)}</p>` : ''}<p>实付：${esc(data.paid)}</p><p>夹具生成器生成，非真实单据</p></div>`;
+  return { id: data.id, ...A4, css, body };
+}
+
 export const DOCS = {
   m01: invoice(HOTEL_INVOICE, '#8b3a3a'),
   m02: folio(HOTEL_FOLIO),
@@ -321,6 +329,8 @@ export const DOCS = {
   m10: taxiPhoto(TAXI_0819),
   m11: invoice(DINING_INVOICE, '#8b3a3a'),
   m12: invoice(OFFICE_SUPPLIES_INVOICE, '#8b3a3a'),
+  m13: diningReceipt(DINING_RECEIPT),
+  m14: diningReceipt(DISCOUNTED_DINING_RECEIPT),
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),

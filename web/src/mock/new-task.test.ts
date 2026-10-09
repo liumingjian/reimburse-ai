@@ -20,12 +20,20 @@ async function inventoryOf(files: string[]) {
 }
 
 describe('mock 服务端：新建任务命名与示例材料识别', () => {
-  test('示例材料对照表与识别档案一致（12 份，m01 到 m12）', () => {
-    expect(SAMPLES).toHaveLength(12);
+  test.each(['餐饮_小票.pdf', '餐饮_优惠小票.pdf'])('餐饮发票与 %s 实付金额相等时配对', async (fileName) => {
+    const { snapshot } = await inventoryOf(['餐饮_发票.pdf', fileName]);
+    const receipt = snapshot.materials.find((material) => material.fileName === fileName);
+    expect(receipt).toMatchObject({ kind: 'dining_receipt', role: 'reference', status: 'ok' });
+    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.lines).toEqual([expect.objectContaining({ category: { code: 'hospitality', label: '招待费' }, grossAmount: '240.00', referenceMaterialIds: [receipt?.materialId] })]);
+  });
+
+  test('示例材料对照表与识别档案一致（14 份，m01 到 m14）', () => {
+    expect(SAMPLES).toHaveLength(14);
     expect(SAMPLES.map((sample) => [sample.file, sample.fileName])).toEqual(Object.values(PROFILES).map((profile) => [profile.file, profile.fileName]));
   });
 
-  test('创建时是占位名称；按业务文件名上传 12 份后盘点，名称不变（同服务端）并给出费用期间，待确认项 5 个（含住宿发票缺支付截图）', async () => {
+  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 5 个待确认项', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.fileName));
     expect(snapshot.task.name).toMatch(/^\d{4}-\d{2}-\d{2} 新建报销$/);
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });

@@ -18,6 +18,8 @@ import {
   HOTEL_FOLIO,
   HOTEL_INVOICE,
   DINING_INVOICE,
+  DINING_RECEIPT,
+  DISCOUNTED_DINING_RECEIPT,
   OFFICE_SUPPLIES_INVOICE,
   RAIL_0809,
   RAIL_0822,
@@ -32,6 +34,8 @@ import { EXPECTED_FILES, OUTPUT_DIR, PDF_DOC_FILES } from './generate.mjs';
 
 // What every PDF must yield: its title, number, date, amounts and the wording that identifies the face.
 const EXPECTED_TEXT = {
+  m13: [DINING_RECEIPT.title, DINING_RECEIPT.merchant, DINING_RECEIPT.date, '实付', DINING_RECEIPT.paid],
+  m14: [DISCOUNTED_DINING_RECEIPT.title, '合计', DISCOUNTED_DINING_RECEIPT.total, '优惠', DISCOUNTED_DINING_RECEIPT.discount, '实付', DISCOUNTED_DINING_RECEIPT.paid],
   m01: ['电子发票', '增值税专用发票', HOTEL_INVOICE.number, HOTEL_INVOICE.date, HOTEL_INVOICE.seller.name, '价税合计', HOTEL_INVOICE.gross, HOTEL_INVOICE.net, HOTEL_INVOICE.tax, '住宿服务'],
   m02: ['结账单', HOTEL_FOLIO.hotel, '入住日期', HOTEL_FOLIO.checkIn, '离店日期', HOTEL_FOLIO.checkOut, '消费合计', HOTEL_FOLIO.total],
   m03: ['电子发票', '普通发票', AMAP_INVOICE.number, AMAP_INVOICE.date, '运输服务', '价税合计', AMAP_INVOICE.gross, AMAP_INVOICE.net, AMAP_INVOICE.tax],

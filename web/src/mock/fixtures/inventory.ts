@@ -22,7 +22,7 @@ import {
   stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具沿用原型任务，并增加餐饮发票档案。默认任务仍有 11 份材料；完整示例有 12 份。
+// 盘点结果夹具沿用原型任务，并增加餐饮发票及小票档案。默认任务仍有 11 份材料；完整示例有 14 份。
 // 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
 // mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
@@ -74,6 +74,7 @@ type Profile = {
 const RULE = {
   vat: 'rule:vat_invoice/einvoice',
   folio: 'rule:hotel_folio/labelled',
+  dining: 'rule:dining_receipt/labelled',
   passenger: 'rule:vat_invoice/einvoice',
   amap: 'rule:ride_itinerary/amap',
   caocao: 'rule:ride_itinerary/caocao',
@@ -84,6 +85,8 @@ const RULE = {
 // 材料种类 / 版式 per fixture id; absent = unrecognised.
 const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>> = {
   m11: { kind: 'vat_invoice', layout: 'einvoice' },
+  m13: { kind: 'dining_receipt', layout: 'labelled' },
+  m14: { kind: 'dining_receipt', layout: 'labelled' },
   m01: { kind: 'vat_invoice', layout: 'einvoice' },
   m02: { kind: 'hotel_folio', layout: 'labelled' },
   m03: { kind: 'vat_invoice', layout: 'einvoice' },
@@ -96,7 +99,7 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
 };
 
-// 以夹具材料 id（m01…m12）为键的识别档案。
+// 以夹具材料 id（m01…m14）为键的识别档案。
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',
@@ -328,6 +331,14 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
     checkText: '版式没有被任何规则认领',
     linked: [],
     fields: [],
+  },
+  m13: {
+    fileName: '餐饮_小票.pdf', file: 'm13-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 240.00 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '240.00', RULE.dining)],
+  },
+  m14: {
+    fileName: '餐饮_优惠小票.pdf', file: 'm14-discounted-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 240.00 元；原价 300.00 元，优惠 60.00 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '300.00', RULE.dining), field('discount', '优惠金额', '60.00', RULE.dining)],
   },
 };
 
@@ -587,6 +598,13 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     }
   }
   const pendingItems: PendingItem[] = [];
+  const receiptIds = uploaded.flatMap((material) => {
+    const fixture = fixtureOf.get(material.materialId);
+    const profile = fixture ? PROFILES[fixture] : undefined;
+    return fixture && IDENTITY[fixture]?.kind === 'dining_receipt' && profile?.fields.some((candidate) => candidate.key === 'paidAmount' && candidate.value === '240.00') ? [material.materialId] : [];
+  });
+  const diningInvoiceId = actualOf.get('m11');
+  const diningReceiptId = diningInvoiceId && receiptIds.length === 1 ? receiptIds[0] : undefined;
   const pendingIdOf = new Map<string, string>();
   const materials: Material[] = uploaded.map((material) => {
     const fixtureId = fixtureOf.get(material.materialId);
@@ -597,7 +615,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     const source = profile ?? known;
     const unknown = fixtureId ? null : unknownKind(material);
     const splitting = allocationRequired && fixtureId === AMAP_VOUCHER;
-    const template = splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
+    const template = fixtureId === 'm11' && diningReceiptId ? undefined : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
     const pendingItemIds: string[] = [];
     if (template) {
       const itemId = fixtureId === 'm11' ? `${DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
@@ -605,8 +623,9 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       pendingItemIds.push(itemId);
       pendingIdOf.set(material.materialId, itemId);
     }
-    const linked = p.linked.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
+    const linked = fixtureId === 'm11' && diningReceiptId ? [diningReceiptId] : material.materialId === diningReceiptId && diningInvoiceId ? [diningInvoiceId] : p.linked.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
     let checkText = unknown ? UNKNOWN_CHECK_TEXT[unknown] : p.checkText;
+    if (fixtureId === 'm11' && diningReceiptId) checkText = '餐饮发票与餐饮小票实付金额一致';
     if (fixtureId === 'm05' && unsupportedFault) checkText = '二维码核对一致；没有找到可配对的行程单，按发票 1 段';
     if (splitting) checkText = ALLOCATION_CHECK.voucher;
     if (allocationRequired && fixtureId === 'm04') checkText = ALLOCATION_CHECK.itinerary;
@@ -620,7 +639,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       role: p.role,
       shape: source ? source.shape : material.shape,
       mediaType: source ? source.mediaType : material.mediaType,
-      status: splitting ? 'pending' : p.status,
+      status: fixtureId === 'm11' && diningReceiptId ? 'ok' : splitting ? 'pending' : p.status,
       checkText,
       linkedMaterialIds: linked,
       pendingItemIds,
@@ -663,7 +682,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
   EVENTS.forEach((template, index) => {
     const voucherMaterialId = actualOf.get(template.voucher);
     if (!voucherMaterialId) return;
-    const refs = template.refs.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
+    const refs = template.voucher === 'm11' && diningReceiptId ? [diningReceiptId] : template.refs.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
     let evidenceNote = template.evidenceNote;
     if (template.voucher === 'm05' && refs.length === 0) evidenceNote = '没有找到可配对的行程单，按发票 1 段计一次费用';
     // 逐段分摊之前，高德各段先按行程单读数记（第 3 段读错）；答复后换成用户给的金额。
