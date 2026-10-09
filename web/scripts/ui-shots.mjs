@@ -112,7 +112,7 @@ const STATES = [
     await shot('-receipt');
     await click(p, btn(p, '关闭预览'));
     await p.getByLabel('报销事由', { exact: true }).fill('客户招待');
-    await p.getByLabel('选择明细 No.1', { exact: true }).check();
+    await p.locator('label[for^="pick-"]').first().click();
     await click(p, p.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: /P-2307/ }));
     await click(p, btn(p, '确认项目归属'));
     await click(p, btn(p, '确认整单明细'));
