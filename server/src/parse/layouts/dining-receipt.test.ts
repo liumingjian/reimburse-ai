@@ -59,6 +59,12 @@ describe('dining receipt recognition', () => {
     expect(dispatch({ ...doc, pageCount: 2, observations }, LAYOUTS).outcome).toBe('unrecognised');
   });
 
+  it('rejects a split hotel label after another field on the same row', () => {
+    const doc = receipt(['结账单', '实付:240.00']);
+    const observations = [...doc.observations, ...['桌号:8', '房', '号', ':101'].map((raw, index) => ({ id: 'p1.field.' + index, page: 1, x: 40 + index * 40, y: 700, width: 40, height: 12, text: raw, raw }))];
+    expect(dispatch({ ...doc, observations }, LAYOUTS).outcome).toBe('unrecognised');
+  });
+
   it('does not read an impossible optional date as a calendar date', () => {
     const outcome = dispatch(receipt(['餐饮小票', '日期：2026-02-30', '实付：240.00']), LAYOUTS);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'dining_receipt', missing: [] });

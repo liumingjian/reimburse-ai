@@ -26,7 +26,7 @@ export const diningReceipt: Layout = {
   recognise(doc) {
     const lines = joinedRows(doc);
     return matchSpan(lines, TITLE) !== null && !doc.observations.some((observation) => HOTEL.test(compact(observation.text)))
-      && ![...new Set(doc.observations.map((observation) => observation.page))].some((page) => joinedRows(doc, page).some((row) => HOTEL.test(row.text)))
+      && ![...new Set(doc.observations.map((observation) => observation.page))].some((page) => joinedRows(doc, page).some((row) => HOTEL.test(row.text) || matchSpan([row], HOTEL) !== null))
       && PAID_LABELS.some((label) => matchSpan(lines, new RegExp(`^${label}(?::.*)?$`)) !== null);
   },
   parse(doc) {
