@@ -492,8 +492,13 @@ export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,i
 export const screenshotGroupOf = <T extends { voucherMaterialId: string }>(screenshots: readonly T[], voucherMaterialId: string): T[] =>
   screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
 
-export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing', invoiceMissing: 'dining_invoice_missing' } as const;
+export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing', invoiceMissing: 'dining_invoice_missing', amountMismatch: 'dining_amount_mismatch' } as const;
 export const DINING_COPY = {
+  amountMismatch: {
+    title: (fileName: string) => `餐饮发票「${fileName}」与餐饮小票金额不一致`,
+    why: (totalAmount: string, paidAmounts: readonly string[]) =>
+      `这张餐饮发票价税合计 ${totalAmount} 元，未配对餐饮小票的实付金额 ${paidAmounts.join('、')} 元，金额不一致。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传正确的餐饮小票后重新盘点，或排除这张发票。`,
+  },
   invoiceMissing: {
     title: (fileName: string) => `餐饮小票「${fileName}」缺少发票`,
     why: (paidAmount: string | undefined) =>

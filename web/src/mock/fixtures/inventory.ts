@@ -87,6 +87,7 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m11: { kind: 'vat_invoice', layout: 'einvoice' },
   m13: { kind: 'dining_receipt', layout: 'labelled' },
   m14: { kind: 'dining_receipt', layout: 'labelled' },
+  m15: { kind: 'dining_receipt', layout: 'labelled' },
   m01: { kind: 'vat_invoice', layout: 'einvoice' },
   m02: { kind: 'hotel_folio', layout: 'labelled' },
   m03: { kind: 'vat_invoice', layout: 'einvoice' },
@@ -99,7 +100,7 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
 };
 
-// 以夹具材料 id（m01…m14）为键的识别档案。
+// Recognition profiles keyed by fixture material id.
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',
@@ -339,6 +340,10 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
   m14: {
     fileName: '餐饮_优惠小票.pdf', file: 'm14-discounted-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 240.00 元；原价 300.00 元，优惠 60.00 元', linked: [],
     fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '300.00', RULE.dining), field('discount', '优惠金额', '60.00', RULE.dining)],
+  },
+  m15: {
+    fileName: '餐饮_金额不一致小票.pdf', file: 'm15-mismatched-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 239.99 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '239.99', RULE.dining), field('originalTotal', '原价合计', '239.99', RULE.dining)],
   },
 };
 
@@ -605,6 +610,13 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
   });
   const diningInvoiceId = actualOf.get('m11');
   const diningReceiptId = diningInvoiceId && receiptIds.length === 1 ? receiptIds[0] : undefined;
+  const unpairedPaidAmounts = [...new Set(uploaded.flatMap((material) => {
+    const fixture = fixtureOf.get(material.materialId);
+    const profile = fixture ? PROFILES[fixture] : undefined;
+    const paidAmount = profile?.fields.find((candidate) => candidate.key === 'paidAmount')?.value;
+    return fixture && IDENTITY[fixture]?.kind === 'dining_receipt' && material.materialId !== diningReceiptId && paidAmount ? [paidAmount] : [];
+  }))];
+  const diningMismatch = unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes('240.00');
   const pendingIdOf = new Map<string, string>();
   const materials: Material[] = uploaded.map((material) => {
     const fixtureId = fixtureOf.get(material.materialId);
@@ -626,10 +638,20 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       allocation: null,
       screenshotGroup: null,
       manualKinds: [],
-    } : fixtureId === 'm11' && diningReceiptId ? undefined : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
+    } : fixtureId === 'm11' && diningReceiptId ? undefined : fixtureId === 'm11' && diningMismatch ? {
+      title: DINING_COPY.amountMismatch.title(material.fileName),
+      why: DINING_COPY.amountMismatch.why('240.00', unpairedPaidAmounts),
+      kind: 'choice',
+      resolver: '要你处理',
+      fields: [],
+      choices: [{ key: 'exclude', label: '排除这份材料' }],
+      allocation: null,
+      screenshotGroup: null,
+      manualKinds: [],
+    } : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
     const pendingItemIds: string[] = [];
     if (template) {
-      const itemId = orphanReceipt ? `${DINING_ITEM_CODES.invoiceMissing}.${material.materialId}` : fixtureId === 'm11' ? `${DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
+      const itemId = orphanReceipt ? `${DINING_ITEM_CODES.invoiceMissing}.${material.materialId}` : fixtureId === 'm11' ? `${diningMismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
       pendingItems.push({ itemId, materialId: material.materialId, status: 'open', answer: null, ...template });
       pendingItemIds.push(itemId);
       pendingIdOf.set(material.materialId, itemId);

@@ -21,7 +21,7 @@ import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, ty
 //
 // Item codes: unrecognised (with 手工补填, manual fill, in one step), ambiguous_layout, parse_failed,
 // validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
-// dining_receipt_missing (#359), dining_invoice_missing (#361); category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
+// dining_receipt_missing (#359), dining_invoice_missing (#361), dining_amount_mismatch (#362); category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
 // #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
 
@@ -701,9 +701,14 @@ export function inventoryView(
 
   const diningItems = new Map<string, PendingItem[]>();
   if (results && waiting === 0) {
+    const unpairedPaidAmounts = [...new Set(diningReceipts.filter((receipt) => !linked.has(receipt.m.materialId)).flatMap((receipt) => receipt.values['paidAmount'] ? [receipt.values['paidAmount']] : []))];
     for (const { material, draft } of ordered) {
       if (draft.category.code !== 'hospitality' || receiptByInvoice.has(material.materialId)) continue;
-      const item = settle(choice(`${DINING_ITEM_CODES.receiptMissing}.${material.materialId}`, material.materialId, DINING_COPY.receiptMissing.title(material.fileName), DINING_COPY.receiptMissing.why(draft.grossAmount), [EXCLUDE]), answers);
+      const mismatch = unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes(draft.grossAmount);
+      const code = mismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing;
+      const copy = mismatch ? DINING_COPY.amountMismatch : DINING_COPY.receiptMissing;
+      const why = mismatch ? DINING_COPY.amountMismatch.why(draft.grossAmount, unpairedPaidAmounts) : DINING_COPY.receiptMissing.why(draft.grossAmount);
+      const item = settle(choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]), answers);
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
