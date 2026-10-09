@@ -30,20 +30,20 @@ async function inventoried(page: Page, files: readonly File[]): Promise<TaskSnap
 
 test('认不出的 PDF 选「手工补填」：在同一张表里选定材料种类、对照原件填写后，待确认项都处理完', async ({ page }) => {
   await signIn(page);
-  const catering = sample('m11');
-  const { task } = await inventoried(page, [catering]);
+  const officeSupplies = sample('m12');
+  const { task } = await inventoried(page, [officeSupplies]);
   await page.goto(`/#/task/${task.taskId}/pending`);
 
-  await expect(page.getByRole('heading', { name: `认不出「${catering.name}」` })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `认不出「${officeSupplies.name}」` })).toBeVisible();
   await page.getByRole('button', { name: '手工补填' }).click();
-  const form = page.getByRole('form', { name: `手工补填「${catering.name}」` });
+  const form = page.getByRole('form', { name: `手工补填「${officeSupplies.name}」` });
   await form.getByLabel('材料种类 *').selectOption({ label: '全电发票' });
   const fill = (label: string, value: string) => form.getByLabel(`${label} *`, { exact: true }).fill(value);
-  await fill('发票号码', '26312000000103317790');
+  await fill('发票号码', '26312000000103317791');
   await fill('开票日期', '2026-08-14');
   await fill('发票票种', '普票');
-  await fill('销售方名称', '上海某某餐饮有限公司');
-  await fill('项目名称', '*餐饮服务*餐费');
+  await fill('销售方名称', '上海某某办公用品有限公司');
+  await fill('项目名称', '*办公用品*文具');
   await fill('不含税金额', '226.42');
   await fill('税额', '13.58');
   await fill('价税合计', '240.00');

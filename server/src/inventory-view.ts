@@ -1,4 +1,4 @@
-import { MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, MATERIAL_KINDS, manualKindOf, PAYMENT_COPY, PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from '@baox/contract';
+import { DINING_COPY, DINING_ITEM_CODES, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, MATERIAL_KINDS, manualKindOf, PAYMENT_COPY, PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
@@ -20,7 +20,7 @@ import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, ty
 //
 // Item codes: unrecognised (with 手工补填, manual fill, in one step), ambiguous_layout, parse_failed,
 // validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
-// category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
+// dining_receipt_missing (#359); category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
 // #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
 
@@ -632,9 +632,9 @@ export function inventoryView(
     });
   }
 
-  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
+  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation → hospitality;
   // within a category, voucher upload order. Invoice labels follow voucher upload order.
-  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation', 'hospitality'];
   const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
 
   // The 住宿 invoices are the vouchers the print stage will compose as 住宿 pages, chosen by the same rule.
@@ -685,6 +685,17 @@ export function inventoryView(
     pendingItems.push(...items);
   }
 
+  const diningItems = new Map<string, PendingItem[]>();
+  if (results && waiting === 0) {
+    for (const { material, draft } of ordered) {
+      if (draft.category.code !== 'hospitality') continue;
+      const item = settle(choice(`${DINING_ITEM_CODES.receiptMissing}.${material.materialId}`, material.materialId, DINING_COPY.receiptMissing.title(material.fileName), DINING_COPY.receiptMissing.why(draft.grossAmount), [EXCLUDE]), answers);
+      diningItems.set(material.materialId, [item]);
+      answerables.set(item.itemId, { item });
+      pendingItems.push(item);
+    }
+  }
+
   const materialViews = materials.flatMap((m): Material[] => {
     if (variantPlan.mergedMaterialIds.has(m.materialId)) return [];
     const outcome = results?.outcomes.get(m.materialId);
@@ -694,9 +705,9 @@ export function inventoryView(
       return [{ ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck }];
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
-    // A trio or payment item sits on a material that is otherwise clean: it keeps its role, but is pending while the
+    // An evidence item sits on a material that is otherwise clean: it keeps its role, but is pending while the
     // item is open.
-    const laterItems = [...(trio.items.get(m.materialId) ?? []), ...(payments?.items.get(m.materialId) ?? [])];
+    const laterItems = [...(trio.items.get(m.materialId) ?? []), ...(payments?.items.get(m.materialId) ?? []), ...(diningItems.get(m.materialId) ?? [])];
     const note = payments?.notes.get(m.materialId);
     const assignment = payments?.assignments.get(m.materialId);
     return [{

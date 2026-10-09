@@ -40,7 +40,7 @@ describe('待确认项', () => {
     expect(buttons.map((button) => button.textContent)).toEqual([
       '补填起点与终点IMG_4871.jpg',
       '下车时间不合法，并补填起点与终点IMG_4906.jpg',
-      '不支持的材料类型餐饮_发票.pdf',
+      '不支持的材料类型办公用品_发票.pdf',
       '住宿发票「全季酒店_发票.pdf」缺少支付截图',
     ]);
 
@@ -60,9 +60,9 @@ describe('待确认项', () => {
 
     // 切到不支持的材料：jsdom 画不了 PDF，退回 iframe 预览；出现两种选择。
     fireEvent.click(itemButton('不支持的材料类型'));
-    const frame = await within(detail()).findByTitle('餐饮_发票.pdf 原件');
+    const frame = await within(detail()).findByTitle('办公用品_发票.pdf 原件');
     expect(frame.tagName).toBe('IFRAME');
-    expect(frame.getAttribute('src')).toBe('fixtures/m11-other-invoice.pdf');
+    expect(frame.getAttribute('src')).toBe('fixtures/m12-office-supplies-invoice.pdf');
     expect(within(detail()).getByRole('button', { name: '排除此材料' })).toBeTruthy();
     expect(within(detail()).getByRole('button', { name: '自行手工处理' })).toBeTruthy();
   });
@@ -137,7 +137,7 @@ describe('待确认项', () => {
     ]);
     const taxi = snapshot.materials.find((material) => material.materialId === 'm09');
     expect(taxi?.fields.find((candidate) => candidate.key === 'origin')).toMatchObject({ value: '张江高科', source: 'user', evidence: 'explicit' });
-    expect(snapshot.materials.find((material) => material.materialId === 'm11')?.status).toBe('excluded');
+    expect(snapshot.materials.find((material) => material.materialId === 'm12')?.status).toBe('excluded');
     expect(snapshot.materials.find((material) => material.materialId === 'm01')?.status).toBe('ok');
     expect(snapshot.lines).toHaveLength(9);
     // The review's total only comes with its digest (after project assignment); here the lines carry it.
@@ -260,7 +260,7 @@ describe('原件查看器', () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(itemButton('不支持的材料类型'));
-    expect((await within(detail()).findByTitle('餐饮_发票.pdf 原件')).tagName).toBe('IFRAME');
+    expect((await within(detail()).findByTitle('办公用品_发票.pdf 原件')).tagName).toBe('IFRAME');
     expect(within(viewer()).queryByRole('button', { name: '全屏查看' })).toBeNull();
   });
 
@@ -381,7 +381,7 @@ describe('逐段分摊与阻塞项', () => {
     fireEvent.click(within(detail()).getByRole('button', { name: '排除这张发票及其行程单' }));
     expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
     snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04', 'm11']);
+    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04', 'm12']);
     expect(snapshot.stage).toBe('project');
     expect(snapshot.lines).toHaveLength(6);
     // The review's total only comes with its digest (after project assignment); here the lines carry it.

@@ -16,6 +16,7 @@ export type Slot = { key: string; label: string; required: boolean; format: Slot
 // Kernel category codes (contract ExpenseCategorySchema).
 export const CATEGORIES = {
   accommodation: { code: 'accommodation', label: '住宿' },
+  hospitality: { code: 'hospitality', label: '招待费' },
   long_distance: { code: 'long_distance', label: '长途交通' },
   // Undivided 市内交通: `deriveCategory` (rules/company-rules.ts) splits it into local / out-of-town from the expense
   // city and the task's home city; a line never carries this code.
@@ -124,6 +125,7 @@ export function vatItemCategory(itemName: string | undefined): ExpenseCategory |
   const taxClass = parts?.[1];
   const description = parts?.[2] ?? '';
   if (taxClass === '住宿服务') return CATEGORIES.accommodation;
+  if (taxClass === '餐饮服务') return CATEGORIES.hospitality;
   if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
   if (taxClass === '运输服务') return CATEGORIES.city_transport;
   if (taxClass === '交通运输服务') return PASSENGER_TRANSPORT.test(description) ? CATEGORIES.city_transport : null;

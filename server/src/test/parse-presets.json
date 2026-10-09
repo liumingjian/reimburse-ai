@@ -1839,6 +1839,202 @@
   "m11-other-invoice.pdf": {
     "sha256": "2fe58bb4dfb5f936028c498a27b1ee87fb48428353d2c0ec7f1609b220455a78",
     "outcome": {
+      "outcome": "recognised",
+      "kind": "vat_invoice",
+      "layout": "einvoice",
+      "parserVersion": "3",
+      "kindLabel": "全电发票（普票）",
+      "candidates": [
+        {
+          "key": "invoiceNumber",
+          "value": "26312000000103317790",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "发票号码：26312000000103317790"
+            }
+          ]
+        },
+        {
+          "key": "issueDate",
+          "value": "2026-08-14",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "开票日期：2026年08月14日"
+            }
+          ]
+        },
+        {
+          "key": "invoiceType",
+          "value": "普票",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.1"
+              ],
+              "text": "电 子 发 票 （ 普 通 发 票 ）"
+            }
+          ]
+        },
+        {
+          "key": "buyerName",
+          "value": "某某科技（上海）有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.5"
+              ],
+              "text": "名称：某某科技（上海）有限公司"
+            }
+          ]
+        },
+        {
+          "key": "buyerTaxId",
+          "value": "91310000XXXXXXXX0A",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.8"
+              ],
+              "text": "91310000XXXXXXXX0A"
+            }
+          ]
+        },
+        {
+          "key": "sellerName",
+          "value": "上海某某餐饮有限公司",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.10"
+              ],
+              "text": "名称：上海某某餐饮有限公司"
+            }
+          ]
+        },
+        {
+          "key": "sellerTaxId",
+          "value": "91310000VVVVVVVV0E",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.13"
+              ],
+              "text": "91310000VVVVVVVV0E"
+            }
+          ]
+        },
+        {
+          "key": "itemName",
+          "value": "*餐饮服务*餐费",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.21"
+              ],
+              "text": "*餐饮服务*餐费"
+            }
+          ]
+        },
+        {
+          "key": "netAmount",
+          "value": "226.42",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.29"
+              ],
+              "text": "¥226.42"
+            }
+          ]
+        },
+        {
+          "key": "taxAmount",
+          "value": "13.58",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.30"
+              ],
+              "text": "¥13.58"
+            }
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "value": "240.00",
+          "source": "rule:vat_invoice/einvoice",
+          "parserVersion": "3",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.34"
+              ],
+              "text": "¥240.00"
+            }
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "kind": "advisory",
+          "code": "qr_unreadable",
+          "message": "二维码无法识读，仅作提示：以 PDF 文本层为准"
+        }
+      ],
+      "missing": []
+    }
+  },
+  "m12-office-supplies-invoice.pdf": {
+    "sha256": "34df46dd7fecd45fd3f1daf5a4943867730bd38aa21fba9165a69ea732d8217b",
+    "outcome": {
       "outcome": "unrecognised",
       "reason": "no_layout",
       "clues": {

@@ -167,7 +167,7 @@ export const MaterialSchema = z.object({
 export type Material = z.infer<typeof MaterialSchema>;
 
 export const ExpenseCategorySchema = z.object({
-  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport）；页面只显示 label。
+  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport / hospitality）；页面只显示 label。
   code: z.string().min(1),
   label: z.string().min(1),
 });
@@ -491,6 +491,15 @@ export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,i
 // A voucher's group: its screenshots out of every current one, in list (upload) order.
 export const screenshotGroupOf = <T extends { voucherMaterialId: string }>(screenshots: readonly T[], voucherMaterialId: string): T[] =>
   screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+
+export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing' } as const;
+export const DINING_COPY = {
+  receiptMissing: {
+    title: (fileName: string) => `餐饮发票「${fileName}」缺少餐饮小票`,
+    why: (totalAmount: string | undefined) =>
+      `餐饮报销要发票和餐饮小票两样。这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票，不能仅凭发票报销。餐饮小票的实付金额要与发票价税合计一分不差。请排除这份材料；餐饮小票的上传识别暂未支持。`,
+  },
+} as const;
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
 // (invoice), the 结账单 (hotel folio) and the 支付截图 (payment screenshot). Inventory raises one 待确认项 per missing

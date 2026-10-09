@@ -1,4 +1,22 @@
 {
-  "about": "@baox/fixtures m11: a fully-digitalised VAT e-invoice (全电发票) whose item, catering (餐饮), is outside the v1 kinds. @baox/fixtures is synthetic, so the capture is unredacted.",
-  "outcome": "unrecognised"
+  "about": "#359: the synthetic dining invoice is recognised as a VAT invoice; its 餐饮服务 item derives hospitality.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "missing": [],
+  "findings": [
+    "qr_unreadable"
+  ],
+  "facts": {
+    "invoiceNumber": "26312000000103317790",
+    "issueDate": "2026-08-14",
+    "invoiceType": "普票",
+    "buyerName": "某某科技（上海）有限公司",
+    "buyerTaxId": "91310000XXXXXXXX0A",
+    "sellerName": "上海某某餐饮有限公司",
+    "sellerTaxId": "91310000VVVVVVVV0E",
+    "itemName": "*餐饮服务*餐费",
+    "netAmount": "226.42",
+    "taxAmount": "13.58",
+    "totalAmount": "240.00"
+  }
 }

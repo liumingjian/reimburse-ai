@@ -282,7 +282,7 @@ export const TAXI_0819 = {
   faded: true,
 };
 
-export const OTHER_INVOICE = {
+export const DINING_INVOICE = {
   id: 'm11',
   file: 'm11-other-invoice.pdf',
   title: '电子发票（普通发票）',
@@ -296,8 +296,17 @@ export const OTHER_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
+export const OFFICE_SUPPLIES_INVOICE = {
+  ...DINING_INVOICE,
+  id: 'm12',
+  file: 'm12-office-supplies-invoice.pdf',
+  number: '26312000000103317791',
+  seller: { name: '上海某某办公用品有限公司', taxNo: '91310000WWWWWWWW0F' },
+  rows: [{ name: '*办公用品*文具', unit: '批', qty: '1', price: '226.42', net: '226.42', rate: '6%', tax: '13.58' }],
+};
+
 // ---- Regression fixtures: the text-run splits of a real PDF (#200) ----
-// The sample materials (m01…m11) draw one text run per anchor; a real invoice does not — a label and its value are
+// The sample materials (m01…m12) draw one text run per anchor; a real invoice does not — a label and its value are
 // usually two runs, and a title is often one run per glyph. These two fixtures reproduce those splits; the rest of the
 // layout matches the hotel invoice, so each uploads on its own with no folio needed.
 

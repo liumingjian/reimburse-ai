@@ -37,7 +37,7 @@ const LONG = [
   '2026年8月上海出差_全季酒店上海虹桥国家会展中心店_住宿费增值税电子普通发票_含早餐及服务费明细.pdf',
   '上海市出租汽车统一发票_沪A·D12345_2026-08-10_浦东国际机场T2航站楼至静安寺商圈_夜间附加费.pdf',
 ];
-for (const f of LONG) fs.copyFileSync(path.join(samples, '餐饮_发票.pdf'), path.join(upDir, f));
+for (const f of LONG) fs.copyFileSync(path.join(samples, '办公用品_发票.pdf'), path.join(upDir, f));
 const allFiles = fs.readdirSync(upDir).map((f) => path.join(upDir, f));
 const shortFiles = allFiles.filter((f) => !LONG.some((l) => f.endsWith(l)));
 
