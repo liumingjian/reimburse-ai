@@ -14,6 +14,22 @@ beforeEach(async () => {
 afterEach(() => server.close());
 
 describe('dining invoice evidence', () => {
+  it('blocks a slip alone and rejects declarations without invoice evidence', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m13'] });
+    const slip = byFileName(scene.reached, sample('m13').name);
+    const itemId = `dining_invoice_missing.${slip.materialId}`;
+    expect(slip).toMatchObject({ role: 'reference', status: 'pending', pendingItemIds: [itemId] });
+    expect(scene.reached.lines).toEqual([]);
+    expect(scene.reached.pendingItems).toEqual([expect.objectContaining({ itemId, materialId: slip.materialId, title: '餐饮小票「餐饮_小票.pdf」缺少发票', choices: [{ key: 'exclude', label: '排除这份材料' }] })]);
+    for (const choice of ['confirm_none', 'supply']) {
+      expect(await scene.refused('answer-pending', { itemId, answer: { choice } })).toMatchObject({ code: 'invalid_answer' });
+    }
+    const excluded = await scene.accept('answer-pending', { itemId, answer: { choice: 'exclude' } });
+    expect(excluded.stage).toBe('inventory');
+    expect(excluded.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
+    expect(byFileName(excluded, slip.fileName).status).toBe('excluded');
+  });
+
   it.each(['m13', 'm14'])('pairs the invoice with %s using paid amount, independently of merchant and date', async (receipt) => {
     const scene = await scenario(server).at('project', { materials: ['m11', receipt] });
     const snapshot = scene.reached;
@@ -32,7 +48,31 @@ describe('dining invoice evidence', () => {
     expect(snapshot.lines).toHaveLength(2);
     expect(snapshot.lines.every((line) => line.referenceMaterialIds.length === 0)).toBe(true);
     expect(snapshot.materials.every((material) => material.linkedMaterialIds.length === 0)).toBe(true);
-    expect(snapshot.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId)).toEqual(snapshot.lines.map((line) => `dining_receipt_missing.${line.voucherMaterialId}`));
+    expect(snapshot.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId)).toEqual([
+      ...snapshot.lines.map((line) => `dining_receipt_missing.${line.voucherMaterialId}`),
+      ...snapshot.materials.filter((material) => material.kind === 'dining_receipt').map((material) => `dining_invoice_missing.${material.materialId}`),
+    ]);
+  });
+
+  it('clears an orphan slip when a matching invoice is uploaded and inventoried', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m13'] });
+    await scene.accept('reopen-upload');
+    const uploaded = await api(() => scene.client).upload(scene.task.taskId, [sample('m11')]);
+    expect(uploaded.batches).toHaveLength(2);
+    const paired = await scene.run('start-inventory');
+    const invoice = byFileName(paired, sample('m11').name);
+    const slip = byFileName(paired, sample('m13').name);
+    expect(paired.stage).toBe('project');
+    expect(paired.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
+    expect(slip).toMatchObject({ status: 'ok', linkedMaterialIds: [invoice.materialId] });
+    expect(paired.lines[0]?.referenceMaterialIds).toEqual([slip.materialId]);
+  });
+
+  it('keeps a slip blocked when the available invoice belongs to another category', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m13', 'm07'] });
+    const slip = byFileName(scene.reached, sample('m13').name);
+    expect(slip).toMatchObject({ status: 'pending', linkedMaterialIds: [] });
+    expect(scene.reached.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId)).toEqual([`dining_invoice_missing.${slip.materialId}`]);
   });
 
   it('supplies a missing slip by reopening upload, adding a new batch and inventorying again', async () => {
