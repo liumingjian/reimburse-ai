@@ -1,11 +1,11 @@
 import { cents, money } from '../../money-date';
-import { joinedRows, matchSpan, matchWidestSpan } from '../doc';
+import { compact, joinedRows, matchSpan, matchWidestSpan } from '../doc';
 import { ruleSource, type Candidate, type Layout } from '../layout';
 import type { SlotFormat } from '../slots';
 
 const SOURCE = ruleSource('dining_receipt', 'labelled');
 const TITLE = /^(小票|餐饮小票|结账单|消费小票|消费清单|顾客联)$/;
-const HOTEL = /(?:^|[,;，；])(入住日期|到店日期|抵店日期|离店日期|退房日期|房号|房间号)(?=:|$)/;
+const HOTEL = /(?:^|[,;，；])(入住日期|到店日期|抵店日期|离店日期|退房日期|房号|房间号)(?=:|[0-9A-Za-z]|$)/;
 const PAID_LABELS = ['实付', '实收', '应付', '合计'] as const;
 
 function valueOf(printed: string, format: SlotFormat): string | null {
@@ -25,7 +25,8 @@ export const diningReceipt: Layout = {
   kind: 'dining_receipt', name: 'labelled', version: '1', label: '餐饮小票',
   recognise(doc) {
     const lines = joinedRows(doc);
-    return matchSpan(lines, TITLE) !== null && matchSpan(lines, HOTEL) === null
+    return matchSpan(lines, TITLE) !== null && !doc.observations.some((observation) => HOTEL.test(compact(observation.text)))
+      && ![...new Set(doc.observations.map((observation) => observation.page))].some((page) => joinedRows(doc, page).some((row) => HOTEL.test(row.text)))
       && PAID_LABELS.some((label) => matchSpan(lines, new RegExp(`^${label}(?::.*)?$`)) !== null);
   },
   parse(doc) {

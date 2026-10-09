@@ -407,6 +407,10 @@ const LINE_FACTS = new Map(EVENTS.map((event, index) => [index, { net: event.net
 
 type PendingTemplate = Omit<PendingItem, 'itemId' | 'materialId' | 'status' | 'answer'>;
 
+function diningExclusion({ title, why }: Pick<PendingTemplate, 'title' | 'why'>): PendingTemplate {
+  return { title, why, kind: 'choice', resolver: '要你处理', fields: [], choices: [{ key: 'exclude', label: '排除这份材料' }], allocation: null, screenshotGroup: null, manualKinds: [] };
+}
+
 const TAXI_ROUTE_FIELDS = (originHint: string, destinationHint: string): PendingItem['fields'] => [
   { key: 'origin', label: '起点', placeholder: `如：${originHint}`, required: true, format: 'text' },
   { key: 'destination', label: '终点', placeholder: `如：${destinationHint}`, required: true, format: 'text' },
@@ -419,17 +423,7 @@ export const UNSUPPORTED_CHOICES: PendingItem['choices'] = [
 
 // 示例材料的待确认项都由用户处理（内核 WHO：要你处理）。
 const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
-  m11: {
-    title: DINING_COPY.receiptMissing.title('餐饮_发票.pdf'),
-    why: DINING_COPY.receiptMissing.why('240.00'),
-    kind: 'choice',
-    resolver: '要你处理',
-    fields: [],
-    choices: [{ key: 'exclude', label: '排除这份材料' }],
-    allocation: null,
-    screenshotGroup: null,
-    manualKinds: [],
-  },
+  m11: diningExclusion({ title: DINING_COPY.receiptMissing.title('餐饮_发票.pdf'), why: DINING_COPY.receiptMissing.why('240.00') }),
   m09: {
     title: '补填起点与终点',
     why: '客运费明细要求结构化的起点和终点，纸质车票上没有这两项，需要你对照行程回忆填写。',
@@ -629,27 +623,13 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     const unknown = fixtureId ? null : unknownKind(material);
     const splitting = allocationRequired && fixtureId === AMAP_VOUCHER;
     const orphanReceipt = fixtureId !== undefined && IDENTITY[fixtureId]?.kind === 'dining_receipt' && material.materialId !== diningReceiptId;
-    const template: PendingTemplate | undefined = orphanReceipt ? {
+    const template: PendingTemplate | undefined = orphanReceipt ? diningExclusion({
       title: DINING_COPY.invoiceMissing.title(material.fileName),
       why: DINING_COPY.invoiceMissing.why(p.fields.find((field) => field.key === 'paidAmount')?.value),
-      kind: 'choice',
-      resolver: '要你处理',
-      fields: [],
-      choices: [{ key: 'exclude', label: '排除这份材料' }],
-      allocation: null,
-      screenshotGroup: null,
-      manualKinds: [],
-    } : fixtureId === 'm11' && diningReceiptId ? undefined : fixtureId === 'm11' && diningMismatch ? {
+    }) : fixtureId === 'm11' && diningReceiptId ? undefined : fixtureId === 'm11' && diningMismatch ? diningExclusion({
       title: DINING_COPY.amountMismatch.title(material.fileName),
       why: DINING_COPY.amountMismatch.why('240.00', unpairedPaidAmounts),
-      kind: 'choice',
-      resolver: '要你处理',
-      fields: [],
-      choices: [{ key: 'exclude', label: '排除这份材料' }],
-      allocation: null,
-      screenshotGroup: null,
-      manualKinds: [],
-    } : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
+    }) : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
     const pendingItemIds: string[] = [];
     if (template) {
       const itemId = orphanReceipt ? `${DINING_ITEM_CODES.invoiceMissing}.${material.materialId}` : fixtureId === 'm11' ? `${diningMismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;

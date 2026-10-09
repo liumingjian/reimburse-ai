@@ -36,6 +36,29 @@ describe('dining receipt recognition', () => {
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio', layout: 'labelled' });
   });
 
+  it('keeps long compound hotel observations out of dining dispatch (#360)', () => {
+    const outcome = dispatch(receipt(['结账单', '合计:240.00', '姓名:张三,入住日期:2026-08-18,离店日期:2026-08-19,房号:101,天数:1,房价:240.00,消费合计:240.00']), LAYOUTS);
+    expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio', layout: 'labelled' });
+  });
+
+  it.each(['pdf', 'image'] satisfies ParseDoc['mediaType'][])('rejects an attached room label in %s observations', (mediaType) => {
+    const doc = { ...receipt(['结账单', '实付:240.00', '房号 101']), mediaType };
+    expect(dispatch(doc, LAYOUTS).outcome).toBe('unrecognised');
+  });
+
+  it.each(['入住日期', '离店日期', '房号'])('rejects %s on the second page', (anchor) => {
+    const doc = receipt(['结账单', '实付:240.00', anchor]);
+    const observations = doc.observations.map((observation, index) => index === 2 ? { ...observation, page: 2, id: 'p2.0' } : observation);
+    expect(dispatch({ ...doc, pageCount: 2, observations }, LAYOUTS).outcome).toBe('unrecognised');
+  });
+
+  it('rejects a hotel anchor split across observations beyond the field span limit', () => {
+    const doc = receipt(['结账单', '实付:240.00']);
+    const text = '备注:' + '说明'.repeat(40) + ',入住日期:2026-08-18';
+    const observations = [...doc.observations, ...Array.from(text, (raw, index) => ({ id: 'p2.' + index, page: 2, x: 40 + index * 8, y: 750, width: 8, height: 12, text: raw, raw }))];
+    expect(dispatch({ ...doc, pageCount: 2, observations }, LAYOUTS).outcome).toBe('unrecognised');
+  });
+
   it('does not read an impossible optional date as a calendar date', () => {
     const outcome = dispatch(receipt(['餐饮小票', '日期：2026-02-30', '实付：240.00']), LAYOUTS);
     expect(outcome).toMatchObject({ outcome: 'recognised', kind: 'dining_receipt', missing: [] });

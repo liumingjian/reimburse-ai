@@ -637,6 +637,7 @@ function LineRow({
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const lodging = snapshot.lodgingEvidence.find((evidence) => evidence.materialId === line.voucherMaterialId);
+  const preview = lodging ? { label: '住宿材料', Component: LodgingPreview } : line.category.code === 'hospitality' ? { label: '餐饮材料', Component: DiningPreview } : null;
   const dates = line.endDate && line.endDate !== line.date ? `${line.date} 至 ${line.endDate}` : line.date;
   return (
     <TableRow className={checked ? 'app-row-selected' : ''} data-testid={`line-card-${line.no}`}>
@@ -650,8 +651,7 @@ function LineRow({
       <TableCell>{lodging ? lodging.fields.location?.value ?? '住宿地未提供' : line.city ?? line.category.label}</TableCell>
       <TableCell className="app-wrap">
         {lodging ? lodging.fields.hotelName?.value ?? '酒店名称未提供' : line.route ?? line.description}
-        {lodging ? <><IconButton className="app-inline-icon" kind="ghost" size="sm" label={`查看住宿材料 No.${line.no}`} align="top" onClick={() => setPreviewOpen(true)}><View /></IconButton>{previewOpen ? <ConfirmDialog title={`住宿材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><LodgingPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
-        {line.category.code === 'hospitality' ? <><IconButton className="app-inline-icon" kind="ghost" size="sm" label={`查看餐饮材料 No.${line.no}`} align="top" onClick={() => setPreviewOpen(true)}><View /></IconButton>{previewOpen ? <ConfirmDialog title={`餐饮材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><DiningPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
+        {preview ? <><IconButton className="app-inline-icon" kind="ghost" size="sm" label={`查看${preview.label} No.${line.no}`} align="top" onClick={() => setPreviewOpen(true)}><View /></IconButton>{previewOpen ? <ConfirmDialog title={`${preview.label} No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><preview.Component snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
         {line.maskedNumber ? <div className="app-caption app-code">{line.maskedNumber}</div> : null}
       </TableCell>
       <TableCell data-testid={`project-of-${line.no}`}>

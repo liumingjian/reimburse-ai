@@ -1,0 +1,16 @@
+{
+  "about": "#360 synthetic reviewer counterexample: a complete hotel observation exceeds the dining extraction span limit and must remain hotel_folio without ambiguity.",
+  "outcome": "recognised",
+  "layout": "hotel_folio/labelled",
+  "facts": {
+    "guestName": "张三",
+    "checkIn": "2026-08-18",
+    "checkOut": "2026-08-19",
+    "roomNumber": "101",
+    "nights": "1",
+    "roomRate": "240.00",
+    "folioTotal": "240.00"
+  },
+  "missing": [],
+  "findings": []
+}
