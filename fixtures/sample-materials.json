@@ -12,5 +12,6 @@
   { "file": "m11-other-invoice.pdf", "fileName": "餐饮_发票.pdf" },
   { "file": "m12-office-supplies-invoice.pdf", "fileName": "办公用品_发票.pdf" },
   { "file": "m13-dining-receipt.pdf", "fileName": "餐饮_小票.pdf" },
-  { "file": "m14-discounted-dining-receipt.pdf", "fileName": "餐饮_优惠小票.pdf" }
+  { "file": "m14-discounted-dining-receipt.pdf", "fileName": "餐饮_优惠小票.pdf" },
+  { "file": "m16-dining-receipt-photo.jpg", "fileName": "餐饮_小票照片.jpg" }
 ]

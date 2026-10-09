@@ -431,3 +431,5 @@ export const WRAPPED_ITEM_INVOICE = {
   grossWords: '肆拾捌圆整',
   wideNameColumn: true,
 };
+
+export const DINING_RECEIPT_PHOTO = { ...DISCOUNTED_DINING_RECEIPT, id: 'm16', title: '消费小票' };
