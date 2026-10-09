@@ -1,0 +1,6 @@
+{
+  "about": "#362: a restaurant slip paid one cent less than the dining invoice, with no matching tolerance",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "facts": { "merchantName": "小河餐厅", "receiptDate": "2026-08-18", "receiptTime": "19:20:00", "paidAmount": "239.99", "originalTotal": "239.99" }
+}

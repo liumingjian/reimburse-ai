@@ -2362,5 +2362,99 @@
       "findings": [],
       "missing": []
     }
+  },
+  "m15-mismatched-dining-receipt.pdf": {
+    "sha256": "66b16e3a337025dfeb6e5045ca29cd9776f5f494c75bed78e91e4a9991ccb1cc",
+    "outcome": {
+      "outcome": "recognised",
+      "kind": "dining_receipt",
+      "layout": "labelled",
+      "parserVersion": "1",
+      "kindLabel": "餐饮小票",
+      "candidates": [
+        {
+          "key": "merchantName",
+          "value": "小河餐厅",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.2"
+              ],
+              "text": "商户：小河餐厅"
+            }
+          ]
+        },
+        {
+          "key": "receiptDate",
+          "value": "2026-08-18",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.3"
+              ],
+              "text": "日期：2026-08-18"
+            }
+          ]
+        },
+        {
+          "key": "receiptTime",
+          "value": "19:20:00",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.4"
+              ],
+              "text": "时间：19:20:00"
+            }
+          ]
+        },
+        {
+          "key": "paidAmount",
+          "value": "239.99",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.12"
+              ],
+              "text": "实付：239.99"
+            }
+          ]
+        },
+        {
+          "key": "originalTotal",
+          "value": "239.99",
+          "source": "rule:dining_receipt/labelled",
+          "parserVersion": "1",
+          "evidence": "explicit",
+          "refs": [
+            {
+              "page": 1,
+              "observationIds": [
+                "p1.11"
+              ],
+              "text": "合计：239.99"
+            }
+          ]
+        }
+      ],
+      "findings": [],
+      "missing": []
+    }
   }
 }
