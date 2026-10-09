@@ -13,7 +13,7 @@ export function DiningPreview({ snapshot, materialId }: { snapshot: TaskSnapshot
   );
   const selected = choices.find((material) => material.materialId === selectedId) ?? choices[0];
   return (
-    <section aria-label="餐饮材料预览">
+    <section className="app-dining-preview" aria-label="餐饮材料预览">
       <DocViewer material={selected} header={
         <ContentSwitcher className="app-doc-switcher" size="md" selectedIndex={Math.max(0, choices.findIndex((material) => material.materialId === selected?.materialId))} onChange={({ index }) => setSelectedId(choices[index ?? 0]?.materialId ?? materialId)}>
           {choices.map((material) => {
