@@ -75,3 +75,5 @@ Principles that changed implementation choices:
 - **Prove It Works:** verify real OCR, actual dispatch, the browser journey, and the downloaded print PDF before readiness.
 
 Independent audits use the user's configured GPT models. A different-model-family reviewer is unavailable in this runtime; this is an independence limit.
+
+The final independent trail audit by `gpt-6.1-sol` returned **No new flags**. It checked the regression repairs, matching code HEAD markers, all gate totals, private-corpus skip, eight closed implementation tickets, nine removed worktrees, ready PR #368, and the parent issue's merge-pending status. The code-to-evidence-commit diff contains only this review directory. The complete initial and final reports remain at `/tmp/reimburse-spec-356/trail-audit.md` and `/tmp/reimburse-spec-356/trail-audit-final.md`; the known limits above remain open.
