@@ -43,6 +43,6 @@ After printing the paired dining item.
 
 ![After printing the paired dining item](after-print-1440.png)
 
-The full-screen print view shows the two document halves.
+The full-screen print view opens the page at reading size. Scroll down in the viewer to inspect the receipt half.
 
 ![Dining print page in full screen](after-print-fullscreen-1440.png)

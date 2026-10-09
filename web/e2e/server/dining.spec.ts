@@ -36,7 +36,11 @@ test('上传餐饮发票和小票，配对为招待费，可切换原件并打�
   await page.getByRole('button', { name: '查看餐饮材料 No.1' }).click();
   const preview = page.getByRole('region', { name: '餐饮材料预览' });
   await expect(preview.getByRole('tab', { name: '发票：餐饮_发票.pdf' })).toHaveAttribute('aria-selected', 'true');
+  const invoiceImage = preview.getByRole('img', { name: '餐饮_发票.pdf 原件' });
+  await expect(invoiceImage).toBeVisible();
+  await expect.poll(() => invoiceImage.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   await preview.getByRole('tab', { name: '餐饮小票：餐饮_小票.pdf' }).click();
+  await expect(preview.getByRole('tab', { name: '餐饮小票：餐饮_小票.pdf' })).toHaveAttribute('aria-selected', 'true');
   await expect(preview.getByRole('img', { name: '餐饮_小票.pdf 原件' })).toBeVisible();
   await page.getByRole('button', { name: '关闭预览', exact: true }).click();
   const act = async (name: string, body: Record<string, unknown>) => {
