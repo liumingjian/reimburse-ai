@@ -718,6 +718,12 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
     material.role = 'excluded';
     material.status = 'excluded';
     material.checkText = choice === 'manual' ? '已标记为自行手工处理：你会在报销系统里另行补录，应用不碰它' : '已排除：不进入明细，也不上传报销系统';
+    for (let index = result.events.length - 1; index >= 0; index -= 1) {
+      if (result.events[index]?.voucherMaterialId === material.materialId) result.events.splice(index, 1);
+    }
+    result.events.forEach((event, index) => {
+      event.no = index + 1;
+    });
     return;
   }
   for (const f of item.fields) {

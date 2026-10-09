@@ -40,6 +40,11 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect(item).toMatchObject({ itemId: `dining_receipt_missing.${snapshot.materials[0]?.materialId}`, choices: [{ key: 'exclude', label: '排除这份材料' }] });
     if (!item) throw new Error('missing dining receipt item');
     expect(await adapter.answerPendingItem(snapshot.task.taskId, item.itemId, { choice: 'confirm_none' }, snapshot.step.stepToken)).toMatchObject({ ok: false, error: { code: 'invalid_answer' } });
+    const excluded = await adapter.answerPendingItem(snapshot.task.taskId, item.itemId, { choice: 'exclude' }, snapshot.step.stepToken);
+    if (!excluded.ok) throw new Error(excluded.error.message);
+    expect(excluded.snapshot.materials[0]?.status).toBe('excluded');
+    expect(excluded.snapshot.lines).toEqual([]);
+    expect(excluded.snapshot.events).toEqual([]);
   });
 
   test('new task snapshots start at revision 1 and accepted changes advance the revision', async () => {
