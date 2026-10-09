@@ -59,16 +59,25 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect(paired.materials.every((material) => material.status === 'ok')).toBe(true);
   });
 
-  test('示例材料对照表与识别档案一致（14 份，m01 到 m14）', () => {
-    expect(SAMPLES).toHaveLength(14);
+  test('餐饮发票与小票照片按实付金额配对', async () => {
+    const { snapshot } = await inventoryOf(['餐饮_发票.pdf', '餐饮_小票照片.jpg']);
+    const invoice = snapshot.materials.find((material) => material.fileName === '餐饮_发票.pdf');
+    const photo = snapshot.materials.find((material) => material.fileName === '餐饮_小票照片.jpg');
+    expect(photo).toMatchObject({ kind: 'dining_receipt', mediaType: 'image', status: 'ok', linkedMaterialIds: [invoice?.materialId] });
+    expect(snapshot.pendingItems).toEqual([]);
+    expect(snapshot.lines).toEqual([expect.objectContaining({ category: { code: 'hospitality', label: '招待费' }, grossAmount: '240.00', referenceMaterialIds: [photo?.materialId] })]);
+  });
+
+  test('示例材料对照表与识别档案一致（15 份，含餐饮小票照片）', () => {
+    expect(SAMPLES).toHaveLength(15);
     expect(SAMPLES.map((sample) => [sample.file, sample.fileName])).toEqual(Object.values(PROFILES).map((profile) => [profile.file, profile.fileName]));
   });
 
-  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 7 个待确认项', async () => {
+  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 8 个待确认项', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.fileName));
     expect(snapshot.task.name).toMatch(/^\d{4}-\d{2}-\d{2} 新建报销$/);
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(7);
+    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(8);
     expect(snapshot.materials.filter((material) => material.kindLabel === '未识别版式')).toHaveLength(1);
   });
 
@@ -100,7 +109,7 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
   test('按示例原件文件名（m01-hotel-invoice.pdf 等）上传也能识别', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.file));
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems).toHaveLength(7);
+    expect(snapshot.pendingItems).toHaveLength(8);
     expect(snapshot.events).toHaveLength(10);
   });
 

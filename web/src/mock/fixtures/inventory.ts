@@ -22,7 +22,7 @@ import {
   stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具沿用原型任务，并增加餐饮发票及小票档案。默认任务仍有 11 份材料；完整示例有 14 份。
+// 盘点结果夹具沿用原型任务，并增加餐饮发票及小票档案。默认任务仍有 11 份材料；完整示例有 15 份。
 // 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
 // mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
@@ -87,6 +87,7 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m11: { kind: 'vat_invoice', layout: 'einvoice' },
   m13: { kind: 'dining_receipt', layout: 'labelled' },
   m14: { kind: 'dining_receipt', layout: 'labelled' },
+  m16: { kind: 'dining_receipt', layout: 'labelled' },
   m01: { kind: 'vat_invoice', layout: 'einvoice' },
   m02: { kind: 'hotel_folio', layout: 'labelled' },
   m03: { kind: 'vat_invoice', layout: 'einvoice' },
@@ -99,7 +100,7 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
 };
 
-// 以夹具材料 id（m01…m14）为键的识别档案。
+// 以夹具材料 id（m01…m14、m16）为键的识别档案。
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',
@@ -338,6 +339,10 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
   },
   m14: {
     fileName: '餐饮_优惠小票.pdf', file: 'm14-discounted-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 240.00 元；原价 300.00 元，优惠 60.00 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '300.00', RULE.dining), field('discount', '优惠金额', '60.00', RULE.dining)],
+  },
+  m16: {
+    fileName: '餐饮_小票照片.jpg', file: 'm16-dining-receipt-photo.jpg', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'image', status: 'ok', checkText: '实付金额 240.00 元；原价 300.00 元，优惠 60.00 元', linked: [],
     fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '300.00', RULE.dining), field('discount', '优惠金额', '60.00', RULE.dining)],
   },
 };
