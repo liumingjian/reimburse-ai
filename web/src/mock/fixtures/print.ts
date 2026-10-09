@@ -25,6 +25,7 @@ const PAGE_DEFS: readonly PageDef[] = [
   { pageId: 'pg5', nos: 'No.7', date: '2026-08-09', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0809.pdf', bottom: null, rotateTop: false, rotateBottom: false },
   { pageId: 'pg6', nos: 'No.8', date: '2026-08-22', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0822.pdf', bottom: null, rotateTop: false, rotateBottom: false },
   { pageId: 'pg7', nos: 'No.9', date: '2026-08-09', categoryLabel: '住宿', grossAmount: '3640.00', top: '全季酒店_发票.pdf', bottom: '全季酒店_结账单.pdf', rotateTop: false, rotateBottom: true },
+  { pageId: 'dining', nos: 'No.1', date: '2026-08-14', categoryLabel: '招待费', grossAmount: '240.00', top: '餐饮_发票.pdf', bottom: '餐饮_小票.pdf', rotateTop: false, rotateBottom: false },
 ];
 
 // 出租车票照片（900x1200）上自动检测到的纸张四角，原图像素。
@@ -95,7 +96,7 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
       screenshotIds: [],
     });
   }
-  return { status: 'generated', fileName: PRINT_SHEET_FILE_NAME, url: PRINT_SHEET_URL, ...withScreenshots(pages, snapshot) };
+  return { status: 'generated', fileName: PRINT_SHEET_FILE_NAME, url: pages.length === 1 && pages[0]?.pageId === 'dining' ? 'fixtures/print-dining-sheet.pdf' : PRINT_SHEET_URL, ...withScreenshots(pages, snapshot) };
 }
 
 // 支付截图（同服务端 print/service.ts）：一张放在下半页右侧；2 张及以上全部移到紧随其后的续页（#333），每行 3 张、至多 2 行，

@@ -32,6 +32,7 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { ActionGroup } from '../shell/ActionGroup';
 import { LodgingPreview } from './LodgingPreview';
+import { DiningPreview } from './DiningPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
@@ -451,7 +452,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     return (
       <section className="app-pending-detail" aria-label="待确认项详情">
         <div className="app-review-split">
-          <LodgingPreview key={item.itemId} snapshot={snapshot} materialId={item.materialId} />
+          {snapshot.materials.some((material) => material.materialId === item.materialId && (material.kind === 'dining_receipt' || snapshot.lines.some((line) => line.voucherMaterialId === material.materialId && line.category.code === 'hospitality'))) ? <DiningPreview key={item.itemId} snapshot={snapshot} materialId={item.materialId} /> : <LodgingPreview key={item.itemId} snapshot={snapshot} materialId={item.materialId} />}
           <div className="app-detail-side">
             <div className="app-detail-head">
               <h2 className="app-section-title">{item.title}</h2>
