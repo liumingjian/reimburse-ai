@@ -119,6 +119,8 @@ const STATES = [
     await click(p, p.getByRole('link', { name: '去打印', exact: true }));
     await settle(p, 3000);
     await shot('-print');
+    await click(p, p.locator('img.app-page-image').first());
+    await shot('-print-fullscreen');
     return 'done';
   }],
   ['07-review', '?seed=review', '#/task/T1/review'],
