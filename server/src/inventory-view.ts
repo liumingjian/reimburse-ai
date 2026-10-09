@@ -21,7 +21,7 @@ import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, ty
 //
 // Item codes: unrecognised (with 手工补填, manual fill, in one step), ambiguous_layout, parse_failed,
 // validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
-// dining_receipt_missing (#359); category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
+// dining_receipt_missing (#359), dining_invoice_missing (#361); category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
 // #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
 
@@ -705,6 +705,14 @@ export function inventoryView(
       if (draft.category.code !== 'hospitality' || receiptByInvoice.has(material.materialId)) continue;
       const item = settle(choice(`${DINING_ITEM_CODES.receiptMissing}.${material.materialId}`, material.materialId, DINING_COPY.receiptMissing.title(material.fileName), DINING_COPY.receiptMissing.why(draft.grossAmount), [EXCLUDE]), answers);
       diningItems.set(material.materialId, [item]);
+      answerables.set(item.itemId, { item });
+      pendingItems.push(item);
+    }
+    for (const receipt of diningReceipts) {
+      const { materialId, fileName } = receipt.m;
+      if (linked.has(materialId)) continue;
+      const item = settle(choice(`${DINING_ITEM_CODES.invoiceMissing}.${materialId}`, materialId, DINING_COPY.invoiceMissing.title(fileName), DINING_COPY.invoiceMissing.why(receipt.values['paidAmount']), [EXCLUDE]), answers);
+      diningItems.set(materialId, [item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
     }

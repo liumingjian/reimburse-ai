@@ -615,10 +615,21 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     const source = profile ?? known;
     const unknown = fixtureId ? null : unknownKind(material);
     const splitting = allocationRequired && fixtureId === AMAP_VOUCHER;
-    const template = fixtureId === 'm11' && diningReceiptId ? undefined : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
+    const orphanReceipt = fixtureId !== undefined && IDENTITY[fixtureId]?.kind === 'dining_receipt' && material.materialId !== diningReceiptId;
+    const template: PendingTemplate | undefined = orphanReceipt ? {
+      title: DINING_COPY.invoiceMissing.title(material.fileName),
+      why: DINING_COPY.invoiceMissing.why(p.fields.find((field) => field.key === 'paidAmount')?.value),
+      kind: 'choice',
+      resolver: '要你处理',
+      fields: [],
+      choices: [{ key: 'exclude', label: '排除这份材料' }],
+      allocation: null,
+      screenshotGroup: null,
+      manualKinds: [],
+    } : fixtureId === 'm11' && diningReceiptId ? undefined : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
     const pendingItemIds: string[] = [];
     if (template) {
-      const itemId = fixtureId === 'm11' ? `${DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
+      const itemId = orphanReceipt ? `${DINING_ITEM_CODES.invoiceMissing}.${material.materialId}` : fixtureId === 'm11' ? `${DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
       pendingItems.push({ itemId, materialId: material.materialId, status: 'open', answer: null, ...template });
       pendingItemIds.push(itemId);
       pendingIdOf.set(material.materialId, itemId);
@@ -639,7 +650,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       role: p.role,
       shape: source ? source.shape : material.shape,
       mediaType: source ? source.mediaType : material.mediaType,
-      status: fixtureId === 'm11' && diningReceiptId ? 'ok' : splitting ? 'pending' : p.status,
+      status: orphanReceipt || splitting ? 'pending' : fixtureId === 'm11' && diningReceiptId ? 'ok' : p.status,
       checkText,
       linkedMaterialIds: linked,
       pendingItemIds,
