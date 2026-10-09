@@ -1,4 +1,5 @@
 import { daysBetween } from './money-date';
+import { pairInvoiceReferences } from './invoice-reference';
 
 // Hotel stays (#185): a 住宿 (accommodation) invoice and a 酒店结账单 (hotel folio) prove one continuous stay, so they
 // form one expense event dated from the folio's check-in to its check-out (kernel `events.mjs` single_stay). The
@@ -14,13 +15,15 @@ export type Stay = { invoiceId: string; folioId: string; checkIn: string; checkO
 // `invoices`: recognised, clean accommodation invoices; `folios`: recognised, clean hotel folios.
 export function pairHotelStays(invoices: readonly StayVoucher[], folios: readonly StayVoucher[]): Stay[] {
   const stays: Stay[] = [];
-  for (const folio of folios) {
+  const pairs = pairInvoiceReferences({
+    invoices,
+    references: folios,
+    invoiceAmount: (invoice) => invoice.values['totalAmount'],
+    referenceAmount: (folio) => folio.values['folioTotal'],
+  });
+  for (const { invoice, reference: folio } of pairs) {
     const { folioTotal, checkIn, checkOut } = folio.values;
     if (!folioTotal || !checkIn || !checkOut) continue;
-    const matches = invoices.filter((invoice) => invoice.values['totalAmount'] === folioTotal);
-    const [invoice] = matches;
-    if (!invoice || matches.length > 1) continue;
-    if (folios.filter((other) => other.values['folioTotal'] === folioTotal).length > 1) continue;
     stays.push({
       invoiceId: invoice.materialId,
       folioId: folio.materialId,
