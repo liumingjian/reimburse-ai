@@ -1,0 +1,58 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
+import { TaskSnapshotSchema } from '@baox/contract';
+import { expect, signIn, test } from './fixture';
+
+test('上传餐饮发票和小票，配对为招待费，可切换原件并打印上下半页', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signIn(page);
+  await page.goto('/#/tasks');
+  await page.getByRole('button', { name: '新建报销任务' }).click();
+  const dialog = page.getByRole('dialog', { name: '新建报销任务' });
+  await dialog.getByLabel('常驻城市').fill('杭州');
+  await dialog.getByRole('button', { name: '创建并上传材料' }).click();
+  await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
+  const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
+  const samples = ['m11', 'm13'].map((prefix) => {
+    const sample = SAMPLE_MATERIALS.find((candidate) => candidate.file.startsWith(prefix));
+    if (!sample) throw new Error(`missing ${prefix}`);
+    return { name: sample.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, sample.file)) };
+  });
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles(samples);
+  await expect(page.getByText('餐饮_小票.pdf', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '开始材料盘点' }).click();
+  const read = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  await expect.poll(async () => (await read()).lines.length).toBe(1);
+  const snapshot = await read();
+  const invoice = snapshot.materials.find((material) => material.fileName === '餐饮_发票.pdf');
+  const receipt = snapshot.materials.find((material) => material.fileName === '餐饮_小票.pdf');
+  expect(snapshot.lines[0]).toMatchObject({ category: { code: 'hospitality', label: '招待费' }, referenceMaterialIds: [receipt?.materialId] });
+  expect(invoice?.linkedMaterialIds).toEqual([receipt?.materialId]);
+  expect(receipt?.linkedMaterialIds).toEqual([invoice?.materialId]);
+  expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
+  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
+  await page.goto(`/#/task/${taskId}/project`);
+  await page.getByRole('button', { name: '查看餐饮材料 No.1' }).click();
+  const preview = page.getByRole('region', { name: '餐饮材料预览' });
+  await expect(preview.getByRole('tab', { name: '发票：餐饮_发票.pdf' })).toHaveAttribute('aria-selected', 'true');
+  await preview.getByRole('tab', { name: '餐饮小票：餐饮_小票.pdf' }).click();
+  await expect(preview.getByRole('img', { name: '餐饮_小票.pdf 原件' })).toBeVisible();
+  await page.getByRole('button', { name: '关闭预览', exact: true }).click();
+  const act = async (name: string, body: Record<string, unknown>) => {
+    const before = await read();
+    const response = await page.request.post(`/api/tasks/${taskId}/actions/${name}`, { data: { ...body, stepToken: before.step.stepToken } });
+    expect(response.ok()).toBe(true);
+    return TaskSnapshotSchema.parse(await response.json());
+  };
+  const review = await act('submit-project-assignment', { purpose: '客户招待', projects: { [snapshot.lines[0]!.lineId]: 'P-2307' } });
+  await act('confirm-review', { digest: review.confirmation.digest });
+  await page.goto(`/#/task/${taskId}/print`);
+  await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr')).toHaveText(['No.1 · 08-14 · 招待费 · 240.00'], { timeout: 60_000 });
+  expect((await read()).printSheet.pages[0]).toMatchObject({ kind: 'voucher', top: { materialId: invoice?.materialId }, bottom: { materialId: receipt?.materialId } });
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('link', { name: '下载打印稿 PDF' }).click();
+  const bytes = readFileSync(await (await downloading).path());
+  expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  expect(bytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
+});

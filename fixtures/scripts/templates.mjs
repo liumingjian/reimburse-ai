@@ -19,8 +19,10 @@ import {
   DINING_RECEIPT,
   DISCOUNTED_DINING_RECEIPT,
   MISMATCHED_DINING_RECEIPT,
+  DINING_RECEIPT_PHOTO,
   OFFICE_SUPPLIES_INVOICE,
   PRINT_PAGES,
+  DINING_PRINT_PAGES,
   PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
@@ -317,6 +319,17 @@ function diningReceipt(data) {
   return { id: data.id, ...A4, css, body };
 }
 
+function diningPhoto(data) {
+  const receipt = diningReceipt(data);
+  const css = `${receipt.css}
+.dining-photo { width: 900px; height: 1200px; background: #b9a58a; position: relative; overflow: hidden; }
+.dining-photo .paper { position: absolute; left: 220px; top: 140px; transform: perspective(1400px) rotateX(5deg) rotate(-3deg); transform-origin: center; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3); }
+.dining-photo .receipt { width: 450px; height: 850px; padding: 40px 35px; font-size: 22px; background: #fdfcf8; }
+.dining-photo .receipt h1 { font-size: 32px; }
+`;
+  return { id: data.id, ...PHOTO, css, body: `<div class="dining-photo"><div class="paper">${receipt.body}</div></div>` };
+}
+
 export const DOCS = {
   m01: invoice(HOTEL_INVOICE, '#8b3a3a'),
   m02: folio(HOTEL_FOLIO),
@@ -333,6 +346,7 @@ export const DOCS = {
   m13: diningReceipt(DINING_RECEIPT),
   m14: diningReceipt(DISCOUNTED_DINING_RECEIPT),
   m15: diningReceipt(MISMATCHED_DINING_RECEIPT),
+  m16: diningPhoto(DINING_RECEIPT_PHOTO),
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
@@ -386,7 +400,7 @@ ${bottom ? bottom.css : ''}
   return { id: page.id, ...A4, css, body };
 }
 
-export const PRINT_DOCS = PRINT_PAGES.map(printPage);
+export const PRINT_DOCS = [...PRINT_PAGES, ...DINING_PRINT_PAGES].map(printPage);
 export const VARIANT_DOCS = PRINT_VARIANTS.map((variant) => ({ ...printPage(variant), id: variant.file.replace(/\.png$/, '') }));
 
 // The merged print sheet: one A4 page (210mm x 297mm, no margin) per page image.

@@ -26,6 +26,7 @@ import { PAGE_COPY } from './page-copy';
 import { ProjectBookPanel } from './ProjectBookPanel';
 import { DeadlineWarningList } from './DeadlineWarningList';
 import { LodgingPreview } from './LodgingPreview';
+import { DiningPreview } from './DiningPreview';
 
 
 // 项目归属页：待确认项处理完之后、整单确认之前（Skill 的 project_unassigned → select-task），两条路径都要经过。
@@ -650,6 +651,7 @@ function LineRow({
       <TableCell className="app-wrap">
         {lodging ? lodging.fields.hotelName?.value ?? '酒店名称未提供' : line.route ?? line.description}
         {lodging ? <><IconButton className="app-inline-icon" kind="ghost" size="sm" label={`查看住宿材料 No.${line.no}`} align="top" onClick={() => setPreviewOpen(true)}><View /></IconButton>{previewOpen ? <ConfirmDialog title={`住宿材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><LodgingPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
+        {line.category.code === 'hospitality' ? <><IconButton className="app-inline-icon" kind="ghost" size="sm" label={`查看餐饮材料 No.${line.no}`} align="top" onClick={() => setPreviewOpen(true)}><View /></IconButton>{previewOpen ? <ConfirmDialog title={`餐饮材料 No.${line.no}`} confirmLabel="关闭预览" single wide onConfirm={() => setPreviewOpen(false)} onCancel={() => setPreviewOpen(false)}><DiningPreview snapshot={snapshot} materialId={line.voucherMaterialId} /></ConfirmDialog> : null}</> : null}
         {line.maskedNumber ? <div className="app-caption app-code">{line.maskedNumber}</div> : null}
       </TableCell>
       <TableCell data-testid={`project-of-${line.no}`}>

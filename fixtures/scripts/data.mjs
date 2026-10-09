@@ -369,6 +369,11 @@ export const PRINT_PAGES = [
   { id: 'pg7', file: 'print-pg7.png', nos: 'No.9', date: '08-09', category: '住宿', amount: '3640.00', top: 'm01', bottom: 'm02', rotateTop: false, rotateBottom: true },
 ];
 
+export const DINING_PRINT_PAGES = [
+  { id: 'dining', file: 'print-dining.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm13', rotateTop: false, rotateBottom: false },
+];
+export const DINING_PRINT_SHEET_FILE = 'print-dining-sheet.pdf';
+
 export function headerOf(page) {
   return `${page.nos} · ${page.date} · ${page.category} · ${page.amount}`;
 }
@@ -384,7 +389,7 @@ export function printPageFile(page, rotateTop, rotateBottom) {
 }
 
 // Every rotation combination other than the default placement: one for a page without a bottom half, three with one.
-export const PRINT_VARIANTS = PRINT_PAGES.flatMap((page) => {
+export const PRINT_VARIANTS = [...PRINT_PAGES, ...DINING_PRINT_PAGES].flatMap((page) => {
   const combos = page.bottom === null ? [[true, false], [false, false]] : [[false, false], [false, true], [true, false], [true, true]];
   return combos
     .map(([rotateTop, rotateBottom]) => ({ ...page, rotateTop, rotateBottom, file: printPageFile(page, rotateTop, rotateBottom) }))
@@ -435,3 +440,5 @@ export const WRAPPED_ITEM_INVOICE = {
   grossWords: '肆拾捌圆整',
   wideNameColumn: true,
 };
+
+export const DINING_RECEIPT_PHOTO = { ...DISCOUNTED_DINING_RECEIPT, id: 'm16', title: '消费小票' };

@@ -748,7 +748,8 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-.app-lodging-preview {
+.app-lodging-preview,
+.app-dining-preview {
   display: grid;
   gap: $spacing-03;
   align-content: start;
