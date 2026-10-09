@@ -38,8 +38,8 @@ export const MATERIAL_FILES = {
   m12: 'm12-office-supplies-invoice.pdf',
   m13: 'm13-dining-receipt.pdf',
   m14: 'm14-discounted-dining-receipt.pdf',
-  m16: 'm16-dining-receipt-photo.jpg',
   m15: 'm15-mismatched-dining-receipt.pdf',
+  m16: 'm16-dining-receipt-photo.jpg',
 };
 
 // Regression fixtures (#200 onwards): they reproduce how a real face is drawn — the text-run splits of a real PDF, or a

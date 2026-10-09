@@ -20,6 +20,38 @@ async function inventoryOf(files: string[]) {
 }
 
 describe('mock 服务端：新建任务命名与示例材料识别', () => {
+  test('排除金额不一致的餐饮发票后仍需处理孤立小票', async () => {
+    const { adapter, snapshot } = await inventoryOf(['餐饮_发票.pdf', '餐饮_金额不一致小票.pdf']);
+    const invoice = snapshot.materials.find((material) => material.fileName === '餐饮_发票.pdf');
+    const excluded = await adapter.answerPendingItem(snapshot.task.taskId, `dining_amount_mismatch.${invoice?.materialId}`, { choice: 'exclude' }, snapshot.step.stepToken);
+    if (!excluded.ok) throw new Error(excluded.error.message);
+    expect(excluded.snapshot.materials.find((material) => material.materialId === invoice?.materialId)?.status).toBe('excluded');
+    expect(excluded.snapshot.lines).toEqual([]);
+    expect(excluded.snapshot.stage).toBe('pending');
+    expect(excluded.snapshot.pendingItems.filter((candidate) => candidate.status === 'open')).toEqual([expect.objectContaining({ itemId: expect.stringMatching(/^dining_invoice_missing\./) })]);
+  });
+  test('餐饮金额不一致展示双方金额，追加正确小票后保留原小票的缺少发票问题', async () => {
+    const { adapter, snapshot } = await inventoryOf(['餐饮_发票.pdf', '餐饮_金额不一致小票.pdf']);
+    const invoice = snapshot.materials.find((material) => material.fileName === '餐饮_发票.pdf');
+    const itemId = `dining_amount_mismatch.${invoice?.materialId}`;
+    const item = snapshot.pendingItems.find((candidate) => candidate.itemId === itemId);
+    expect(item).toMatchObject({ title: '餐饮发票「餐饮_发票.pdf」与餐饮小票金额不一致', choices: [{ key: 'exclude', label: '排除这份材料' }] });
+    expect(item?.why).toContain('价税合计 240.00 元');
+    expect(item?.why).toContain('实付金额 239.99 元');
+    for (const choice of ['confirm_none', 'supply']) {
+      expect(await adapter.answerPendingItem(snapshot.task.taskId, itemId, { choice }, snapshot.step.stepToken)).toMatchObject({ ok: false, error: { code: 'invalid_answer' } });
+    }
+    const reopened = await adapter.reopenUpload(snapshot.task.taskId, snapshot.step.stepToken);
+    if (!reopened.ok) throw new Error(reopened.error.message);
+    const uploaded = await adapter.uploadBatch(snapshot.task.taskId, [new File(['matching slip'], '餐饮_小票.pdf', { type: 'application/pdf' })]);
+    if (!uploaded.ok) throw new Error(uploaded.error.message);
+    expect((await adapter.startInventory(snapshot.task.taskId, uploaded.snapshot.step.stepToken)).ok).toBe(true);
+    await vi.waitFor(async () => expect((await adapter.getSnapshot(snapshot.task.taskId)).inventory.status).toBe('done'));
+    const paired = await adapter.getSnapshot(snapshot.task.taskId);
+    expect(paired.materials.find((material) => material.materialId === invoice?.materialId)).toMatchObject({ status: 'ok', pendingItemIds: [] });
+    expect(paired.pendingItems.filter((candidate) => candidate.status === 'open')).toEqual([expect.objectContaining({ itemId: expect.stringMatching(/^dining_invoice_missing\./) })]);
+    expect(paired.stage).toBe('pending');
+  });
   test('餐饮小票缺少发票时阻塞，只能排除或追加上传发票', async () => {
     const { adapter, snapshot } = await inventoryOf(['餐饮_小票.pdf']);
     const slip = snapshot.materials[0];
@@ -68,16 +100,16 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect(snapshot.lines).toEqual([expect.objectContaining({ category: { code: 'hospitality', label: '招待费' }, grossAmount: '240.00', referenceMaterialIds: [photo?.materialId] })]);
   });
 
-  test('示例材料对照表与识别档案一致（15 份，含餐饮小票照片）', () => {
-    expect(SAMPLES).toHaveLength(15);
+  test('示例材料对照表与识别档案一致（16 份，含金额不一致和照片小票）', () => {
+    expect(SAMPLES).toHaveLength(16);
     expect(SAMPLES.map((sample) => [sample.file, sample.fileName])).toEqual(Object.values(PROFILES).map((profile) => [profile.file, profile.fileName]));
   });
 
-  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 8 个待确认项', async () => {
+  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 9 个待确认项', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.fileName));
     expect(snapshot.task.name).toMatch(/^\d{4}-\d{2}-\d{2} 新建报销$/);
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(8);
+    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(9);
     expect(snapshot.materials.filter((material) => material.kindLabel === '未识别版式')).toHaveLength(1);
   });
 
@@ -109,7 +141,7 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
   test('按示例原件文件名（m01-hotel-invoice.pdf 等）上传也能识别', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.file));
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems).toHaveLength(8);
+    expect(snapshot.pendingItems).toHaveLength(9);
     expect(snapshot.events).toHaveLength(10);
   });
 

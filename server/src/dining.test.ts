@@ -4,16 +4,52 @@ import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 import { loadParsePresets, presetParser, sha256 } from './test/parse-presets';
 
 const secondInvoice = { name: '第二顿餐饮_发票.pdf', bytes: new TextEncoder().encode('%PDF-second-dining-invoice') };
+const wrongSlip = sample('m15');
+const otherInvoice = { name: '另一金额餐饮_发票.pdf', bytes: new TextEncoder().encode('%PDF-other-dining-invoice') };
+const anotherWrongSlip = { name: '另一金额餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-another-wrong-dining-slip') };
+const duplicateWrongSlip = { name: '同金额餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-duplicate-wrong-dining-slip') };
+const incompleteSlip = { name: '缺少实付餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-incomplete-dining-slip') };
 
 let server: ScenarioServer;
 beforeEach(async () => {
   const invoice = loadParsePresets()['m11-other-invoice.pdf']?.outcome;
+  const slip = loadParsePresets()['m13-dining-receipt.pdf']?.outcome;
   if (invoice?.outcome !== 'recognised') throw new Error('dining invoice preset is missing');
-  server = await scenarioServer({ parser: presetParser({ [sha256(secondInvoice.bytes)]: { ...invoice, candidates: invoice.candidates.map((candidate) => candidate.key === 'invoiceNumber' ? { ...candidate, value: '26312000000103317792' } : candidate) } }) });
+  if (slip?.outcome !== 'recognised') throw new Error('dining receipt preset is missing');
+  server = await scenarioServer({ parser: presetParser({
+    [sha256(secondInvoice.bytes)]: { ...invoice, candidates: invoice.candidates.map((candidate) => candidate.key === 'invoiceNumber' ? { ...candidate, value: '26312000000103317792' } : candidate) },
+    [sha256(otherInvoice.bytes)]: { ...invoice, candidates: invoice.candidates.map((candidate) => candidate.key === 'invoiceNumber' ? { ...candidate, value: '26312000000103317793' } : candidate.key === 'totalAmount' ? { ...candidate, value: '300.00' } : candidate) },
+    [sha256(anotherWrongSlip.bytes)]: { ...slip, candidates: slip.candidates.map((candidate) => candidate.key === 'paidAmount' || candidate.key === 'originalTotal' ? { ...candidate, value: '230.00' } : candidate) },
+    [sha256(duplicateWrongSlip.bytes)]: { ...slip, candidates: slip.candidates.map((candidate) => candidate.key === 'paidAmount' || candidate.key === 'originalTotal' ? { ...candidate, value: '239.99' } : candidate) },
+    [sha256(incompleteSlip.bytes)]: { ...slip, candidates: slip.candidates.filter((candidate) => candidate.key !== 'paidAmount') },
+  }) });
 });
 afterEach(() => server.close());
 
 describe('dining invoice evidence', () => {
+  it('shows differing invoice and paid amounts and accepts only evidence or exclusion', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', wrongSlip] });
+    const invoice = byFileName(scene.reached, sample('m11').name);
+    const itemId = `dining_amount_mismatch.${invoice.materialId}`;
+    expect(scene.reached.pendingItems.find((item) => item.itemId === itemId)).toMatchObject({
+      materialId: invoice.materialId, title: '餐饮发票「餐饮_发票.pdf」与餐饮小票金额不一致',
+      why: expect.stringContaining('价税合计 240.00 元'), choices: [{ key: 'exclude', label: '排除这份材料' }],
+    });
+    expect(scene.reached.pendingItems.find((item) => item.itemId === itemId)?.why).toContain('实付金额 239.99 元');
+    for (const choice of ['confirm_none', 'supply']) {
+      expect(await scene.refused('answer-pending', { itemId, answer: { choice } })).toMatchObject({ code: 'invalid_answer' });
+    }
+    await scene.accept('reopen-upload');
+    await api(() => scene.client).upload(scene.task.taskId, [sample('m13')]);
+    const paired = await scene.run('start-inventory');
+    expect(byFileName(paired, invoice.fileName)).toMatchObject({ status: 'ok', pendingItemIds: [] });
+    expect(paired.lines[0]?.referenceMaterialIds).toEqual([byFileName(paired, sample('m13').name).materialId]);
+    const oldSlip = byFileName(paired, wrongSlip.name);
+    expect(paired.stage).toBe('pending');
+    expect(paired.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId)).toEqual([`dining_invoice_missing.${oldSlip.materialId}`]);
+    const resolved = await scene.accept('answer-pending', { itemId: `dining_invoice_missing.${oldSlip.materialId}`, answer: { choice: 'exclude' } });
+    expect(resolved.stage).toBe('project');
+  });
   it('blocks a slip alone and rejects declarations without invoice evidence', async () => {
     const scene = await scenario(server).at('pending', { materials: ['m13'] });
     const slip = byFileName(scene.reached, sample('m13').name);
@@ -28,6 +64,47 @@ describe('dining invoice evidence', () => {
     expect(excluded.stage).toBe('inventory');
     expect(excluded.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
     expect(byFileName(excluded, slip.fileName).status).toBe('excluded');
+  });
+
+  it('excludes a mismatched invoice while retaining its orphan slip blocker', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', wrongSlip] });
+    const invoice = byFileName(scene.reached, sample('m11').name);
+    const excluded = await scene.accept('answer-pending', { itemId: `dining_amount_mismatch.${invoice.materialId}`, answer: { choice: 'exclude' } });
+    expect(byFileName(excluded, invoice.fileName).status).toBe('excluded');
+    expect(excluded.lines).toEqual([]);
+    const slip = byFileName(excluded, wrongSlip.name);
+    expect(excluded.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId)).toEqual([`dining_invoice_missing.${slip.materialId}`]);
+    expect(excluded.stage).toBe('pending');
+  });
+
+  it('does not count a receipt already paired with another invoice as a mismatch candidate', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', 'm13', otherInvoice] });
+    const invoice = byFileName(scene.reached, otherInvoice.name);
+    expect(scene.reached.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId)).toEqual([`dining_receipt_missing.${invoice.materialId}`]);
+    expect(scene.reached.lines.find((line) => line.voucherMaterialId === invoice.materialId)?.grossAmount).toBe('300.00');
+  });
+
+  it('names each unique differing paid amount once and keeps equal-amount ambiguity as missing', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', wrongSlip, anotherWrongSlip, duplicateWrongSlip] });
+    const invoice = byFileName(scene.reached, sample('m11').name);
+    const why = scene.reached.pendingItems.find((item) => item.itemId === `dining_amount_mismatch.${invoice.materialId}`)?.why;
+    expect(why).toContain('实付金额 239.99、230.00 元');
+    expect(why?.match(/239\.99/g)).toHaveLength(1);
+    await scene.accept('reopen-upload');
+    await api(() => scene.client).upload(scene.task.taskId, [sample('m13'), sample('m14')]);
+    const ambiguous = await scene.run('start-inventory');
+    expect(byFileName(ambiguous, invoice.fileName).pendingItemIds).toEqual([`dining_receipt_missing.${invoice.materialId}`]);
+    expect(ambiguous.pendingItems.some((item) => item.itemId.startsWith('dining_amount_mismatch.'))).toBe(false);
+  });
+
+  it('ignores an incomplete receipt and an excluded wrong receipt when choosing the invoice item', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', incompleteSlip, wrongSlip] });
+    const invoice = byFileName(scene.reached, sample('m11').name);
+    const wrong = byFileName(scene.reached, wrongSlip.name);
+    const excluded = await scene.accept('answer-pending', { itemId: `dining_invoice_missing.${wrong.materialId}`, answer: { choice: 'exclude' } });
+    expect(byFileName(excluded, invoice.fileName).pendingItemIds).toEqual([`dining_receipt_missing.${invoice.materialId}`]);
+    expect(byFileName(excluded, incompleteSlip.name).status).toBe('pending');
+    expect(excluded.pendingItems.some((item) => item.itemId.startsWith('dining_amount_mismatch.'))).toBe(false);
   });
 
   it.each(['m13', 'm14'])('pairs the invoice with %s using paid amount, independently of merchant and date', async (receipt) => {
