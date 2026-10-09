@@ -31,6 +31,7 @@ test('上传餐饮发票和小票，配对为招待费，可切换原件并打�
   expect(invoice?.linkedMaterialIds).toEqual([receipt?.materialId]);
   expect(receipt?.linkedMaterialIds).toEqual([invoice?.materialId]);
   expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
+  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
   await page.goto(`/#/task/${taskId}/project`);
   await page.getByRole('button', { name: '查看餐饮材料 No.1' }).click();
   const preview = page.getByRole('region', { name: '餐饮材料预览' });
@@ -38,7 +39,6 @@ test('上传餐饮发票和小票，配对为招待费，可切换原件并打�
   await preview.getByRole('tab', { name: '餐饮小票：餐饮_小票.pdf' }).click();
   await expect(preview.getByRole('img', { name: '餐饮_小票.pdf 原件' })).toBeVisible();
   await page.getByRole('button', { name: '关闭预览', exact: true }).click();
-  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
   const act = async (name: string, body: Record<string, unknown>) => {
     const before = await read();
     const response = await page.request.post(`/api/tasks/${taskId}/actions/${name}`, { data: { ...body, stepToken: before.step.stepToken } });
