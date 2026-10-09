@@ -4,14 +4,16 @@ With no model in the loop, rule parsers and the user are the only producers of �
 
 ## Decisions
 
-- **Kind and layout.** A material kind owns the field-slot schema, the deterministic checks, how the material joins 费用事件 (expense events) and category derivation, and the 手工补填 (manual fill) form. v1 has five kinds:
-  - `vat_invoice`: 全电发票 (fully digital e-invoice), for lodging and ride-hailing;
+- **Kind and layout.** A material kind owns the field-slot schema, the deterministic checks, how the material joins 费用事件 (expense events) and category derivation, and the 手工补填 (manual fill) form. With ADR-0032 and [#356](https://github.com/liumingjian/reimburse-ai/issues/356), v1 has seven kinds. The original five gained `payment_screenshot` in ADR-0032 and now gain `dining_receipt`:
+  - `vat_invoice`: 全电发票 (fully digital e-invoice), for lodging, ride-hailing, and dining;
   - `rail_ticket`;
   - `ride_itinerary`;
   - `hotel_folio`;
-  - `taxi_receipt`.
+  - `taxi_receipt`;
+  - `payment_screenshot`;
+  - `dining_receipt`: 餐饮小票 (itemised restaurant checkout slip), a reference material.
 
-  A layout parser belongs to one kind and only recognises and extracts. The v1 layouts are `vat_invoice/einvoice`, `rail_ticket/12306`, `ride_itinerary/amap`, `hotel_folio/labelled` and `taxi_receipt/machine_printed`. Supporting 滴滴 (Didi) itineraries takes one new layout module and one registry line. A folio layout recognises on the folio's own field labels, not a chain name, so it covers every chain (#211, #212). A new kind, such as meal receipts or supplies, also needs a category and an ERP mapping, so it is outside v1.
+  A layout parser belongs to one kind and only recognises and extracts. The v1 layouts are `vat_invoice/einvoice`, `rail_ticket/12306`, `ride_itinerary/amap`, `hotel_folio/labelled`, `taxi_receipt/machine_printed`, `payment_screenshot/labelled`, and `dining_receipt/labelled`. Supporting 滴滴 (Didi) itineraries takes one new layout module and one registry line. A folio layout recognises on the folio's own field labels, not a chain name, so it covers every chain (#211, #212). Dining is a deliberate scope amendment in #356. Supplies remain outside v1.
 - **Dispatch.** Each layout exposes `recognise(doc)` and `parse(doc)`. `recognise` matches on hard anchors only. When exactly one layout matches, it parses. When none matches, the material is unrecognised. When several match, a blocking pending item is raised. First match wins no longer holds; it was the rule in `50931a3:kernel/src/parse.mjs` and in `extractDocument`. A recognised layout with missing fields raises `missing_required`; that material still counts as recognised.
 - **Input.** Parsers read one source-agnostic model of positioned 文字观测 (text observations). The PDF adapter (unpdf) and the OCR adapter (`onnxruntime-node`, in-process per [#147](https://github.com/liumingjian/reimburse-ai/issues/147)) both produce it. NFKC normalisation, perspective correction of the taxi photo and QR decoding run before parsing. Shared layout helpers live in a module inside `server/`, which is their only consumer.
 - **Candidates.** The shape follows [#20](https://github.com/liumingjian/reimburse-ai/issues/20).
@@ -40,12 +42,16 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `ride_itinerary/amap`: PDF and image.
   - `hotel_folio/labelled`: PDF and image. Each value is read by position from its label: right of it within half a text height, else directly below within one text height.
   - `taxi_receipt/machine_printed`: photo.
+  - `payment_screenshot/labelled`: image, per ADR-0032.
+  - `dining_receipt/labelled`: PDF and photo. Receipt titles include 小票, 消费小票, 结账单, 消费清单, and 顾客联. Recognition requires a receipt-style title and an amount labelled 实付, 实收, 应付, or 合计, with none of the hotel anchors 入住日期, 离店日期, or 房号. The hotel folio layout is unchanged. The two layouts must not both match one document. `paidAmount` is required. 实付 or 实收 wins over an original total. Merchant, date and time, original total, and discount are optional. No amount is back-calculated.
 
-  Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, road tickets and other vouchers. Payment screenshots are never parsed. They appear on the print sheet, and at inventory only their presence is checked, for the 住宿 (accommodation) trio of invoice, folio and screenshot ([#213](https://github.com/liumingjian/reimburse-ai/issues/213)).
+  Anything else is unrecognised, including 曹操出行 (Caocao) itineraries, road tickets, supplies invoices, and other vouchers. The 住宿 (accommodation) trio of invoice, folio, and screenshot is checked at inventory ([#213](https://github.com/liumingjian/reimburse-ai/issues/213)). ADR-0032 amended the original presence-only screenshot check on 2026-10-08. Payment screenshots are parsed, assigned to 住宿 invoices by payment date, and checked by sum. The existing accommodation missing-material answers remain unchanged.
 
-  *Amended 2026-10-08 by ADR-0032.* Payment screenshots are parsed: a sixth kind, `payment_screenshot`, with one layout, `payment_screenshot/labelled` (image), assigned to 住宿 invoices by payment date and checked by sum.
+  Dining requires both an invoice and a 餐饮小票. They pair one-to-one when invoice 价税合计 equals receipt `paidAmount` exactly to the cent, without tolerance. Equal-amount duplicates follow the accommodation matcher's rule. Merchant and date do not constrain pairing. Missing receipt, mismatched amounts, and a receipt without an invoice all block. The mismatch item shows both amounts. The user supplies the missing or correct material, or excludes the material. There is no 「确认没有」 answer. Payment screenshots and card slips do not count as dining receipts, and dining requires no payment screenshot. The paired invoice and receipt print on one page, one half each.
 
-  `vat_invoice/einvoice` recognises an invoice when **at least one** item row names a v1 税收分类 (tax class), not when every row does: a real ride-hailing invoice bundles a 服务费 or 经纪代理服务 row beside the ride, and the whole invoice is not thrown away over it. The accepted classes are the fine ones, `住宿服务` and `运输服务`, and the parent ones, `生产生活服务` and `交通运输服务`, the parents only together with a description that names the v1 service (`住宿费`, `客运服务费`) — a parent class covers freight and much else besides. The categories are unchanged: no 费用类别 (expense category) and no 材料种类 (material kind) is added to this matrix.
+  `vat_invoice/einvoice` recognises an invoice when **at least one** item row names a v1 税收分类 (tax class), not when every row does: a real ride-hailing invoice bundles a 服务费 or 经纪代理服务 row beside the ride, and the whole invoice is not thrown away over it. The accepted classes are the fine ones, `住宿服务`, `运输服务`, and `餐饮服务`, and the parent ones, `生产生活服务` and `交通运输服务`. The parents require a description naming the v1 service (`住宿费`, `客运服务费`), because they also cover other services.
+
+  Every `*餐饮服务*` invoice derives 招待费 (`hospitality`), never a user-selected category, per ADR-0006. Company rules map it to FY009001 with source `user_declared` until the first real ERP save reads it back (#366). The accepted gap is that travel meals and overtime meals also derive hospitality and cannot yet be claimed under another expense item. Hospitality detail fields are outside #356. The new layout needs 3–5 real invoice and receipt pairs in the private corpus, including a discounted receipt and a photo, and required field expectations in the private gate (#365). Synthetic fixtures alone do not prove real-receipt accuracy.
 
 ## Considered Options
 
@@ -75,7 +81,7 @@ With no model in the loop, rule parsers and the user are the only producers of �
   - `ride_itinerary/amap`: m04; r202 (a leg amount that reads 待结算), r205 (a wrapped 上车时间 cell and 元-suffixed amounts);
   - `rail_ticket`: m07, m08; r204 (a trip row with a seat cell, 票价 apart from its amount);
   - `taxi_receipt`: m09, m10;
-  - unrecognised: m06, m11.
+  - unrecognised before #356: m06, m11. #356 admits m11 as a dining invoice and replaces its unsupported-invoice role with a supplies fixture.
 
   Private samples run through `test:private`, which gates per layout, medium and field (#196): text-layer PDFs must
   be 100% recognised and 100% right per field; OCR images at least 98% (`server/src/quality/private-gate.ts`).
