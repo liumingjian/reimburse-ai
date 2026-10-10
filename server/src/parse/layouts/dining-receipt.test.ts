@@ -130,3 +130,17 @@ it('accepts consistent readable duplicate paid labels with both evidence referen
   expect(candidate?.value).toBe('530.00');
   expect(candidate?.refs.flatMap((ref) => ref.observationIds)).toEqual(['p1.1', 'p1.2']);
 });
+
+it('keeps a complete paid label present when an adjacent value block is unreadable', () => {
+  const doc = columnReceipt([{ text: '实收金额', x: 40, width: 80 }, { text: '模糊', x: 125 }, { text: '合计:600.00', x: 40, y: 550 }]);
+  expect(paid(doc)).toBeUndefined();
+});
+
+it('stops amount search at another field label', () => {
+  const doc = columnReceipt([{ text: '实收金额', x: 40 }, { text: '桌号:', x: 500 }, { text: '530.00', x: 820 }]);
+  expect(paid(doc)).toBeUndefined();
+});
+
+it('rejects trailing garbage on a split delimiter-free money value', () => {
+  expect(paid(columnReceipt([{ text: '实收金额', x: 40 }, { text: '530.00', x: 120, width: 80 }, { text: '错', x: 200 }]))).toBeUndefined();
+});

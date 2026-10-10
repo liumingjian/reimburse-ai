@@ -134,7 +134,10 @@ export function vatItemCategory(itemName: string | undefined): ExpenseCategory |
   const description = parts?.[2] ?? '';
   if (taxClass === '住宿服务') return CATEGORIES.accommodation;
   if (taxClass === '餐饮服务') return CATEGORIES.hospitality;
-  if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
+  if (taxClass === '生产生活服务') {
+    if (description.startsWith('住宿费')) return CATEGORIES.accommodation;
+    return /^餐饮服务(?=$|[0-9¥￥])/.test(description) ? CATEGORIES.hospitality : null;
+  }
   if (taxClass === '运输服务') return CATEGORIES.city_transport;
   if (taxClass === '交通运输服务') return PASSENGER_TRANSPORT.test(description) ? CATEGORIES.city_transport : null;
   return null;

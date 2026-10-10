@@ -14,5 +14,8 @@
     "netAmount": "500.00",
     "taxAmount": "30.00",
     "totalAmount": "530.00"
-  }
+  },
+  "findings": [
+    "qr_match"
+  ]
 }

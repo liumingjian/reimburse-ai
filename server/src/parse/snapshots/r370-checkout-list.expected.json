@@ -1,8 +1,4 @@
 {
-  "about": "#370: redacted second checkout photo uses the printed checkout-list title and receivable label.",
-  "outcome": "recognised",
-  "layout": "dining_receipt/labelled",
-  "facts": {
-    "paidAmount": "530.00"
-  }
+  "about": "#371: the extra checkout photo has a wrong paper boundary that includes the table and warps amount rows; keep no_layout until reader geometry is repaired.",
+  "outcome": "unrecognised"
 }

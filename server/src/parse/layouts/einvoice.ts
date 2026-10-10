@@ -8,7 +8,7 @@ import { vatItemCategory } from '../slots';
 
 const KIND = 'vat_invoice';
 const NAME = 'einvoice';
-const VERSION = '3';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 export const QR_SOURCE = ruleSource(KIND, 'einvoice_qr');
 
