@@ -172,3 +172,46 @@ it.each(['累计', '商户:', '备注:'])('rejects a paid label embedded after t
   ]);
   expect(dispatch(doc, LAYOUTS).outcome).toBe('unrecognised');
 });
+
+it.each([
+  ['桌号:', '8'],
+  ['桌', '号', ':', '8'],
+  ['桌号:', '1', '2'],
+  ['桌号:', 'A', '0', '8'],
+  ['桌号:', '8', '人数:', '2'],
+  ['订单:', 'A08-', '12'],
+].map((parts) => ({ parts })))('reads paid after a complete field split as $parts (#370)', ({ parts }) => {
+  const candidate = paid(columnReceipt([
+    ...parts.map((text, index) => ({ text, x: 40 + index * 20, width: 20 })),
+    { text: '实收:530.00', x: 45 + parts.length * 20, width: 150 },
+    { text: '合计:600.00', x: 40, y: 550 },
+  ]));
+  expect(candidate?.value).toBe('530.00');
+  expect(candidate?.refs.flatMap((ref) => ref.observationIds)).toEqual([`amount.${parts.length}`]);
+});
+
+it.each(['实收:', '实收:模糊', '实收:540.00'])('retains %s after a split complete field when deciding duplicate ambiguity (#370)', (second) => {
+  expect(paid(columnReceipt([
+    { text: '实收:530.00', x: 40, y: 650 },
+    { text: '桌号:', x: 40, width: 60 },
+    { text: '8', x: 100, width: 20 },
+    { text: second, x: 125, width: 150 },
+    { text: '合计:600.00', x: 40, y: 550 },
+  ]))).toBeUndefined();
+});
+
+it.each([
+  ['桌号:8', '累计'],
+  ['桌号:', '8累计'],
+  ['桌号:', '8', '累计'],
+  ['桌号:8', '备注:'],
+  ['商', '户', ':'],
+  ['备', '注', ':'],
+  ['商户:', '小河'],
+].map((parts) => ({ parts })))('rejects an embedded paid label after the contiguous prefix $parts', ({ parts }) => {
+  const doc = columnReceipt([
+    ...parts.map((text, index) => ({ text, x: 40 + index * 60, width: 60 })),
+    { text: '实收金额:530.00', x: 45 + parts.length * 60, width: 180 },
+  ]);
+  expect(dispatch(doc, LAYOUTS).outcome).toBe('unrecognised');
+});
