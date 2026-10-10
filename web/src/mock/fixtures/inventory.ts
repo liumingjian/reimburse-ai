@@ -633,7 +633,8 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     const pendingItemIds: string[] = [];
     if (template) {
       const itemId = orphanReceipt ? `${DINING_ITEM_CODES.invoiceMissing}.${material.materialId}` : fixtureId === 'm11' ? `${diningMismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
-      pendingItems.push({ itemId, materialId: material.materialId, status: 'open', answer: null, ...template });
+      const dining: PendingItem['dining'] = orphanReceipt ? { kind: 'receipt', supplement: 'invoice', assignment: { address: `edit.${material.materialId}.diningInvoice`, selection: { kind: 'automatic' }, options: diningInvoiceId && !diningReceiptId ? [{ invoiceId: diningInvoiceId, amount: '240.00', label: '餐饮发票 · 240.00 元' }] : [] } } : fixtureId === 'm11' ? { kind: 'invoice', supplement: 'receipt' } : null;
+      pendingItems.push({ dining, itemId, materialId: material.materialId, status: 'open', answer: null, ...template });
       pendingItemIds.push(itemId);
       pendingIdOf.set(material.materialId, itemId);
     }

@@ -150,14 +150,15 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
         batch.files.push({ fileId, fileName: file.name, relativePath: relativePathOf(file), size: file.size, status: 'accepted', contentHash: verdict.contentHash, reasonCode: null, reason: null, materialId });
       }
       // A batch opens the next inventory version (the server numbers them v1, v2, ...).
-      batch.versionId = `v${batch.no}`;
+      const accepted = batch.files.some((file) => file.status === 'accepted');
+      batch.versionId = accepted ? `v${snapshot.batches.filter((batch) => batch.versionId !== null).length + 1}` : null;
       if (snapshot.inventory.status === 'not_started') snapshot.inventory.versionId = batch.versionId;
       snapshot.batches.push(batch);
       snapshot.task.updatedAt = batch.uploadedAt;
       // 盘点之后再追加批次：材料变了，旧确认失效，任务回到上传阶段（服务端兜底，即使页面没有先走 reopenUpload）。
-      if (snapshot.stage !== 'upload') invalidateForMaterialChange(snapshot);
+      if (accepted && snapshot.stage !== 'upload') invalidateForMaterialChange(snapshot);
       // 有材料后，当前待答 step 变成「开始材料盘点」；状态变了，凭据也换。
-      if (snapshot.materials.length > 0) snapshot.step = { kind: 'start_inventory', stepToken: `tok-${taskId}-upload-${batchId}` };
+      if (accepted) snapshot.step = { kind: 'start_inventory', stepToken: `tok-${taskId}-upload-${batchId}` };
       return bus.commit(snapshot);
     },
     // 开始材料盘点：阶段推到 inventory，盘点分阶段按定时器推进并推送快照；结束后形成结果。

@@ -2,6 +2,7 @@ import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Button, IconButton, Select, SelectItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
 import { CheckmarkFilled, TrashCan, WarningAltFilled } from '@carbon/icons-react';
 import {
+  DINING_INVOICE_KEY,
   segmentKey,
   manualKindOf,
   normalizePendingAnswer,
@@ -32,6 +33,8 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { ActionGroup } from '../shell/ActionGroup';
 import { LodgingPreview } from './LodgingPreview';
+import { DiningEvidence, DiningInvoiceSelect } from './DiningEvidence';
+import { LatestUploadRejections } from './LatestUploadRejections';
 import { DiningPreview } from './DiningPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
@@ -97,6 +100,7 @@ type FormProps = {
   onExclude: () => Promise<void>;
   // The missing-screenshot item's group (#331); absent for any other item.
   screenshots?: ScreenshotGroupProps | undefined;
+  diningAllowed?: boolean | undefined;
   state: SubmitState;
 };
 // What the item's `screenshotGroup` says (the lock), its #331 screenshots in upload order, and the group's actions.
@@ -160,7 +164,7 @@ function FieldInputs({ idPrefix, fields, values, errors, disabled, onChange }: F
 
 // 手工补填 in one step (#342): the 材料种类 is picked inline and its fields follow; one answer carries both, and the
 // server checks it like any read value. A resolved item shows what was filled.
-function ManualForm({ item, fileName, onSubmit, state }: Pick<FormProps, 'item' | 'fileName' | 'onSubmit' | 'state'>) {
+function ManualForm({ item, fileName, onSubmit, state, diningAllowed }: Pick<FormProps, 'item' | 'fileName' | 'onSubmit' | 'state' | 'diningAllowed'>) {
   const answered = fieldAnswer(item.answer);
   const [values, setValues] = useState<FieldAnswer>(answered[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? answered : { [PENDING_CHOICE_KEY]: MANUAL_FILL_CHOICE });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -192,6 +196,7 @@ function ManualForm({ item, fileName, onSubmit, state }: Pick<FormProps, 'item' 
         ))}
       </Select>
       {manual ? <FieldInputs idPrefix={`pm-${item.itemId}`} fields={manual.fields} values={values} errors={errors} disabled={disabled} onChange={setValues} /> : null}
+      {manual?.diningAssignment ? <DiningInvoiceSelect assignment={manual.diningAssignment} id={`pm-${item.itemId}-invoice`} value={values[DINING_INVOICE_KEY] ?? ''} onChange={(value) => setValues({ ...values, [DINING_INVOICE_KEY]: value })} disabled={disabled || !diningAllowed} blankLabel="暂不关联" error={errors[DINING_INVOICE_KEY]} /> : null}
       {resolved ? null : (
         <ActionGroup caption="对照原件填写所选种类的字段。补填的值同样经过核对，系统不会倒算任何金额。" error={state.error}>
           <Button type="submit" size="md" disabled={state.busy}>
@@ -207,7 +212,7 @@ function ManualForm({ item, fileName, onSubmit, state }: Pick<FormProps, 'item' 
 // payment screenshots, 上传支付截图 is secondary too and 「已传齐」 the primary, last; 「确认没有支付截图」 is offered only
 // while the group is empty. The chosen answer keeps aria-pressed when revisited. The file input stays hidden behind
 // the upload button. Once resolved (unless by 排除), the group still takes uploads and removals while not locked.
-function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: FormProps) {
+function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, diningAllowed }: FormProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
@@ -281,7 +286,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state }: For
           </Button>
         ) : null}
       </ActionGroup>
-      {filling ? <ManualForm item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
+      {filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
     </div>
   );
 }
@@ -444,7 +449,8 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
     };
   };
   // A resolved screenshot item the filer can still change (#332): reachable from the all-done view too.
-  const reopenable = (item: PendingItem) => item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
+  const diningAllowed = snapshot.allowedActions.includes('change_dining_evidence');
+  const reopenable = (item: PendingItem) => (diningAllowed && item.dining?.kind === 'receipt') || item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
 
   // 选中项的详情：左边原件，右边标题、原因与表单，再往下是读出的字段。
   const detailOf = (item: PendingItem) => {
@@ -466,7 +472,14 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
               onSubmit={(answer) => submit(item, answer)}
               onExclude={() => exclude(item)}
               screenshots={groupOf(item)}
+              diningAllowed={diningAllowed}
             />
+            <DiningEvidence key={item.itemId + JSON.stringify(item.dining)} item={item} disabled={busy || !diningAllowed}
+              onAssign={async (address, value) => { settle(await run((adapter) => adapter.answerPendingItem(taskId, address, { value }, snapshot.step.stepToken))); }}
+              onUpload={async (files) => {
+                const outcome = await run((adapter) => adapter.supplementDiningEvidence(taskId, { pendingItemId: item.itemId, files }, snapshot.step.stepToken));
+                if (outcome.ok && outcome.snapshot.batches.at(-1)?.files.some((file) => file.status === 'accepted')) navigate(taskHash(taskId, 'inventory'));
+              }} />
             <MaterialFields material={material} />
           </div>
         </div>
@@ -515,7 +528,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                           {reopenable(item) ? (
                             <div>
                               <Button kind="ghost" size="sm" aria-expanded={opened?.itemId === item.itemId} onClick={() => setSelectedId(opened?.itemId === item.itemId ? null : item.itemId)}>
-                                {STAY_TRIO_COPY.screenshot.reopen}
+                                {item.dining?.kind === 'receipt' ? '查看或修改关联' : STAY_TRIO_COPY.screenshot.reopen}
                               </Button>
                             </div>
                           ) : null}
@@ -547,6 +560,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   return (
     <>
       <PageHeader title={copy.title} lead={`${copy.lead}还剩 ${remaining} 个。`} />
+      <LatestUploadRejections snapshot={snapshot} />
       {/* 队列：每项一行（图标、标题、文件名），当前项用选中底色；已处理的整行变淡，带勾和绿色「已处理」标签。 */}
       <section className="app-queue bleed" aria-label="待确认项清单">
         <ul className="app-item-list">

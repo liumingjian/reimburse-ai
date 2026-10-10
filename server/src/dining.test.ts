@@ -9,6 +9,7 @@ const otherInvoice = { name: '另一金额餐饮_发票.pdf', bytes: new TextEnc
 const anotherWrongSlip = { name: '另一金额餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-another-wrong-dining-slip') };
 const duplicateWrongSlip = { name: '同金额餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-duplicate-wrong-dining-slip') };
 const incompleteSlip = { name: '缺少实付餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-incomplete-dining-slip') };
+const unknownSlip = { name: '手工餐饮_小票.pdf', bytes: new TextEncoder().encode('%PDF-unknown-itemised-dining-receipt') };
 
 let server: ScenarioServer;
 beforeEach(async () => {
@@ -17,6 +18,7 @@ beforeEach(async () => {
   if (invoice?.outcome !== 'recognised') throw new Error('dining invoice preset is missing');
   if (slip?.outcome !== 'recognised') throw new Error('dining receipt preset is missing');
   server = await scenarioServer({ parser: presetParser({
+    [sha256(unknownSlip.bytes)]: { outcome: 'unrecognised', reason: 'no_layout' },
     [sha256(secondInvoice.bytes)]: { ...invoice, candidates: invoice.candidates.map((candidate) => candidate.key === 'invoiceNumber' ? { ...candidate, value: '26312000000103317792' } : candidate) },
     [sha256(otherInvoice.bytes)]: { ...invoice, candidates: invoice.candidates.map((candidate) => candidate.key === 'invoiceNumber' ? { ...candidate, value: '26312000000103317793' } : candidate.key === 'totalAmount' ? { ...candidate, value: '300.00' } : candidate) },
     [sha256(anotherWrongSlip.bytes)]: { ...slip, candidates: slip.candidates.map((candidate) => candidate.key === 'paidAmount' || candidate.key === 'originalTotal' ? { ...candidate, value: '230.00' } : candidate) },
@@ -27,6 +29,91 @@ beforeEach(async () => {
 afterEach(() => server.close());
 
 describe('dining invoice evidence', () => {
+  it('stores manual receipt facts and invoice intent atomically and retains stale intent after corrections', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', secondInvoice, unknownSlip] });
+    const invoice = byFileName(scene.reached, secondInvoice.name);
+    const receipt = byFileName(scene.reached, unknownSlip.name);
+    const itemId = `unrecognised.${receipt.materialId}`;
+    const fill = { choice: 'manual_fill', kind: 'dining_receipt', paidAmount: '240.00', diningInvoiceId: invoice.materialId };
+    const answers = () => server.db.selectFrom('pending_answer').selectAll().where('task_id', '=', scene.task.taskId).execute();
+    const before = await answers();
+    expect(await scene.refused('answer-pending', { itemId, answer: { ...fill, paidAmount: '239.99' } })).toMatchObject({ code: 'check_failed' });
+    expect(await answers()).toEqual(before);
+    expect(await scene.refused('answer-pending', { itemId, answer: { ...fill, diningInvoiceId: 'foreign-invoice' } })).toMatchObject({ code: 'invalid_answer' });
+    expect(await answers()).toEqual(before);
+    const paired = await scene.accept('answer-pending', { itemId, answer: fill });
+    expect(byFileName(paired, receipt.fileName)).toMatchObject({ kind: 'dining_receipt', linkedMaterialIds: [invoice.materialId] });
+    expect(byFileName(paired, receipt.fileName).fields).toContainEqual(expect.objectContaining({ key: 'paidAmount', value: '240.00', source: 'user' }));
+    expect(byFileName(paired, receipt.fileName).fields.some((field) => field.key === 'diningInvoiceId')).toBe(false);
+    const rows = (await answers()).slice(before.length);
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((row) => row.revision)).size).toBe(1);
+    expect(rows.find((row) => row.item_id === itemId)?.answer).not.toContain('diningInvoiceId');
+    const corrected = await scene.accept('answer-pending', { itemId: `edit.${receipt.materialId}.paidAmount`, answer: { value: '239.99' } });
+    expect(byFileName(corrected, receipt.fileName).linkedMaterialIds).toEqual([]);
+    expect(corrected.pendingItems.find((item) => item.itemId === `dining_association.${receipt.materialId}`)).toMatchObject({ status: 'open', why: expect.stringContaining('239.99') });
+    await scene.accept('answer-pending', { itemId: `edit.${receipt.materialId}.paidAmount`, answer: { value: '240.00' } });
+    const excluded = await scene.accept('exclude-material', { materialId: invoice.materialId });
+    expect(byFileName(excluded, receipt.fileName)).toMatchObject({ kind: 'dining_receipt', linkedMaterialIds: [] });
+    expect(excluded.pendingItems.find((item) => item.itemId === `dining_association.${receipt.materialId}`)?.status).toBe('open');
+    await scene.accept('reopen-upload');
+    const rerun = await scene.run('start-inventory');
+    expect(byFileName(rerun, receipt.fileName)).toMatchObject({ kind: 'dining_receipt', linkedMaterialIds: [] });
+    const reset = await scene.accept('answer-pending', { itemId: `edit.${receipt.materialId}.diningInvoice`, answer: { value: 'auto' } });
+    expect(byFileName(reset, receipt.fileName).linkedMaterialIds).toEqual([byFileName(reset, sample('m11').name).materialId]);
+  });
+
+  it.each([['m11', 'm13'], ['m13', 'm11']])('supplements %s with %s in one accepted batch and run', async (first, second) => {
+    const scene = await scenario(server).at('pending', { materials: [first] });
+    const snapshot = scene.reached;
+    const form = new FormData();
+    const file = sample(second);
+    form.append('pendingItemId', snapshot.pendingItems[0]!.itemId);
+    form.append('stepToken', snapshot.step.stepToken);
+    form.append('files', new File([file.bytes], file.name, { type: file.type ?? 'application/pdf' }));
+    form.append('files', new File(['bad'], 'notes.txt', { type: 'text/plain' }));
+    const response = await scene.client.request(`/api/tasks/${scene.task.taskId}/dining-evidence`, { method: 'POST', body: form });
+    expect(response.status).toBe(200);
+    const paired = await scene.settled();
+    expect(paired.batches.at(-1)?.files.map((file) => file.status)).toEqual(['accepted', 'rejected']);
+    expect(paired.lines[0]?.referenceMaterialIds).toEqual([byFileName(paired, sample('m13').name).materialId]);
+    expect(paired.events[0]?.referenceMaterialIds).toEqual(paired.lines[0]?.referenceMaterialIds);
+    expect(await server.db.selectFrom('inventory_run').selectAll().where('task_id', '=', scene.task.taskId).execute()).toHaveLength(2);
+    expect((await scene.client.request(`/api/tasks/${scene.task.taskId}/dining-evidence`, { method: 'POST', body: form })).status).toBe(409);
+  });
+
+  it('records all-rejected supplements without starting a run, and refuses stale items before writes', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11'] });
+    const post = async (itemId: string) => {
+      const current = await scene.snapshot();
+      const form = new FormData();
+      form.append('pendingItemId', itemId);
+      form.append('stepToken', current.step.stepToken);
+      const file = sample('m11');
+      form.append('files', new File([file.bytes], 'duplicate.pdf', { type: 'application/pdf' }));
+      form.append('files', new File(['bad'], 'bad.txt'));
+      return scene.client.request(`/api/tasks/${scene.task.taskId}/dining-evidence`, { method: 'POST', body: form });
+    };
+    const version = scene.reached.inventory.versionId;
+    expect((await post(scene.reached.pendingItems[0]!.itemId)).status).toBe(200);
+    const rejected = await scene.snapshot();
+    expect(rejected.stage).toBe('pending');
+    expect(rejected.inventory.versionId).toBe(version);
+    expect(rejected.batches.at(-1)?.files.map((file) => file.reasonCode)).toEqual(['duplicate_content', 'unsupported_type']);
+    expect(await server.db.selectFrom('inventory_run').selectAll().where('task_id', '=', scene.task.taskId).execute()).toHaveLength(1);
+    expect((await post('dining_receipt_missing.foreign')).status).toBe(400);
+    expect((await scene.snapshot()).batches).toHaveLength(2);
+  });
+  it('accepts an explicit receipt choice and pairs the unique equal-amount remainder', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11', secondInvoice, 'm13', 'm14'] });
+    const receipt = byFileName(scene.reached, sample('m13').name);
+    const invoice = byFileName(scene.reached, secondInvoice.name);
+    const paired = await scene.accept('answer-pending', { itemId: `edit.${receipt.materialId}.diningInvoice`, answer: { value: invoice.materialId } });
+    expect(paired.stage).toBe('project');
+    expect(paired.lines.find((line) => line.voucherMaterialId === invoice.materialId)?.referenceMaterialIds).toEqual([receipt.materialId]);
+    expect(paired.events.find((event) => event.voucherMaterialId === invoice.materialId)?.referenceMaterialIds).toEqual([receipt.materialId]);
+    expect(paired.pendingItems.find((item) => item.itemId === `dining_association.${receipt.materialId}`)?.status).toBe('resolved');
+  });
   it('shows differing invoice and paid amounts and accepts only evidence or exclusion', async () => {
     const scene = await scenario(server).at('pending', { materials: ['m11', wrongSlip] });
     const invoice = byFileName(scene.reached, sample('m11').name);

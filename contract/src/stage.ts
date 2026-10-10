@@ -129,6 +129,7 @@ export const TASK_ACTIONS = [
   'reopen_upload',
   'exclude_material',
   'answer_pending',
+  'change_dining_evidence',
   'set_home_city',
   'assign_project_lines',
   'submit_project_assignment',

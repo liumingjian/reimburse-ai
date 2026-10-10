@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   ABANDON_TASK_COPY,
+  DINING_INVOICE_FIELD,
+  DINING_INVOICE_KEY,
   CONFIRM_REVIEW_ERRORS,
   CREATE_TASK_ERRORS,
   ERP_ACTION_ERRORS,
@@ -431,6 +433,16 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // invoice (stored as the filer's 改归属) and a new inventory run over it, in one change, so the screenshots are
     // read and checked by sum like any other. Admitted where reopening upload is; refused, like any change to a stay's
     // screenshots, once the list is confirmed.
+    async supplementDiningEvidence(taskId: string, pendingItemId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
+      const judged = judgeFiles(files);
+      return mutate(taskId, token, 'change_dining_evidence', async ({ tx, facts, view, at, revision }) => {
+        const item = view.answerables.get(pendingItemId)?.item;
+        if (!item || item.status !== 'open' || !item.dining?.supplement) return { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' };
+        const accepted = await writeBatch(tx, taskId, judged, at);
+        if (accepted.length > 0) await tx.insertInto('inventory_run').values({ run_id: randomUUID(), task_id: taskId, account_id: accountId, version_no: facts.versionNo + 1, revision, started_at: at }).execute();
+      });
+    },
+
     async addPaymentScreenshots(taskId: string, invoiceId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
       const judged = judgeFiles(files);
       const images = await Promise.all(judged.map((file) => printActions.isScreenshotImage(file)));
@@ -517,7 +529,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // class. An accepted answer is stored under its item id and carried into every later derivation; the choice
     // `exclude` also excludes the material.
     async answerPending(taskId: string, itemId: string, answer: PendingAnswer, token: string): Promise<TaskSnapshot> {
-      return mutate(taskId, token, 'answer_pending', async ({ tx, view, at, revision }) => {
+      return mutate(taskId, token, 'answer_pending', async ({ tx, facts, loaded, view, at, revision }) => {
         let verdict: Verdict;
         let materialId: string;
         const edit = itemId.startsWith(EDIT_PREFIX);
@@ -534,9 +546,18 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           materialId = found.item.materialId;
         }
         if (!verdict.ok) return { code: verdict.code, message: verdict.message };
+        const selectedInvoiceId = fieldAnswer(verdict.answer)[DINING_INVOICE_KEY];
+        if (selectedInvoiceId || itemId === editAddress(materialId, DINING_INVOICE_FIELD)) {
+          const admission = taskPolicy(facts, loaded.erp).admit('change_dining_evidence', token);
+          if (admission === 'stale') throw new StaleStepError(await snapshot(taskId));
+          if (admission !== 'ok') return admission;
+        }
+        const { [DINING_INVOICE_KEY]: _selection, ...fields } = fieldAnswer(verdict.answer);
+        const storedAnswer = selectedInvoiceId ? fields : verdict.answer;
+        if (selectedInvoiceId) await tx.insertInto('pending_answer').values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: editAddress(materialId, DINING_INVOICE_FIELD), material_id: materialId, answer: JSON.stringify({ value: selectedInvoiceId }), revision, created_at: at }).execute();
         await tx
           .insertInto('pending_answer')
-          .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: itemId, material_id: materialId, answer: JSON.stringify(verdict.answer), revision, created_at: at })
+          .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: itemId, material_id: materialId, answer: JSON.stringify(storedAnswer), revision, created_at: at })
           .execute();
         if (!edit && fieldAnswer(verdict.answer)[PENDING_CHOICE_KEY] === EXCLUDE_CHOICE) await excludeOnce(tx, taskId, accountId, materialId, revision, at);
       });

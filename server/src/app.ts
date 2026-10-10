@@ -418,6 +418,18 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.json(await tasksOf(c).addPaymentScreenshots(c.req.param('id'), voucherMaterialId, files, stepToken));
   });
 
+  app.post('/api/tasks/:id/dining-evidence', batchLimit, async (c) => {
+    const body = await c.req.parseBody({ all: true });
+    const pendingItemId = body['pendingItemId'];
+    const stepToken = body['stepToken'];
+    const files: UploadedFile[] = [];
+    for (const entry of ([] as unknown[]).concat(body['files'] ?? [])) {
+      if (entry instanceof File) files.push({ fileName: entry.name, mime: entry.type || 'application/octet-stream', bytes: new Uint8Array(await entry.arrayBuffer()) });
+    }
+    if (files.length === 0 || typeof pendingItemId !== 'string' || pendingItemId === '' || typeof stepToken !== 'string') return failure(c, 400, 'invalid_input', '请求无效。');
+    return c.json(await tasksOf(c).supplementDiningEvidence(c.req.param('id'), pendingItemId, files, stepToken));
+  });
+
   // A content-addressed file of the task: originals (the corner editor's photo), payment screenshots, the merged print
   // PDF and its page images. Immutable by construction, so the browser may cache it for good.
   app.get('/api/tasks/:id/files/:sha256', async (c) => {

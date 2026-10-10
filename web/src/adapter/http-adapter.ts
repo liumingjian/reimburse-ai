@@ -506,6 +506,13 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       for (const file of files) form.append('files', file, file.name);
       return post(url(E.addPaymentScreenshots.path, taskId), form);
     },
+    supplementDiningEvidence(taskId, { pendingItemId, files }, stepToken) {
+      const form = new FormData();
+      form.append('pendingItemId', pendingItemId);
+      form.append('stepToken', stepToken);
+      for (const file of files) form.append('files', file, file.name);
+      return post(url(E.supplementDiningEvidence.path, taskId), form);
+    },
     startInventory: (taskId, stepToken) => action(taskId, E.startInventory, { stepToken }),
     answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, E.answerPendingItem, { itemId, answer, stepToken }),
     confirmReview: (taskId, digest, stepToken, acceptDeadlineWarnings = false) => action(taskId, E.confirmReview, { digest, acceptDeadlineWarnings, stepToken }),

@@ -1,10 +1,10 @@
-import { DINING_COPY, DINING_ITEM_CODES, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, MATERIAL_KINDS, manualKindOf, PAYMENT_COPY, PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from '@baox/contract';
+import { DINING_INVOICE_FIELD, DINING_INVOICE_KEY, type DiningAssignment, DINING_COPY, DINING_ITEM_CODES, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, MATERIAL_KINDS, manualKindOf, PAYMENT_COPY, PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
 import { factsOf, isDerivedSource } from './parse/facts';
 import { pairHotelStays } from './hotel-stay';
-import { pairInvoiceReferences } from './invoice-reference';
+import { deriveDiningEvidence, diningProblem } from './dining-evidence';
 import { KINDS, type EventDraft } from './kind-policy';
 import { CATEGORIES, fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
@@ -252,7 +252,7 @@ const MANUAL_FORMS: PendingManualKind[] = MATERIAL_KINDS.filter((kind) => KINDS[
 function manualFilled(answer: PendingAnswer): { kind: MaterialKind; values: Values; how: string } | null {
   const { [PENDING_CHOICE_KEY]: choice, [MANUAL_KIND_KEY]: kind, ...values } = fieldAnswer(answer);
   const form = manualKindOf({ manualKinds: MANUAL_FORMS }, { [MANUAL_KIND_KEY]: kind ?? '' });
-  return choice === MANUAL_FILL_CHOICE && form ? { kind: form.kind, values: nonEmpty(values), how: INVENTORY_COPY.manualCheck } : null;
+  return choice === MANUAL_FILL_CHOICE && form ? { kind: form.kind, values: nonEmpty(Object.fromEntries(form.fields.map((field) => [field.key, values[field.key] ?? '']))), how: INVENTORY_COPY.manualCheck } : null;
 }
 
 // Before #342, 手工补填 took three answers: 手工补填 here, the kind (`manual_kind.<id>`, `kind:<kind>`), then the form
@@ -645,16 +645,47 @@ export function inventoryView(
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
   const diningInvoices = ordered.filter(({ draft }) => draft.category.code === 'hospitality');
   const diningReceipts = includedWorked.filter((w) => w.resolved?.kind === 'dining_receipt' && !w.reference && !w.items.some(isOpen));
-  const diningPairs = pairInvoiceReferences({
-    invoices: diningInvoices,
-    references: diningReceipts,
-    invoiceAmount: ({ draft }) => draft.grossAmount,
-    referenceAmount: (w) => w.values['paidAmount'],
+  const receiptIds = new Set(diningReceipts.map((receipt) => receipt.m.materialId));
+  const dining = deriveDiningEvidence({
+    invoices: diningInvoices.map(({ material, draft }) => ({ invoiceId: material.materialId, amount: draft.grossAmount, label: material.fileName + ' · ' + draft.grossAmount + ' 元' })),
+    sources: includedWorked.map((w) => {
+      const selected = fieldAnswer(answers.get(editAddress(w.m.materialId, DINING_INVOICE_FIELD)) ?? null)['value'];
+      return { receiptId: w.m.materialId, paidAmount: receiptIds.has(w.m.materialId) ? w.values['paidAmount'] ?? null : null, selectedInvoiceId: selected && selected !== 'auto' ? selected : null };
+    }),
   });
-  const receiptByInvoice = new Map(diningPairs.map(({ invoice, reference }) => [invoice.material.materialId, reference.m.materialId]));
-  for (const { invoice, reference } of diningPairs) {
-    linked.set(invoice.material.materialId, [reference.m.materialId]);
-    linked.set(reference.m.materialId, [invoice.material.materialId]);
+  const receiptByInvoice = new Map(dining.pairs.map(({ invoiceId, receiptId }) => [invoiceId, receiptId]));
+  for (const { invoiceId, receiptId } of dining.pairs) {
+    linked.set(invoiceId, [receiptId]);
+    linked.set(receiptId, [invoiceId]);
+  }
+  const assignmentOf = (receiptId: string): DiningAssignment => {
+    const decision = dining.decisions.get(receiptId);
+    return {
+      address: editAddress(receiptId, DINING_INVOICE_FIELD),
+      selection: decision?.kind === 'selected_failed' ? { kind: 'selected_stale', invoiceId: decision.invoiceId, reason: diningProblem(decision.problem) }
+        : decision?.kind === 'selected_paired' ? { kind: 'selected_valid', invoiceId: decision.invoiceId } : { kind: 'automatic' },
+      options: dining.invoiceChoices(receiptId),
+    };
+  };
+  for (const w of includedWorked) {
+    const receiptId = w.m.materialId;
+    const decision = dining.decisions.get(receiptId);
+    const assignment = assignmentOf(receiptId);
+    if (receiptIds.has(receiptId) || decision?.kind === 'selected_failed') {
+      editables.set(assignment.address, { address: assignment.address, materialId: receiptId, field: DINING_INVOICE_FIELD, label: '关联餐饮发票', editClass: 'choice', format: 'text', allowed: ['auto', ...assignment.options.map((option) => option.invoiceId)], check: (value) => dining.judgeAssignment(receiptId, value) });
+    }
+    for (const item of w.items) {
+      if (!item.manualKinds.some((kind) => kind.kind === 'dining_receipt')) continue;
+      item.manualKinds = item.manualKinds.map((kind) => kind.kind === 'dining_receipt' ? { ...kind, diningAssignment: assignment } : kind);
+      const previousCheck = answerables.get(item.itemId)?.check;
+      answerables.set(item.itemId, { item, check: (answer) => {
+        const failed = previousCheck?.(answer);
+        if (failed) return failed;
+        const values = fieldAnswer(answer);
+        const invoiceId = values[DINING_INVOICE_KEY];
+        return values[MANUAL_KIND_KEY] === 'dining_receipt' && invoiceId ? dining.judgeAssignment(receiptId, invoiceId, values['paidAmount'] ?? null) : null;
+      } });
+    }
   }
 
   // 支付截图 materials, placed with the 住宿 invoices (ADR-0032), only over a finished run like the trio below.
@@ -707,15 +738,30 @@ export function inventoryView(
       const copy = mismatch ? DINING_COPY.amountMismatch : DINING_COPY.receiptMissing;
       const why = mismatch ? DINING_COPY.amountMismatch.why(draft.grossAmount, unpairedPaidAmounts) : DINING_COPY.receiptMissing.why(draft.grossAmount);
       const item = settle(choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]), answers);
+      item.dining = { kind: 'invoice', supplement: 'receipt' };
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
     }
     for (const receipt of diningReceipts) {
       const { materialId, fileName } = receipt.m;
-      if (linked.has(materialId)) continue;
+      if (linked.has(materialId) || dining.decisions.get(materialId)?.kind === 'selected_failed') continue;
       const item = settle(choice(`${DINING_ITEM_CODES.invoiceMissing}.${materialId}`, materialId, DINING_COPY.invoiceMissing.title(fileName), DINING_COPY.invoiceMissing.why(receipt.values['paidAmount']), [EXCLUDE]), answers);
+      item.dining = { kind: 'receipt', supplement: 'invoice', assignment: assignmentOf(materialId) };
       diningItems.set(materialId, [item]);
+      answerables.set(item.itemId, { item });
+      pendingItems.push(item);
+    }
+  }
+
+  if (results && waiting === 0) {
+    for (const decision of dining.decisions.values()) {
+      if (decision.kind !== 'selected_paired' && decision.kind !== 'selected_failed') continue;
+      const item = choice('dining_association.' + decision.receiptId, decision.receiptId, '餐饮小票关联发票', decision.kind === 'selected_failed' ? diningProblem(decision.problem) : '已按你的选择关联发票，实付金额与发票价税合计一致。', [EXCLUDE]);
+      item.dining = { kind: 'receipt', supplement: null, assignment: assignmentOf(decision.receiptId) };
+      item.status = decision.kind === 'selected_paired' ? 'resolved' : 'open';
+      item.answer = { value: decision.invoiceId };
+      diningItems.set(decision.receiptId, [item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
     }

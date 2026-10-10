@@ -209,6 +209,18 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'), false);
     },
     uploadBatch: inventory.uploadBatch,
+    async supplementDiningEvidence(taskId, { pendingItemId, files }, stepToken) {
+      const admitted = bus.withStep(taskId, stepToken, (snapshot) => {
+        if (!snapshot.allowedActions.includes('change_dining_evidence')) return { error: { code: 'dining_evidence_locked', message: '当前不能修改餐饮材料。' } };
+        const item = snapshot.pendingItems.find((candidate) => candidate.itemId === pendingItemId);
+        if (!item?.dining?.supplement || item.status !== 'open') return { error: { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' } };
+        return snapshot;
+      });
+      if (!admitted.ok) return admitted;
+      const uploaded = await inventory.uploadBatch(taskId, files);
+      if (!uploaded.ok || !uploaded.snapshot.batches.at(-1)?.files.some((file) => file.status === 'accepted')) return uploaded;
+      return inventory.startInventory(taskId, uploaded.snapshot.step.stepToken);
+    },
     startInventory: inventory.startInventory,
     reopenUpload: inventory.reopenUpload,
     answerPendingItem: pending.answerPendingItem,

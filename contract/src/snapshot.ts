@@ -317,10 +317,27 @@ export type PendingScreenshotGroup = z.infer<typeof PendingScreenshotGroupSchema
 // kind picked inline. Its answer is `{ choice: MANUAL_FILL_CHOICE, kind: <MaterialKind>, ...that kind's fields }`.
 export const MANUAL_FILL_CHOICE = 'manual_fill';
 export const MANUAL_KIND_KEY = 'kind';
+export const DINING_INVOICE_FIELD = 'diningInvoice';
+export const DINING_INVOICE_KEY = 'diningInvoiceId';
+export const DiningAssignmentSchema = z.object({
+  address: z.string().min(1),
+  selection: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('automatic') }),
+    z.object({ kind: z.literal('selected_valid'), invoiceId: IdSchema }),
+    z.object({ kind: z.literal('selected_stale'), invoiceId: IdSchema, reason: z.string() }),
+  ]),
+  options: z.array(z.object({ invoiceId: IdSchema, label: z.string(), amount: z.string() })),
+});
+export type DiningAssignment = z.infer<typeof DiningAssignmentSchema>;
+export const PendingDiningSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('invoice'), supplement: z.literal('receipt') }),
+  z.object({ kind: z.literal('receipt'), supplement: z.literal('invoice').nullable(), assignment: DiningAssignmentSchema }),
+]);
 export const PendingManualKindSchema = z.object({
   kind: z.enum(MATERIAL_KINDS),
   label: z.string().min(1),
   fields: z.array(PendingFieldSchema),
+  diningAssignment: DiningAssignmentSchema.optional(),
 });
 export type PendingManualKind = z.infer<typeof PendingManualKindSchema>;
 
@@ -341,6 +358,7 @@ export const PendingItemSchema = z.object({
   screenshotGroup: PendingScreenshotGroupSchema.nullable(),
   // The unrecognised item's 手工补填 forms, one per kind; empty on every other item.
   manualKinds: z.array(PendingManualKindSchema),
+  dining: PendingDiningSchema.nullable().optional(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });

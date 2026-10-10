@@ -38,6 +38,7 @@ export function allowedActionsOf(snapshot: TaskSnapshot): TaskAction[] {
   if (step.kind === 'reconcile' || step.kind === 'hand_off') for (const code of reconcile.allowedActions) allowed.add(RECONCILE_WRITES[code]);
   // A cross-task duplicate invoice stops the whole batch: no step, the way out is excluding that material.
   if (stage === 'inventory' && step.kind === 'none' && snapshot.blockers.length > 0) for (const action of CHANGES) allowed.add(action);
+  if (!running && erp.status === 'idle' && snapshot.inventory.status === 'done' && snapshot.blockers.length === 0 && snapshot.confirmation.status !== 'confirmed') allowed.add('change_dining_evidence');
   if (!running) {
     allowed.add('print');
     allowed.add('void_task');

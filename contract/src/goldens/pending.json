@@ -552,6 +552,7 @@
     "reopen_upload",
     "exclude_material",
     "answer_pending",
+    "change_dining_evidence",
     "set_home_city",
     "print",
     "void_task"
