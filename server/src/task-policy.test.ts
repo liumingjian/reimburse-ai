@@ -83,6 +83,15 @@ const notReconciling = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.not
 
 describe('taskPolicy: admit', () => {
   it.each<[string, Partial<TaskFacts>, boolean, ActionName, string | null, Admission]>([
+    ['dining evidence with unrelated pending work', { ...clean, parse: { waiting: 0, openPendingItems: 3, blockers: [] } }, false, 'change_dining_evidence', TOKEN, 'ok'],
+    ['dining evidence before confirmation', submitted, false, 'change_dining_evidence', TOKEN, 'ok'],
+    ['dining evidence with cross-task blockers', { ...clean, parse: { waiting: 0, openPendingItems: 0, blockers: [blocker] } }, false, 'change_dining_evidence', TOKEN, { code: 'not_ready', message: '当前材料盘点完成后才能修改餐饮材料。' }],
+    ['dining evidence before current inventory', { ...clean, versionNo: 2 }, false, 'change_dining_evidence', TOKEN, { code: 'not_ready', message: '当前材料盘点完成后才能修改餐饮材料。' }],
+    ['dining evidence after confirmation', confirmed, false, 'change_dining_evidence', TOKEN, { code: 'dining_evidence_locked', message: '整单明细已确认，请先重新打开上传再修改餐饮材料。' }],
+    ['dining evidence after ERP attempt', { ...confirmed, erp: job('unknown') }, true, 'change_dining_evidence', TOKEN, erpStarted],
+    ['dining evidence while parsing', { ...run, parse: { waiting: 1, openPendingItems: 0, blockers: [] } }, false, 'change_dining_evidence', TOKEN, 'stale'],
+    ['dining evidence after void', { ...clean, lifecycle: 'voided' }, false, 'change_dining_evidence', TOKEN, closed],
+    ['stale dining evidence token beats void', { ...clean, lifecycle: 'voided' }, false, 'change_dining_evidence', 't.6', 'stale'],
     // stepToken
     ['the current token', {}, false, 'upload', TOKEN, 'ok'],
     ['an old token is stale', {}, false, 'upload', 't.6', 'stale'],

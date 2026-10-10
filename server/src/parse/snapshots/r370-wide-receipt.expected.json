@@ -1,0 +1,8 @@
+{
+  "about": "#370: redacted upright production OCR keeps comma label, unequal baselines and wide amount column.",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "facts": {
+    "paidAmount": "530.00"
+  }
+}

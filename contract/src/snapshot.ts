@@ -59,7 +59,7 @@ export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
 // 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 had five kinds;
 // ADR-0032 adds the 支付截图 (payment screenshot). A 版式 (layout) belongs to exactly one kind.
-export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot'] as const;
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot', 'dining_receipt'] as const;
 export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
@@ -167,7 +167,6 @@ export const MaterialSchema = z.object({
 export type Material = z.infer<typeof MaterialSchema>;
 
 export const ExpenseCategorySchema = z.object({
-  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport）；页面只显示 label。
   code: z.string().min(1),
   label: z.string().min(1),
 });
@@ -318,10 +317,27 @@ export type PendingScreenshotGroup = z.infer<typeof PendingScreenshotGroupSchema
 // kind picked inline. Its answer is `{ choice: MANUAL_FILL_CHOICE, kind: <MaterialKind>, ...that kind's fields }`.
 export const MANUAL_FILL_CHOICE = 'manual_fill';
 export const MANUAL_KIND_KEY = 'kind';
+export const DINING_INVOICE_FIELD = 'diningInvoice';
+export const DINING_INVOICE_KEY = 'diningInvoiceId';
+export const DiningAssignmentSchema = z.object({
+  address: z.string().min(1),
+  selection: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('automatic') }),
+    z.object({ kind: z.literal('selected_valid'), invoiceId: IdSchema }),
+    z.object({ kind: z.literal('selected_stale'), invoiceId: IdSchema, reason: z.string() }),
+  ]),
+  options: z.array(z.object({ invoiceId: IdSchema, label: z.string(), amount: z.string() })),
+});
+export type DiningAssignment = z.infer<typeof DiningAssignmentSchema>;
+export const PendingDiningSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('invoice'), supplement: z.literal('receipt') }),
+  z.object({ kind: z.literal('receipt'), supplement: z.literal('invoice').nullable(), assignment: DiningAssignmentSchema }),
+]);
 export const PendingManualKindSchema = z.object({
   kind: z.enum(MATERIAL_KINDS),
   label: z.string().min(1),
   fields: z.array(PendingFieldSchema),
+  diningAssignment: DiningAssignmentSchema.optional(),
 });
 export type PendingManualKind = z.infer<typeof PendingManualKindSchema>;
 
@@ -342,6 +358,7 @@ export const PendingItemSchema = z.object({
   screenshotGroup: PendingScreenshotGroupSchema.nullable(),
   // The unrecognised item's 手工补填 forms, one per kind; empty on every other item.
   manualKinds: z.array(PendingManualKindSchema),
+  dining: PendingDiningSchema.nullable().optional(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });
@@ -491,6 +508,25 @@ export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,i
 // A voucher's group: its screenshots out of every current one, in list (upload) order.
 export const screenshotGroupOf = <T extends { voucherMaterialId: string }>(screenshots: readonly T[], voucherMaterialId: string): T[] =>
   screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+
+export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing', invoiceMissing: 'dining_invoice_missing', amountMismatch: 'dining_amount_mismatch' } as const;
+export const DINING_COPY = {
+  amountMismatch: {
+    title: (fileName: string) => `餐饮发票「${fileName}」与餐饮小票金额不一致`,
+    why: (totalAmount: string, paidAmounts: readonly string[]) =>
+      `这张餐饮发票价税合计 ${totalAmount} 元，未配对餐饮小票的实付金额 ${paidAmounts.join('、')} 元，金额不一致。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传正确的餐饮小票后重新盘点，或排除这张发票。`,
+  },
+  invoiceMissing: {
+    title: (fileName: string) => `餐饮小票「${fileName}」缺少发票`,
+    why: (paidAmount: string | undefined) =>
+      `餐饮报销要发票和餐饮小票两样。这张餐饮小票${paidAmount ? `（实付金额 ${paidAmount} 元）` : ''}没有配对到餐饮发票，不能仅凭餐饮小票报销。发票价税合计要与餐饮小票实付金额一分不差。请追加上传餐饮发票后重新盘点，或排除这份材料。`,
+  },
+  receiptMissing: {
+    title: (fileName: string) => `餐饮发票「${fileName}」缺少餐饮小票`,
+    why: (totalAmount: string | undefined) =>
+      `餐饮报销要发票和餐饮小票两样。这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票，不能仅凭发票报销。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传餐饮小票后重新盘点，或排除这份材料。`,
+  },
+} as const;
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
 // (invoice), the 结账单 (hotel folio) and the 支付截图 (payment screenshot). Inventory raises one 待确认项 per missing

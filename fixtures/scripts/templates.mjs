@@ -15,8 +15,14 @@ import {
   HOTEL_FOLIO,
   HOTEL_FOLIO_PHOTO,
   HOTEL_INVOICE,
-  OTHER_INVOICE,
+  DINING_INVOICE,
+  DINING_RECEIPT,
+  DISCOUNTED_DINING_RECEIPT,
+  MISMATCHED_DINING_RECEIPT,
+  DINING_RECEIPT_PHOTO,
+  OFFICE_SUPPLIES_INVOICE,
   PRINT_PAGES,
+  DINING_PRINT_PAGES,
   PRINT_VARIANTS,
   RAIL_0809,
   RAIL_0822,
@@ -307,6 +313,23 @@ function taxiPhoto(data) {
   return { id: data.id, ...PHOTO, css, body };
 }
 
+function diningReceipt(data) {
+  const css = `.receipt { width: 794px; height: 1123px; padding: 64px 160px; font-family: ${FONT}; font-size: 18px; color: #222; background: #fff; } .receipt h1 { text-align: center; font-size: 28px; margin-bottom: 32px; } .receipt p { margin: 18px 0; } .receipt table { width: 100%; border-collapse: collapse; margin: 28px 0; } .receipt td, .receipt th { text-align: left; border-bottom: 1px dashed #999; padding: 12px 4px; font-weight: 400; }`;
+  const body = `<div class="receipt"><h1>${esc(data.title)}</h1><p>商户：${esc(data.merchant)}</p><p>日期：${esc(data.date)}</p><p>时间：${esc(data.time)}</p><table><tr><th>菜品</th><th>数量</th><th>金额</th></tr><tr><td>家常菜</td><td>3</td><td>${esc(data.total)}</td></tr></table><p>合计：${esc(data.total)}</p>${data.discount ? `<p>优惠：${esc(data.discount)}</p>` : ''}<p>实付：${esc(data.paid)}</p><p>夹具生成器生成，非真实单据</p></div>`;
+  return { id: data.id, ...A4, css, body };
+}
+
+function diningPhoto(data) {
+  const receipt = diningReceipt(data);
+  const css = `${receipt.css}
+.dining-photo { width: 900px; height: 1200px; background: #b9a58a; position: relative; overflow: hidden; }
+.dining-photo .paper { position: absolute; left: 220px; top: 140px; transform: perspective(1400px) rotateX(5deg) rotate(-3deg); transform-origin: center; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3); }
+.dining-photo .receipt { width: 450px; height: 850px; padding: 40px 35px; font-size: 22px; background: #fdfcf8; }
+.dining-photo .receipt h1 { font-size: 32px; }
+`;
+  return { id: data.id, ...PHOTO, css, body: `<div class="dining-photo"><div class="paper">${receipt.body}</div></div>` };
+}
+
 export const DOCS = {
   m01: invoice(HOTEL_INVOICE, '#8b3a3a'),
   m02: folio(HOTEL_FOLIO),
@@ -318,7 +341,12 @@ export const DOCS = {
   m08: rail(RAIL_0822),
   m09: taxiPhoto(TAXI_0815),
   m10: taxiPhoto(TAXI_0819),
-  m11: invoice(OTHER_INVOICE, '#8b3a3a'),
+  m11: invoice(DINING_INVOICE, '#8b3a3a'),
+  m12: invoice(OFFICE_SUPPLIES_INVOICE, '#8b3a3a'),
+  m13: diningReceipt(DINING_RECEIPT),
+  m14: diningReceipt(DISCOUNTED_DINING_RECEIPT),
+  m15: diningReceipt(MISMATCHED_DINING_RECEIPT),
+  m16: diningPhoto(DINING_RECEIPT_PHOTO),
   r01: invoice(SPLIT_NUMBER_INVOICE, '#8b3a3a'),
   r02: invoice(SPACED_TITLE_INVOICE, '#8b3a3a'),
   r201: invoice(BUNDLED_FEE_INVOICE, '#8b3a3a'),
@@ -372,7 +400,7 @@ ${bottom ? bottom.css : ''}
   return { id: page.id, ...A4, css, body };
 }
 
-export const PRINT_DOCS = PRINT_PAGES.map(printPage);
+export const PRINT_DOCS = [...PRINT_PAGES, ...DINING_PRINT_PAGES].map(printPage);
 export const VARIANT_DOCS = PRINT_VARIANTS.map((variant) => ({ ...printPage(variant), id: variant.file.replace(/\.png$/, '') }));
 
 // The merged print sheet: one A4 page (210mm x 297mm, no margin) per page image.

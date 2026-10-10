@@ -25,7 +25,7 @@ const FIXTURE_FILES = [
   '铁路电子客票_0822.pdf',
   'IMG_4871.jpg',
   'IMG_4906.jpg',
-  '餐饮_发票.pdf',
+  '办公用品_发票.pdf',
 ];
 
 // Summary bar fields: label -> value.
@@ -136,7 +136,7 @@ describe('材料盘点', () => {
     // Materials in no expense event get their own section after the table.
     const rest = screen.getByRole('region', { name: '未归入费用事件' });
     expect(table.compareDocumentPosition(rest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(rest).getByText('餐饮_发票.pdf')).toBeTruthy();
+    expect(within(rest).getByText('办公用品_发票.pdf')).toBeTruthy();
     expect(within(rest).getByText('未识别版式')).toBeTruthy();
     expect(within(rest).getByText('没有形成费用事件的材料：待确认或已排除。')).toBeTruthy();
   });

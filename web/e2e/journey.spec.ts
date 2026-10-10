@@ -1,4 +1,3 @@
-import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
@@ -20,7 +19,13 @@ async function jump(page: Page, hash: string) {
 
 test('全流程：从登录一路走到完成，上传 sample-materials 的 11 份材料', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
-  const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
+  const files = [
+    '全季酒店_发票.pdf', '全季酒店_结账单.pdf',
+    '高德打车_发票.pdf', '高德打车_行程单.pdf',
+    '曹操出行_发票.pdf', '曹操出行_行程单.pdf',
+    '铁路电子客票_0809.pdf', '铁路电子客票_0822.pdf',
+    'IMG_4871.jpg', 'IMG_4906.jpg', '办公用品_发票.pdf',
+  ].map((name) => join(SAMPLES_DIR, name));
   expect(files).toHaveLength(11);
 
   // 1. 登录应用账号（夹具账号，mock 密码）。

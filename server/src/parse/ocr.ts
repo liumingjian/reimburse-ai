@@ -47,10 +47,10 @@ export async function ocrImage(bytes: Uint8Array): Promise<TextObservation[]> {
   const photo = await decode(cv, bytes);
   const paper = flattenPaper(cv, photo) ?? photo;
   try {
+    const page = await readOrientedPage(loaded, paper);
     const observations: TextObservation[] = [];
-    for (const box of await detect(loaded, paper)) {
-      const read = await readBox(loaded, paper, box);
-      if (!read) continue;
+    for (const read of page.reads) {
+      const { box } = read;
       const xs = box.corners.map((p) => p.x);
       const ys = box.corners.map((p) => p.y);
       const left = Math.min(...xs);
@@ -59,7 +59,7 @@ export async function ocrImage(bytes: Uint8Array): Promise<TextObservation[]> {
         id: `p1.${observations.length}`,
         page: 1,
         x: left,
-        y: paper.rows - bottom,
+        y: page.height - bottom,
         width: Math.max(...xs) - left,
         height: bottom - Math.min(...ys),
         text: normalise(read.text),
@@ -72,6 +72,55 @@ export async function ocrImage(bytes: Uint8Array): Promise<TextObservation[]> {
     if (paper !== photo) paper.delete();
     photo.delete();
   }
+}
+
+type PageRead = { height: number; reads: { box: Box; text: string; score: number }[] };
+
+async function readPage(engine: Engine, paper: Mat, boxes: Box[]): Promise<PageRead> {
+  const reads: PageRead['reads'] = [];
+  for (const box of boxes) {
+    const read = await readBox(engine, paper, box);
+    if (read) reads.push({ box, ...read });
+  }
+  return { height: paper.rows, reads };
+}
+
+function sideways(boxes: Box[]): boolean {
+  let vertical = 0;
+  let horizontal = 0;
+  let verticalCount = 0;
+  for (const { corners } of boxes) {
+    const width = Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+    const height = Math.hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y);
+    if (height > width * 2) {
+      vertical += height;
+      verticalCount += 1;
+    } else if (width > height * 2) horizontal += width;
+  }
+  return verticalCount >= 3 && vertical > horizontal * 1.5;
+}
+
+function readingScore(page: PageRead): number {
+  const length = page.reads.reduce((sum, read) => sum + read.text.trim().length, 0);
+  return length === 0 ? 0 : page.reads.reduce((sum, read) => sum + read.score * read.text.trim().length, 0) / length;
+}
+
+async function readOrientedPage(engine: Engine, paper: Mat): Promise<PageRead> {
+  const boxes = await detect(engine, paper);
+  if (!sideways(boxes)) return readPage(engine, paper, boxes);
+  const turn = async (direction: number) => {
+    const rotated = new engine.cv.Mat();
+    try {
+      engine.cv.rotate(paper, rotated, direction);
+      return await readPage(engine, rotated, await detect(engine, rotated));
+    } finally {
+      rotated.delete();
+    }
+  };
+  const counterclockwise = await turn(engine.cv.ROTATE_90_COUNTERCLOCKWISE);
+  const clockwise = await turn(engine.cv.ROTATE_90_CLOCKWISE);
+  const difference = readingScore(clockwise) - readingScore(counterclockwise);
+  return difference > 0 || (difference === 0 && clockwise.reads.length > counterclockwise.reads.length) ? clockwise : counterclockwise;
 }
 
 async function verified(dir: string, model: { file: string; sha256: string }): Promise<Buffer> {

@@ -124,12 +124,12 @@ test('?fault=duplicate-upload 让追加批次里出现内容重复', async ({ pa
   await choose(page, [pdf('铁路电子客票_0809.pdf')]);
   await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '追加下一批' }).click();
-  await choose(page, [pdf('铁路电子客票_0822.pdf'), pdf('餐饮_发票.pdf')]);
+  await choose(page, [pdf('铁路电子客票_0822.pdf'), pdf('办公用品_发票.pdf')]);
   const second = batch(page, 2);
   await expect(second.getByRole('heading')).toHaveText('上传批次 #2');
   await expect(row(page, second, '铁路电子客票_0822.pdf').getByText(/^内容重复/)).toBeVisible();
-  await expect(row(page, second, '餐饮_发票.pdf')).toBeVisible();
-  await expect(row(page, second, '餐饮_发票.pdf').getByText('拒绝', { exact: true })).toHaveCount(0);
+  await expect(row(page, second, '办公用品_发票.pdf')).toBeVisible();
+  await expect(row(page, second, '办公用品_发票.pdf').getByText('拒绝', { exact: true })).toHaveCount(0);
 });
 
 test('守卫：没有材料时后续页面显示还没有上传材料；有材料但未盘点则阶段不可跳过', async ({ page }) => {
@@ -139,7 +139,7 @@ test('守卫：没有材料时后续页面显示还没有上传材料；有材�
   await page.getByRole('link', { name: '去上传' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/upload$/);
 
-  await choose(page, [pdf('餐饮_发票.pdf')]);
+  await choose(page, [pdf('办公用品_发票.pdf')]);
   await expect(batch(page, 1).getByRole('heading')).toHaveText('上传批次 #1');
   await jump(page, '#/task/T4/review');
   await expect(page.getByRole('heading', { name: '还不能进入这一步' })).toBeVisible();

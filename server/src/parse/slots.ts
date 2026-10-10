@@ -16,6 +16,7 @@ export type Slot = { key: string; label: string; required: boolean; format: Slot
 // Kernel category codes (contract ExpenseCategorySchema).
 export const CATEGORIES = {
   accommodation: { code: 'accommodation', label: '住宿' },
+  hospitality: { code: 'hospitality', label: '招待费' },
   long_distance: { code: 'long_distance', label: '长途交通' },
   // Undivided 市内交通: `deriveCategory` (rules/company-rules.ts) splits it into local / out-of-town from the expense
   // city and the task's home city; a line never carries this code.
@@ -103,6 +104,14 @@ export const SLOTS: Readonly<Record<MaterialKind, readonly Slot[]>> = {
   hotel_folio: HOTEL_FOLIO_SLOTS,
   taxi_receipt: TAXI_RECEIPT_SLOTS,
   payment_screenshot: PAYMENT_SCREENSHOT_SLOTS,
+  dining_receipt: [
+    { key: 'paidAmount', label: '实付金额', required: true, format: 'money' },
+    { key: 'merchantName', label: '商户名称', required: false, format: 'text' },
+    { key: 'receiptDate', label: '消费日期', required: false, format: 'date' },
+    { key: 'receiptTime', label: '消费时间', required: false, format: 'text' },
+    { key: 'originalTotal', label: '原价合计', required: false, format: 'money' },
+    { key: 'discount', label: '优惠金额', required: false, format: 'money' },
+  ],
 };
 
 // `*住宿服务*住宿费` → 住宿费; the 税收分类 (tax class) between the asterisks decides the category.
@@ -124,7 +133,11 @@ export function vatItemCategory(itemName: string | undefined): ExpenseCategory |
   const taxClass = parts?.[1];
   const description = parts?.[2] ?? '';
   if (taxClass === '住宿服务') return CATEGORIES.accommodation;
-  if (taxClass === '生产生活服务') return description.startsWith('住宿费') ? CATEGORIES.accommodation : null;
+  if (taxClass === '餐饮服务') return CATEGORIES.hospitality;
+  if (taxClass === '生产生活服务') {
+    if (description.startsWith('住宿费')) return CATEGORIES.accommodation;
+    return /^餐饮服务(?=$|[0-9¥￥])/.test(description) ? CATEGORIES.hospitality : null;
+  }
   if (taxClass === '运输服务') return CATEGORIES.city_transport;
   if (taxClass === '交通运输服务') return PASSENGER_TRANSPORT.test(description) ? CATEGORIES.city_transport : null;
   return null;

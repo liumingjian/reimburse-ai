@@ -75,6 +75,7 @@ export const HTTP_ENDPOINTS = {
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },
   uploadBatch: { method: 'POST', path: '/api/tasks/:id/batches', body: 'multipart', fields: ['files', 'sourcePaths'] },
   addPaymentScreenshots: { method: 'POST', path: '/api/tasks/:id/payment-screenshots', body: 'multipart', fields: ['voucherMaterialId', 'files', 'stepToken'] },
+  supplementDiningEvidence: { method: 'POST', path: '/api/tasks/:id/dining-evidence', body: 'multipart', fields: ['pendingItemId', 'files', 'stepToken'] },
   startInventory: action('start-inventory', 'stepToken'),
   answerPendingItem: action('answer-pending', 'itemId', 'answer', 'stepToken'),
   confirmReview: action('confirm-review', 'digest', 'acceptDeadlineWarnings', 'stepToken'),

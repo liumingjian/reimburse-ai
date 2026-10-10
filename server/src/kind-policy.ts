@@ -150,6 +150,7 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
   ride_itinerary: RIDE_ITINERARY,
   // A folio forms no event of its own: `hotel-stay.ts` pairs it with its hotel invoice for the stay dates.
   hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: SLOTS.hotel_folio, categoryLabel: () => CATEGORIES.accommodation.label, event: noEvent },
+  dining_receipt: { kind: 'dining_receipt', label: '餐饮小票', role: 'reference', slots: SLOTS.dining_receipt, categoryLabel: () => CATEGORIES.hospitality.label, event: noEvent },
   taxi_receipt: {
     kind: 'taxi_receipt',
     label: '出租车车费发票',

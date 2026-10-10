@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DateSchema, IdSchema } from './primitives';
-import { CornersSchema, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, PENDING_CHOICE_KEY, TaskSnapshotSchema, fieldAnswer, isAllocationAnswer, type FieldAnswer, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from './snapshot';
+import { DINING_INVOICE_KEY, CornersSchema, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, PENDING_CHOICE_KEY, TaskSnapshotSchema, fieldAnswer, isAllocationAnswer, type FieldAnswer, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from './snapshot';
 import { TaskListSchema } from './task-list';
 
 // 接口三：动作端点。成功返回新快照；失败返回 { error }；stepToken 过期返回 HTTP 409 与 { error, snapshot }。
@@ -109,7 +109,11 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
     else if (chosen === MANUAL_FILL_CHOICE && item.manualKinds?.length) {
       const manual = manualKindOf(item, values);
       if (!manual) errors[MANUAL_KIND_KEY] = PENDING_ANSWER_ERRORS.kind;
-      else Object.assign(errors, fieldErrors(manual.fields, values));
+      else {
+        Object.assign(errors, fieldErrors(manual.fields, values));
+        const target = values[DINING_INVOICE_KEY]?.trim();
+        if (target && !manual.diningAssignment?.options.some((option) => option.invoiceId === target)) errors[DINING_INVOICE_KEY] = PENDING_ANSWER_ERRORS.choice;
+      }
     }
     return errors;
   }
@@ -145,7 +149,7 @@ export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'
   }
   const values = fieldAnswer(answer);
   const manual = item.kind === 'choice' && values[PENDING_CHOICE_KEY]?.trim() === MANUAL_FILL_CHOICE ? manualKindOf(item, values) : undefined;
-  const keys = manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key)] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
+  const keys = manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key), ...(manual.diningAssignment ? [DINING_INVOICE_KEY] : [])] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
   const out: Record<string, string> = {};
   for (const key of keys) out[key] = (values[key] ?? '').trim();
   return out;

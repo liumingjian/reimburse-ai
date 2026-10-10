@@ -73,7 +73,7 @@ describe('an unrecognised image at inventory', () => {
   // An image no layout reads, whose text holds `amounts` and `dates`.
   // Bytes after a PNG's end chunk or a PDF's %%EOF keep the file valid and make each its own content.
   function unread(name: string, clues: { amounts: string[]; dates: string[] }, type = 'image/png'): { upload: Upload; outcome: [string, ParseOutcome] } {
-    const base = type === 'application/pdf' ? sample('m11').bytes : readFileSync(join(GENERATED_DIR, 'print-pg1.png'));
+    const base = type === 'application/pdf' ? sample('m12').bytes : readFileSync(join(GENERATED_DIR, 'print-pg1.png'));
     const bytes = Buffer.concat([base, Buffer.from(`\n% ${name}\n`)]);
     return { upload: { name, bytes, type }, outcome: [sha256(bytes), { outcome: 'unrecognised', reason: 'no_layout', clues }] };
   }

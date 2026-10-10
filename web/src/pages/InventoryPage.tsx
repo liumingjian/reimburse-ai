@@ -22,6 +22,7 @@ import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PaymentStay } from './PaymentStay';
+import { LatestUploadRejections } from './LatestUploadRejections';
 import { PAGE_COPY } from './page-copy';
 
 // Material inventory (材料盘点) page: inventory progress and the material list only. While inventory runs it shows
@@ -258,6 +259,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   return (
     <>
       <PageHeader title={copy.title} lead={lead} />
+      <LatestUploadRejections snapshot={snapshot} />
 
       {!summary ? (
         <Progress snapshot={snapshot} />
