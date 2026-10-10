@@ -1,0 +1,8 @@
+{
+  "about": "#370: redacted second checkout photo uses the printed checkout-list title and receivable label.",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "facts": {
+    "paidAmount": "530.00"
+  }
+}

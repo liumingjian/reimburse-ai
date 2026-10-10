@@ -1,0 +1,18 @@
+{
+  "about": "#370: parent-class dining invoice from redacted production text observations.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "facts": {
+    "invoiceNumber": "99000000000000000001",
+    "issueDate": "2025-01-02",
+    "invoiceType": "普票",
+    "buyerName": "示例采购有限公司",
+    "buyerTaxId": "990000000000000001",
+    "sellerName": "示例餐饮有限公司",
+    "sellerTaxId": "990000000000000002",
+    "itemName": "*生产生活服务*餐饮服务",
+    "netAmount": "500.00",
+    "taxAmount": "30.00",
+    "totalAmount": "530.00"
+  }
+}
