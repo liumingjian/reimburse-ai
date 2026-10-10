@@ -37,6 +37,10 @@ The canonical [decision trail](decisions.tsv) records the diagnoses, superseded 
 - Prove It Works requires actual original bytes, independent face expectations and the existing browser task before readiness.
 
 Independent reviewers use the configured GPT models. A different model family is unavailable in this runtime.
+The final independent trail audit by `gpt-6.1-sol` returned **No new flags** for the QA follow-up rows.
+It checked only the authorized root transcript and produced artifacts. It verified both red-first review repairs,
+the superseded fourth-photo scope, the interrupted obsolete gate, matching final code markers and all passing totals.
+The full maintainer-local report is `/tmp/reimburse-dining-qa/trail-final-audit.md`.
 
 ## Final checkpoint
 
