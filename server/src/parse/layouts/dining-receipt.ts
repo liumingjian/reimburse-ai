@@ -7,6 +7,8 @@ const SOURCE = ruleSource('dining_receipt', 'labelled');
 const VERSION = '2';
 const TITLE = /^(小票|餐饮小票|结账单|消费小票|消费清单|顾客联)$/;
 const HOTEL = /(?:^|[,;，；])(入住日期|到店日期|抵店日期|离店日期|退房日期|房号|房间号)(?=:|[0-9A-Za-z]|$)/;
+// Numeric and identifier values delimit a preceding field; arbitrary prose does not.
+const COMPLETE_FIELDS = /^(?:[^:0-9]+:[A-Za-z0-9]+(?:[._/-][A-Za-z0-9]+)*)+$/;
 const PAID_LABELS = [['实付金额', '实付'], ['实收金额', '实收'], ['应付金额', '应付'], ['合计']];
 
 function valueOf(printed: string, format: SlotFormat): string | null {
@@ -47,9 +49,10 @@ function labelledAmount(doc: ParseDoc, aliases: readonly string[]): AmountRead {
   const occurrences: AmountRead[] = [];
   for (const start of page) {
     const band = page.filter((run) => aligned(start, run)).sort((a, b) => a.x - b.x);
-    const before = band[band.indexOf(start) - 1];
-    if (before && start.x - before.x - before.width <= Math.min(start.height, before.height) * 1.5
-      && !/^[^:]+:.+$/.test(compact(before.text))) continue;
+    const block = blocks(band).find((runs) => runs.includes(start));
+    if (!block) continue;
+    const prefix = compact(block.slice(0, block.indexOf(start)).map((run) => run.text).join(''));
+    if (prefix && !COMPLETE_FIELDS.test(prefix)) continue;
     const [firstBlock, ...valueBlocks] = blocks(band.filter((run) => run.x >= start.x));
     if (!firstBlock) continue;
     let label: { runs: Run[]; inline: string } | undefined;
