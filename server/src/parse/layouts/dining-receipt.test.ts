@@ -144,3 +144,31 @@ it('stops amount search at another field label', () => {
 it('rejects trailing garbage on a split delimiter-free money value', () => {
   expect(paid(columnReceipt([{ text: '实收金额', x: 40 }, { text: '530.00', x: 120, width: 80 }, { text: '错', x: 200 }]))).toBeUndefined();
 });
+
+it('reads an explicit paid label beside a complete field ahead of the total (#370)', () => {
+  const candidate = paid(columnReceipt([
+    { text: '桌号:8', x: 40 },
+    { text: '实收:530.00', x: 125, width: 150 },
+    { text: '合计:600.00', x: 40, y: 550 },
+  ]));
+  expect(candidate?.value).toBe('530.00');
+  expect(candidate?.refs.flatMap((ref) => ref.observationIds)).toEqual(['amount.1']);
+});
+
+it.each(['实收:', '实收:模糊', '实收:540.00'])('retains an adjacent %s duplicate when deciding paid ambiguity (#370)', (second) => {
+  const doc = columnReceipt([
+    { text: '实收:530.00', x: 40, y: 650 },
+    { text: '桌号:8', x: 40 },
+    { text: second, x: 125, width: 150 },
+    { text: '合计:600.00', x: 40, y: 550 },
+  ]);
+  expect(paid(doc)).toBeUndefined();
+});
+
+it.each(['累计', '商户:', '备注:'])('rejects a paid label embedded after the adjacent prefix %s', (prefix) => {
+  const doc = columnReceipt([
+    { text: prefix, x: 40 },
+    { text: '实收金额:530.00', x: 125, width: 180 },
+  ]);
+  expect(dispatch(doc, LAYOUTS).outcome).toBe('unrecognised');
+});
