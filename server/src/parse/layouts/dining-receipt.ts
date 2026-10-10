@@ -48,7 +48,8 @@ function labelledAmount(doc: ParseDoc, aliases: readonly string[]): AmountRead {
   for (const start of page) {
     const band = page.filter((run) => aligned(start, run)).sort((a, b) => a.x - b.x);
     const before = band[band.indexOf(start) - 1];
-    if (before && start.x - before.x - before.width <= Math.min(start.height, before.height) * 1.5) continue;
+    if (before && start.x - before.x - before.width <= Math.min(start.height, before.height) * 1.5
+      && !/^[^:]+:.+$/.test(compact(before.text))) continue;
     const [firstBlock, ...valueBlocks] = blocks(band.filter((run) => run.x >= start.x));
     if (!firstBlock) continue;
     let label: { runs: Run[]; inline: string } | undefined;
