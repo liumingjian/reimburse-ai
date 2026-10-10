@@ -1,6 +1,6 @@
 # Dining preview and print evidence
 
-See [verification](verification.md) for tested revisions, independent review, and outstanding evidence limits.
+See [verification](verification.md) for tested revisions, independent review, and outstanding evidence limits. The [supplemental upload and manual association follow-up](qa372-verification.md) records the two local-QA repair flows and their [independent reviews](qa372-reviews.md).
 
 The before images come from `web/scripts/ui-shots.mjs` on main at `094732d561991f95d211a0ccb2429e5ad631a786`, at 1440 × 900.
 The pending list includes the dining invoice as unsupported. The default print sheet has no dining page.
