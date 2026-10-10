@@ -27,7 +27,7 @@ export function DiningEvidence({ item, disabled, onUpload, onAssign }: {
   const uploadLabel = dining.supplement === 'receipt' ? '补传餐饮小票' : '补传餐饮发票';
   return (
     <div className="app-form">
-      {assignment ? <form className="app-form" aria-label="关联餐饮发票" onSubmit={(event) => { event.preventDefault(); void onAssign(assignment.address, value || 'auto'); }}>
+      {assignment ? <form className="app-form" aria-label="餐饮发票关联设置" onSubmit={(event) => { event.preventDefault(); void onAssign(assignment.address, value || 'auto'); }}>
         <DiningInvoiceSelect id={`dining-${item.itemId}`} assignment={assignment} value={value} onChange={setValue} disabled={disabled} blankLabel="重新按金额配对" />
         <p className="app-caption">发票选择不会修改小票实付金额。两份原件的金额必须精确到分一致。</p>
         <Button type="submit" size="md" disabled={disabled}>保存关联</Button>

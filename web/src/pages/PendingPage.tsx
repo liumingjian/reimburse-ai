@@ -261,7 +261,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
           </ol>
         </div>
       ) : null}
-      <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={state.error}>
+      <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={filling ? null : state.error}>
         {choices.map((choice) => (
           <Button
             key={choice.key}

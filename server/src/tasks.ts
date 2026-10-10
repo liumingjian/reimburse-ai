@@ -429,10 +429,6 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       });
     },
 
-    // 支付截图 added from a 住宿 invoice's 待确认项 (ADR-0032): a new upload batch whose screenshots are placed with that
-    // invoice (stored as the filer's 改归属) and a new inventory run over it, in one change, so the screenshots are
-    // read and checked by sum like any other. Admitted where reopening upload is; refused, like any change to a stay's
-    // screenshots, once the list is confirmed.
     async supplementDiningEvidence(taskId: string, pendingItemId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
       const judged = judgeFiles(files);
       return mutate(taskId, token, 'change_dining_evidence', async ({ tx, facts, view, at, revision }) => {
@@ -443,6 +439,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       });
     },
 
+    // 支付截图 added from a 住宿 invoice's 待确认项 (ADR-0032): a new upload batch whose screenshots are placed with that
+    // invoice (stored as the filer's 改归属) and a new inventory run over it, in one change, so the screenshots are
+    // read and checked by sum like any other. Admitted where reopening upload is; refused, like any change to a stay's
+    // screenshots, once the list is confirmed.
     async addPaymentScreenshots(taskId: string, invoiceId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
       const judged = judgeFiles(files);
       const images = await Promise.all(judged.map((file) => printActions.isScreenshotImage(file)));
@@ -553,7 +553,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           if (admission !== 'ok') return admission;
         }
         const { [DINING_INVOICE_KEY]: _selection, ...fields } = fieldAnswer(verdict.answer);
-        const storedAnswer = selectedInvoiceId ? fields : verdict.answer;
+        const storedAnswer = DINING_INVOICE_KEY in fieldAnswer(verdict.answer) ? fields : verdict.answer;
         if (selectedInvoiceId) await tx.insertInto('pending_answer').values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: editAddress(materialId, DINING_INVOICE_FIELD), material_id: materialId, answer: JSON.stringify({ value: selectedInvoiceId }), revision, created_at: at }).execute();
         await tx
           .insertInto('pending_answer')
