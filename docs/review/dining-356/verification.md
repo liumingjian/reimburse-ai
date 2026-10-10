@@ -3,12 +3,14 @@
 Spec: [#356](https://github.com/liumingjian/reimburse-ai/issues/356). Integration branch: `spec/356-dining`.
 Implementation tickets: #357–#364. Real materials and live ERP readback remain separate human follow-ups, #365 and #366.
 
-## Tested revisions and commands
+## Original implementation checkpoint
 
 The main baseline is `094732d561991f95d211a0ccb2429e5ad631a786`, with all 377 e2e tests passing.
 Fetching `origin/main` again before final verification confirmed the same revision.
 The final reviewed and tested code revision is `eac8f8923b9ee7a319ca0f1d392b15c19c6c6b28`.
-Any later evidence-only commit changes files under this review directory.
+The evidence commits immediately after that checkpoint changed this review directory only.
+The later maintainer QA repair changes parsing and image orientation. Its final revision and checks are recorded in
+[Real dining QA repair](qa370-verification.md).
 
 Commands ran directly on the maintainer's Mac. This checkout has usable Git history and no `rexec` command.
 Broad suites ran serially. Package parallelism within `pnpm test` remains the repository default.
