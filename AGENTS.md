@@ -10,8 +10,8 @@ The five canonical triage roles use their default label names. See `docs/agents/
 
 ### Testing
 
-Inner loop: `pnpm test:changed <changed files>` after each edit. Full gate (`pnpm typecheck`, `pnpm test`,
-`pnpm test:e2e`) once, before merge. Both run on the Mac. See `docs/agents/testing.md`.
+Inner loop: `pnpm test:changed <changed files>` after each edit. Merge gate once, before merge. Both run on the Mac.
+See `docs/agents/testing.md`.
 
 ### Private corpus
 
@@ -25,7 +25,8 @@ Reviewing a change (`/code-review` Standards axis) or fixing a QA-reported bug: 
 ### Merge conditions
 
 Before merging any branch (to `main` or to a spec's integration branch), check it against
-`docs/agents/merge-conditions.md`; the first condition is e2e green on main.
+`docs/agents/merge-conditions.md`. It picks the gate (`docs`, `standard` or `full`); the whole e2e suite runs only
+on `full`.
 
 ### Manual QA on the Mac
 

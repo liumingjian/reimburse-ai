@@ -15,7 +15,12 @@
 // Compute the list where git works and pass it in; see docs/agents/testing.md. `--base <ref>` computes it here
 // instead, for a checkout that has real history.
 //
-// Flags: --base <ref>  --no-e2e (skip Playwright)  --no-build (reuse the existing e2e builds)  --dry-run (print the plan)
+// `--gate` prints which merge gate the change needs (docs/agents/merge-conditions.md) and runs nothing:
+// - docs: every file is documentation or agent configuration (*.md, docs/, .claude/, .agents/); no test can see it.
+// - full: a file the whole app rests on, so a break shows up in journeys no import edge leads to (FULL_GATE).
+// - standard: everything else.
+//
+// Flags: --base <ref>  --gate  --no-e2e (skip Playwright)  --no-build (reuse the existing e2e builds)  --dry-run (print the plan)
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -28,16 +33,21 @@ const E2E_SERVER = join(E2E, 'server');
 const CONFIG_FILE = /^(package\.json|tsconfig(\..+)?\.json|vite(st)?\.config\.[cm]?[jt]s)$/;
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.mjs', '.js'];
 const ROOT_DOCS = /^(.*\.md|LICEN[CS]E(\..*)?|\.gitignore)$/i;
+// Paths are relative to the root, '/'-separated.
+const DOCS_GATE = /(^|\/)[^/]*\.md$|^(docs|\.claude|\.agents)\/|^LICEN[CS]E(\..*)?$|^\.gitignore$/i;
+// The HTTP contract both sides speak, the database schema, and the e2e harness itself.
+const FULL_GATE = /^(contract\/src|server\/src\/db)\/|^server\/src\/e2e-main\.ts$|^web\/playwright\.config\.ts$|^web\/e2e\/server\/fixture\.ts$/;
 
 // A file directly in the repository root that is not documentation: it may configure every package.
 const isRootConfig = (file) => dirname(file) === ROOT && !ROOT_DOCS.test(relative(ROOT, file));
 
 function parseArgs(argv) {
-  const options = { base: null, e2e: true, build: true, dryRun: false, files: [] };
+  const options = { base: null, gate: false, e2e: true, build: true, dryRun: false, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--') continue;
     else if (arg === '--base') options.base = argv[++i];
+    else if (arg === '--gate') options.gate = true;
     else if (arg === '--no-e2e') options.e2e = false;
     else if (arg === '--no-build') options.build = false;
     else if (arg === '--dry-run') options.dryRun = true;
@@ -170,6 +180,14 @@ function affectedSpecs(files, packages) {
   });
 }
 
+function gateOf(files) {
+  const paths = files.map((file) => relative(ROOT, file).split(sep).join('/'));
+  const full = paths.filter((path) => FULL_GATE.test(path) || isRootConfig(join(ROOT, path)));
+  if (full.length > 0) return { gate: 'full', because: full };
+  const code = paths.filter((path) => !DOCS_GATE.test(path));
+  return code.length > 0 ? { gate: 'standard', because: code } : { gate: 'docs', because: [] };
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   dryRun = options.dryRun;
@@ -180,6 +198,12 @@ function main() {
   }
   // Deleted files drop out: whatever imported them changed too, and that is what vitest and the spec graph follow.
   const files = [...new Set(listed.map((file) => resolve(ROOT, file)))].filter((file) => existsSync(file) && statSync(file).isFile());
+  if (options.gate) {
+    // Deleted files count here: removing a migration is a schema change.
+    const { gate, because } = gateOf([...new Set(listed.map((file) => resolve(ROOT, file)))]);
+    console.log(`test:changed: gate ${gate}${because.length > 0 ? ` (${because.slice(0, 5).join(', ')}${because.length > 5 ? ', …' : ''})` : ''}`);
+    return 0;
+  }
   const packages = workspacePackages();
   const failures = [];
 
