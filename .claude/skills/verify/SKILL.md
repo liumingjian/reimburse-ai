@@ -23,15 +23,16 @@ runs on the Mac through the `rexec` skill (this server is too small to build or 
 ## Launch
 
 ```bash
-rexec --timeout 900 '.claude/skills/verify/verify.sh run login-wall'     # builds, boots, drives, tears down
-rexec --timeout 300 '.claude/skills/verify/verify.sh run login-wall --no-build'
-rexec --timeout 300 '.claude/skills/verify/verify.sh run login-wall --fake catalog_mismatch'   # override the fake
+rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run login-wall'   # installs, builds, boots, drives, tears down
+rexec --background --timeout 1800 '.claude/skills/verify/verify.sh run login-wall && .claude/skills/verify/verify.sh run reconcile-uncertain --no-build'
+rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run login-wall --fake catalog_mismatch'   # override the fake
 ```
 
-- `run` builds first: `BAOX_BUILD_E2E=1 pnpm --filter @baox/server --filter @baox/web build`, a few minutes. The build
-  log goes to `~/.baox-verify/last-build.log`.
-- Pass `--no-build` only when the same workspace was just built by an earlier job. rexec's rsync re-stamps every file,
-  so mtimes cannot tell whether a build is current.
+- `run` installs and builds first: `pnpm install --frozen-lockfile`, then
+  `BAOX_BUILD_E2E=1 pnpm --filter @baox/server --filter @baox/web build`. Together they take about 5 minutes on an idle
+  Mac. The build log goes to `~/.baox-verify/last-build.log`.
+- Every rexec job gets a fresh workspace with no `node_modules` and no build. So `--no-build` only helps for a second
+  scenario chained in the same rexec command, as above.
 - `drive.mjs` spawns the server on `BAOX_PORT=0` with a fresh `mkdtemp` data directory and `BAOX_HOME` pointed at
   nothing. It is ready when the server prints `listening on http://...`; the URL comes from that line.
 - **Isolation:** port 0 and a temp data directory mean runs never share state.
@@ -95,14 +96,18 @@ Each run writes `~/.baox-verify/<UTC-stamp>-<scenario>/` on the Mac:
 
 The exit status is 0 for PASS and 1 for FAIL.
 
-rexec exports text only, so `drive.mjs` copies the `.txt`/`.json`/`.log` files to `$REXEC_ARTIFACTS/verify/<run>/`
-along with `screenshots.txt`, which lists the PNG paths left on the Mac. Collect them with:
+rexec exports only text, and it refuses the whole set when one file looks like it holds a credential. Snapshots carry
+step tokens and digests, so `drive.mjs` publishes only three files to `$REXEC_ARTIFACTS/verify/<run>/`:
+`transcript.txt`, `server-tail.txt` (the last 200 lines) and `kept-on-mac.txt` (the paths of the PNGs and snapshots).
+On FAIL the stdout also ends with the server log's last 80 lines. Collect the files with:
 
 ```bash
 rexec artifacts JOB --into "$CLAUDE_JOB_DIR/tmp/verify"
 ```
 
-The PNGs stay on the Mac. Name their paths when reporting; the maintainer can open them there.
+The PNGs and snapshots stay on the Mac. Read a snapshot with
+`rexec --no-sync 'cat ~/.baox-verify/<run>/snapshot-<label>.json | head -c 4000'`, and name the PNG paths when
+reporting so the maintainer can open them there.
 
 **Proof standards:**
 
