@@ -99,8 +99,8 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // The extension's executor answers through the channel built further down, so it reaches the channel through the
   // binding rather than the value.
   const remote = createRemoteExecutor({ db, schedule, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
-  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record });
-  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record });
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule });
+  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record, schedule });
   // Story 13: a 去报销 bound for the owner's 浏览器扩展 is refused before any job exists when there is no extension to
   // run it, saying which is missing. An injected executor (development, e2e, tests) needs no extension. The in-job
   // `extension_offline` abort stays as the backstop for a socket lost between this check and the dispatch.

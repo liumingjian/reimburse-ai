@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
+import { realTimer, type Schedule } from '../extension/channel';
 import type { MaintenanceLease } from '../maintenance';
 import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
@@ -19,8 +20,9 @@ import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type Execut
 // what it is allowed to start from, which `tasks.ts` decides.
 export type FillTrigger = 'start' | 'confirm_login' | 'refill';
 
-// `confirm_login` is the user's 我已登录，继续: the executor probes the login once and never polls for it.
-export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: { trigger: FillTrigger }) => Promise<ResultEvent>;
+// `confirm_login` is the user's 我已登录，继续: the executor probes the login once and never polls for it. `signal` aborts
+// when the server has ended the job (its deadline): the executor should stop, and every event it sends after is refused.
+export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: { trigger: FillTrigger; signal?: AbortSignal }) => Promise<ResultEvent>;
 
 export type FillRun = { jobId: string; accountId: string; taskId: string; trigger: FillTrigger; frozen: FrozenJob; maintenance?: MaintenanceLease };
 
@@ -39,6 +41,59 @@ export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): 
   if (!attempt) return event;
   const message = `已开始写入报销系统之后停止，写入结果不确定：${event.message ?? event.code ?? ''}`;
   return { ...event, status: 'unknown', message };
+}
+
+/**
+ * Every ERP job ends within its deadline, whatever its executor does: an extension whose socket stays up while its
+ * runner hangs opens no reconnection window, and a page that never settles never answers. Past the deadline the server
+ * takes no more of the job's events, lets the ones already being recorded land (an `attempt_started` among them must be
+ * on record before the result is judged), records `aborted` through the job's own path — which `afterAttempts` turns
+ * into `unknown`, so 对账, once an attempt is durable — and aborts the executor's signal. Generous on purpose: a slow but
+ * healthy run must never meet it.
+ */
+export const FILL_JOB_DEADLINE_MS = 15 * 60_000;
+export const RECONCILE_JOB_DEADLINE_MS = 5 * 60_000;
+export const JOB_DEADLINE_CODE = 'erp_job_deadline';
+export const JOB_DEADLINE_COPY = {
+  fill: '这次去报销超过 15 分钟还没有结束，应用把它停下了。',
+  reconcile: '这次对账超过 5 分钟还没有结束，应用把它停下了。对账只读，不会改动报销系统，可以再对账一次。',
+} as const;
+const JOB_CLOSED_MESSAGE = '这次任务已经结束，应用不再接受它的进展。';
+
+/**
+ * Runs a job's executor against its deadline. `emit` is the job's own recording path; the executor gets a gated copy
+ * that refuses everything once the deadline has passed. Resolves `true` when the deadline ended the job, after its
+ * in-flight events have landed and its signal has been aborted; the caller then records the deadline result.
+ */
+export async function withinDeadline(
+  { deadlineMs, schedule }: { deadlineMs: number; schedule: Schedule },
+  emit: ExecutorChannel['emit'],
+  execute: (channel: ExecutorChannel, signal: AbortSignal) => Promise<unknown>,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const inFlight = new Set<Promise<unknown>>();
+  let closed = false;
+  const gated = (async (event: ExecutorEvent) => {
+    if (closed) throw new Error(JOB_CLOSED_MESSAGE);
+    const reply = (emit as (event: ExecutorEvent) => Promise<unknown>)(event);
+    const settled = reply.then(() => undefined, () => undefined);
+    inFlight.add(settled);
+    void settled.then(() => inFlight.delete(settled));
+    return reply;
+  }) as ExecutorChannel['emit'];
+  let cancel = () => {};
+  const overdue = new Promise<'overdue'>((resolve) => {
+    cancel = schedule(() => resolve('overdue'), deadlineMs);
+  });
+  try {
+    if ((await Promise.race([execute({ emit: gated }, controller.signal), overdue])) !== 'overdue') return false;
+    closed = true;
+    controller.abort();
+    await Promise.allSettled([...inFlight]);
+    return true;
+  } finally {
+    cancel();
+  }
 }
 
 // The result a job gets when it ended without sending one of its own.
@@ -70,7 +125,7 @@ export async function ensureResult(db: Db, jobId: string, taskId: string, kind: 
   await writeEvent(db, jobId, taskId, event, new Date().toISOString());
 }
 
-export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts }) {
+export function createFillJobs({ db, lease, execute, record, schedule = realTimer, deadlineMs = FILL_JOB_DEADLINE_MS }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts; schedule?: Schedule; deadlineMs?: number }) {
   const active = new Set<Promise<void>>();
 
   async function drive({ jobId, accountId, taskId, trigger, frozen, maintenance }: FillRun): Promise<void> {
@@ -116,7 +171,8 @@ export function createFillJobs({ db, lease, execute, record }: { db: Db; lease: 
     };
     const channel = { emit: emit as ExecutorChannel['emit'] };
     try {
-      await execute(frozen.plan, channel, { trigger });
+      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, (gated, signal) => execute(frozen.plan, gated, { trigger, signal }));
+      if (overdue && !finished) await channel.emit({ type: 'result', status: 'aborted', code: JOB_DEADLINE_CODE, message: JOB_DEADLINE_COPY.fill, billNo: null, capture: null });
     } catch (error) {
       if (!finished) {
         // The executor itself failed: after an attempt the write result is unknown, before it nothing was written.
