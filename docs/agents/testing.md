@@ -31,13 +31,14 @@ Its reach is the module graph: a spec that drives the built app without importin
 neither is a test that reads a data file (a PDF fixture) without importing it. When the change is covered by a journey,
 name the spec: `pnpm test:e2e e2e/server/erp.spec.ts` (building takes most of that run).
 
-## Full gate: before merge
+## Merge gate: before merge
 
-Once, when the change is done:
+Once, when the change is done, run the gate `docs/agents/merge-conditions.md` picks for it. Submit with `--background`
+and collect the result later; the whole e2e suite takes over 20 minutes.
 
 ```bash
-rexec --detach 'set -o pipefail; pnpm typecheck && pnpm test 2>&1 | tail -40'
-rexec --detach 'set -o pipefail; pnpm test:e2e 2>&1 | tail -40'
+rexec --background 'set -o pipefail; pnpm typecheck && pnpm test 2>&1 | tail -40'
+rexec --background --timeout 3600 'set -o pipefail; pnpm test:e2e 2>&1 | tail -40'   # full gate only
 ```
 
 `pnpm test` is lint plus every package's unit suite, packages in parallel. Server tests that run the real OCR are the
