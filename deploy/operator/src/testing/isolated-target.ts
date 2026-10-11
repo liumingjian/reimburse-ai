@@ -217,7 +217,7 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
   mkdirSync(join(serviceHome, '.cache'), { recursive: true });
   writeExecutable(join(fakeBin, 'id'), '#!/bin/sh\nif [ "$1" = baox ] || { [ "$1" = -u ] && [ "$2" = baox ]; }; then exit 0; fi\nexec /usr/bin/id "$@"\n');
   writeExecutable(join(fakeBin, 'getent'), `#!/bin/sh\nif [ "$1" = passwd ] && [ "$2" = baox ]; then printf '%s\\n' ${shellQuote(`baox:x:998:998::${serviceHome}:/sbin/nologin`)}; exit 0; fi\nexit 2\n`);
-  writeExecutable(join(fakeBin, 'stat'), '#!/bin/sh\n[ "$1" = -c ] || exit 2\ncase "$2" in\n  %a) /usr/bin/stat -c %a "$3" 2>/dev/null || /usr/bin/stat -f "%Lp" "$3" ;;\n  %u) printf "0\\n" ;;\n  *) exit 2 ;;\nesac\n');
+  writeExecutable(join(fakeBin, 'stat'), '#!/bin/sh\n[ "$1" = -c ] || exit 2\ncase "$2" in\n  %a) /usr/bin/stat -f "%Lp" "$3" ;;\n  %u) printf "0\\n" ;;\n  *) exit 2 ;;\nesac\n');
   writeExecutable(join(fakeBin, 'chown'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${shellQuote(join(barrier, 'chown.log'))}\nexit 0\n`);
   writeExecutable(join(fakeBin, 'runuser'), '#!/bin/sh\n[ "$1" = -u ] || exit 2\nshift 2\n[ "$1" = -- ] && shift\nexec "$@"\n');
 
@@ -240,18 +240,11 @@ export async function createIsolatedTarget({ holdBuild = false, buildEnvironment
     ),
   );
 
-  // On Linux the coordinator requires a root-owned build.env, which a test cannot write: report it as root's, as the
-  // fake stat above does for the shell doctor.
-  const rootOwnedPreload = join(root, 'root-owned-preload.cjs');
-  writeFileSync(rootOwnedPreload, rootOwnedStatPreload());
-  const runnerEnvironment: NodeJS.ProcessEnv = {
-    NODE_OPTIONS: `--require=${rootOwnedPreload}`,
-    BAOX_TEST_ROOT_OWNED_FILE: join(deployRoot, 'etc', 'build.env'),
-  };
+  const runnerEnvironment: NodeJS.ProcessEnv = {};
   if (snapshotAvailableBytes !== undefined) {
     const preload = join(root, 'snapshot-statfs-preload.cjs');
     writeFileSync(preload, snapshotStatfsPreload());
-    runnerEnvironment.NODE_OPTIONS += ` --require=${preload}`;
+    runnerEnvironment.NODE_OPTIONS = `--require=${preload}`;
     runnerEnvironment.BAOX_TEST_SNAPSHOT_AVAILABLE_BYTES = String(snapshotAvailableBytes);
   }
   const runner = new LocalTargetRunner(fakeBin, barrier, runnerEnvironment);
@@ -634,17 +627,6 @@ if (mode === 'post-access' && barrier) {
   fs.writeFileSync(path.join(barrier, 'post-reopen-mutation-applied'), 'applied\\n');
   fs.writeFileSync(path.join(barrier, 'post-reopen-gate-status-failure'), 'once\\n');
 }
-`;
-}
-
-function rootOwnedStatPreload(): string {
-  return `const fs = require('node:fs/promises');
-const original = fs.stat.bind(fs);
-fs.stat = async (file, ...rest) => {
-  const result = await original(file, ...rest);
-  if (String(file) !== process.env.BAOX_TEST_ROOT_OWNED_FILE) return result;
-  return Object.assign(result, { uid: 0 });
-};
 `;
 }
 

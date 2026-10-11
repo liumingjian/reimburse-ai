@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # deploy/operator's source tests plan from origin/main, which a pull_request checkout does not fetch.
-      - run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
       # dining-photo.test.ts renders Chinese SVG text for real OCR; macOS has PingFang, the runner has no CJK font.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       # .claude/skills keeps a real copy for Claude Code; .agents/skills is the source.
@@ -23,5 +21,21 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      # Every package's result, not only the first red one.
-      - run: pnpm lint && pnpm -r --no-bail test
+      # Every package's result, not only the first red one. deploy/operator runs in its own job below.
+      - run: pnpm lint && pnpm -r --no-bail --filter '!@baox/operator' test
+
+  # The operator's fixtures stand a macOS workstation in for the Linux host, as on the Mac the suite is run from: on a
+  # Linux runner the host's root-owner and process-identity checks apply to the fixture itself.
+  operator:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # src/source.test.ts plans from origin/main, which a pull_request checkout does not fetch.
+      - run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @baox/operator test
