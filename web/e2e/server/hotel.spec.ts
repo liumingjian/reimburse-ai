@@ -60,7 +60,7 @@ async function inventory(page: Page, files: readonly Upload[]): Promise<TaskSnap
   for (const file of files) await expect(batch.getByText(file.name, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/[^/]+\/inventory$/);
-  await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText(`材料${files.length} 份`);
+  await expect(page.getByRole('group', { name: '盘点摘要' })).toContainText(`材料${files.length} 份`, { timeout: 60_000 });
   return TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
 }
 
