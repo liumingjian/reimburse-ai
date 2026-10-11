@@ -27,6 +27,10 @@ if (hasDom) {
       disconnect() {}
     } as unknown as typeof ResizeObserver;
   }
+  // findBy*/waitFor 默认只等 1 秒。Mac 被桌面应用占满时，页面走完 mock 的几个阶段会超过 1 秒，整批用例变红而代码没错。
+  // 条件一满足就返回，所以放宽不拖慢通过的用例。用例级上限见 vite.config.ts 的 testTimeout。
+  const { configure } = await import('@testing-library/react');
+  configure({ asyncUtilTimeout: 5000 });
 }
 
 afterEach(async () => {

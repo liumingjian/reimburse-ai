@@ -41,6 +41,11 @@ rexec --background 'set -o pipefail; pnpm typecheck && pnpm test 2>&1 | tail -40
 rexec --background --timeout 3600 'set -o pipefail; pnpm test:e2e 2>&1 | tail -40'   # full gate only
 ```
 
+The Mac is shared with the maintainer's desktop apps, and the web, extension and e2e suites have timing-sensitive
+tests: on a loaded Mac they fail by the dozen while the code is fine. Before a merge gate, read the load with
+`rexec --no-sync uptime`; when the 1-minute average is above 4, wait for it to drop rather than reading a red run as
+a red `main`. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`web/src/test/setup.ts`).
+
 `pnpm test` is lint plus every package's unit suite, packages in parallel. Server tests that run the real OCR are the
 `server-ocr` vitest project (`server/vitest.config.ts`), one file at a time, so they cannot starve the web suite's
 timing tests; a new server test that parses an image for real goes on its `OCR_TESTS` list.
