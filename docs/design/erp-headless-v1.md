@@ -88,6 +88,43 @@
 S2、S3、S4 任一不通过，ADR-0033 不生效，回到扩展路径并恢复线 2 之外的扩展加固项。S5 或 S6 不通过只影响 ADR-0034
 和模型回读，不影响无头本身。
 
+### 怎样运行
+
+脚本是 `server/scripts/spike-headless.ts`，在 `10.250.0.222` 上用普通用户运行（root 下 Chromium 不加 `--no-sandbox`
+不肯启动）。先装好 Chromium，或用 `--chromium` / `BAOX_CHROME` 指定可执行文件。
+
+```sh
+set -a; . ~/.baox-erp-live.env; set +a      # BAOX_ERP_TEST_ACCOUNT、BAOX_ERP_TEST_PASSWORD，可选 BAOX_ERP_TEST_TENANT
+# 第一轮：只读，S4 跳过
+pnpm --filter @baox/server exec tsx scripts/spike-headless.ts
+# 第二轮：带测试发票，暂存一张草稿，两个会话并发
+pnpm --filter @baox/server exec tsx scripts/spike-headless.ts \
+  --invoice /绝对路径/测试发票.pdf --save --concurrency 2
+```
+
+- **环境变量**：
+  - 账号密码只从 `BAOX_ERP_TEST_ACCOUNT` / `BAOX_ERP_TEST_PASSWORD` 读，不打印，不写进报告，也不走命令行；
+  - `BAOX_ERP_TEST_TENANT` 可选，S2 用它核对登录后落在哪个账套；
+  - `BAOX_ERP_ORIGIN` 覆盖 ERP 地址，默认取 `server/src/erp/config.ts`。
+- **只读是默认**：
+  - S4 要 `--invoice` 才跑。它把一张发票导入一张不保存的新增单，结束后关掉，「是否保存」答「否」。
+    单据本身不留下，但「发票导入单据」会在 ERP 里生成或覆盖这张发票的收票单（ADR-0026）。
+  - S3 要人在场：脚本会提示所有者先在自己的浏览器登录，再回答自己的页面有没有被登出，然后重新登录。
+    加 `--non-interactive` 时跳过。
+- **`--save`** 只影响 S5：在 S4 那张单上点「暂存」，打印单据编号，再用 `View` 读回，和页面回读比对。
+  **这张测试草稿要所有者事后在 ERP 里手工删除**，脚本不删除任何单据，也不点保存、提交、审核、删除。
+- **其他参数**：
+  - `--bill <单据编号>`：一张已保存、带发票的单据，作为 S6 的对照；不带 `--save` 时 S5 只读 `View` 它。
+  - `--invoice-no <号码,…>`：S6 额外查询的发票号码。
+  - `--only S1,S2`：只跑选中的检查。
+  - `--out <目录>`：报告目录。
+- **结果**：
+  - 每项打印一行 PASS / FAIL / SKIP 和原因；
+  - 报告目录（默认在运行命令的目录下 `spike-report-<时间>/`）里有 `report.json` 和每一步的截图。
+    报告只记形状、计数和耗时，不记金额、姓名和发票号码，S5 草稿的单据编号除外。
+    截图是真实画面，交给别人之前先看一眼。
+- **收尾**：脚本结束时（含 Ctrl-C）登出它自己创建的 ERP 会话，关掉它启动的所有浏览器，删除临时配置目录。
+
 ## 留到验证之后再定
 
 - S2 如果需要选账套：凭据里是否要多存一个账套字段。
