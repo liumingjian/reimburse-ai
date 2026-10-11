@@ -519,17 +519,20 @@ describe('an interrupted 去报销', () => {
 describe('a job that outlives its deadline', () => {
   async function hanging(onPlan: (plan: FillPlan, channel: ExecutorChannel) => Promise<void>) {
     let wire!: ExecutorChannel;
+    // Set once every event `onPlan` sent has been acknowledged, so the deadline never races one still on the wire.
+    let acknowledged = false;
     await connected(await pair(alice), {
       fill: async (plan, channel) => {
         wire = channel;
         await onPlan(plan, channel);
+        acknowledged = true;
         return new Promise<never>(() => undefined);
       },
     });
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     const deadline = Date.now() + BACKSTOP_MS;
-    while ((await journal(scene.task.taskId)).length === 0 || timers.pending(FILL_JOB_DEADLINE_MS) === 0) {
+    while (!acknowledged || timers.pending(FILL_JOB_DEADLINE_MS) === 0) {
       if (Date.now() > deadline) throw new Error('the job never started');
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
