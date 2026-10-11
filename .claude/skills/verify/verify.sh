@@ -18,8 +18,17 @@ EVIDENCE_HOME=${BAOX_VERIFY_HOME:-$HOME/.baox-verify}
 ENTRY=$ROOT/server/dist/e2e-main.mjs
 CHROME="/Applications/Google Chrome.app"
 
+# rexec's sync refuses configuration files, so a rexec workspace has no .npmrc and pnpm falls back to the Mac's bare
+# Node 22. Put back the repo's settings (keep in step with /.npmrc) before pnpm runs anything.
+restore_npmrc() {
+  [[ -f $ROOT/.npmrc ]] && return
+  printf 'save-exact=true\nuse-node-version=24.21.0\nnode-mirror:release=https://npmmirror.com/mirrors/node/\n' >"$ROOT/.npmrc"
+  echo "restored .npmrc (rexec does not sync it)"
+}
+
 build() {
   cd "$ROOT"
+  restore_npmrc
   pnpm install --frozen-lockfile --prefer-offline --reporter=silent
   # The same build root `pnpm test:e2e` does for the server project: e2e-main.mjs only exists under BAOX_BUILD_E2E=1.
   BAOX_BUILD_E2E=1 pnpm --filter @baox/server --filter @baox/web build >"$EVIDENCE_HOME/last-build.log" 2>&1 || {
@@ -33,7 +42,7 @@ doctor() {
   local bad=0
   check() { if eval "$2" >/dev/null 2>&1; then echo "ok    $1"; else echo "FAIL  $1${3:+ — $3}"; bad=1; fi; }
   # .npmrc's use-node-version gives pnpm scripts their own Node 24; the Mac's bare `node` may be older, so never use it.
-  check "pnpm's node is 24 ($(cd "$ROOT" && pnpm exec node --version 2>/dev/null))" '[[ $(cd "$ROOT" && pnpm exec node --version) == v24.* ]]' '.npmrc use-node-version'
+  check "pnpm's node is 24 ($(cd "$ROOT" && pnpm exec node --version 2>/dev/null))" '[[ $(cd "$ROOT" && pnpm exec node --version) == v24.* ]]' '.npmrc use-node-version; under rexec .npmrc is not synced, and build/run restore it'
   check "pnpm on PATH" 'command -v pnpm'
   check "Google Chrome installed" '[[ -d "$CHROME" ]]' 'drive.mjs launches channel "chrome", like web/playwright.config.ts'
   check "dependencies installed" '[[ -d "$ROOT/node_modules/@playwright/test" ]]' 'verify.sh build installs them'
@@ -81,6 +90,7 @@ run() {
   [[ -f $scenario ]] || { echo "no scenario $name; have: $(ls "$SKILL/scenarios" | sed 's/\.mjs$//' | tr '\n' ' ')" >&2; exit 64; }
   ((doBuild)) && build
   cd "$ROOT"
+  restore_npmrc
   VERIFY_FAKE=$fake pnpm exec node "$SKILL/drive.mjs" "$scenario"
 }
 

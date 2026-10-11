@@ -33,6 +33,8 @@ rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run login-wal
   Mac. The build log goes to `~/.baox-verify/last-build.log`.
 - Every rexec job gets a fresh workspace with no `node_modules` and no build. So `--no-build` only helps for a second
   scenario chained in the same rexec command, as above.
+- rexec does not sync `.npmrc`, so pnpm would run the Mac's Node 22. `build` and `run` write it back when it is
+  missing; `doctor` is read-only and reports Node 22 in that case.
 - `drive.mjs` spawns the server on `BAOX_PORT=0` with a fresh `mkdtemp` data directory and `BAOX_HOME` pointed at
   nothing. It is ready when the server prints `listening on http://...`; the URL comes from that line.
 - **Isolation:** port 0 and a temp data directory mean runs never share state.

@@ -50,5 +50,15 @@ a red `main`. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`we
 `server-ocr` vitest project (`server/vitest.config.ts`), one file at a time, so they cannot starve the web suite's
 timing tests; a new server test that parses an image for real goes on its `OCR_TESTS` list.
 
+rexec's sync refuses configuration files, so a rexec workspace has no `.npmrc`. Without its `use-node-version`, pnpm
+runs the Mac's bare Node 22 instead of Node 24, and under load the ERP and OCR server tests then fail spuriously. Put
+the file back at the start of every rexec command that runs pnpm (keep it in step with `/.npmrc`):
+
+```bash
+rexec --background "printf 'save-exact=true\nuse-node-version=24.21.0\nnode-mirror:release=https://npmmirror.com/mirrors/node/\n' > .npmrc; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm typecheck && pnpm test 2>&1 | tail -40"
+```
+
+Every rexec job also starts from a fresh workspace with no `node_modules`, so install first as above.
+
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
 in a rexec workspace synced from a worktree.
