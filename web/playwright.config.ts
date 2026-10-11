@@ -9,6 +9,9 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   outputDir: './test-results',
   fullyParallel: true,
+  // Half the cores by default; a server spec boots a server plus Chrome, so that alone drove the shared Mac's load to 20
+  // and timed out dozens of specs (docs/agents/testing.md).
+  workers: 3,
   reporter: [['list']],
   use: {
     channel: 'chrome',
