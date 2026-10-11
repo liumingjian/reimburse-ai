@@ -55,10 +55,12 @@ runs the Mac's bare Node 22 instead of Node 24, and under load the ERP and OCR s
 the file back at the start of every rexec command that runs pnpm (keep it in step with `/.npmrc`):
 
 ```bash
-rexec --background "printf 'save-exact=true\nuse-node-version=24.21.0\nnode-mirror:release=https://npmmirror.com/mirrors/node/\n' > .npmrc; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm typecheck && pnpm test 2>&1 | tail -40"
+rexec --background "printf 'save-exact=true\nuse-node-version=24.21.0\nnode-mirror:release=https://npmmirror.com/mirrors/node/\n' > .npmrc; export TMPDIR=/tmp; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm typecheck && pnpm test 2>&1 | tail -40"
 ```
 
-Every rexec job also starts from a fresh workspace with no `node_modules`, so install first as above.
+Every rexec job also starts from a fresh workspace with no `node_modules`, so install first as above. rexec's own
+`TMPDIR` is a long per-job path, and a test's maintenance socket under it passes the 104-byte Unix socket limit
+(`listen EINVAL … maintenance-gate.sock`), so point `TMPDIR` at `/tmp` as above.
 
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
 in a rexec workspace synced from a worktree.
