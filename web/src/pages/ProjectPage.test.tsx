@@ -154,7 +154,7 @@ describe('项目归属（工作台：勾选明细，点右侧项目归入）', (
   });
 
   // 这个用例连着做好几轮归入；页面换成 Carbon 组件后在 jsdom 里渲染更慢，放宽到 15 秒（行为断言不变）。
-  test('逐条与批量归入；批量碰到已有其他项目时三个选项：取消不变、只处理未归属、确认覆盖', { timeout: 15_000 }, async () => {
+  test('逐条与批量归入；批量碰到已有其他项目时三个选项：取消不变、只处理未归属、确认覆盖', { timeout: 40_000 }, async () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });

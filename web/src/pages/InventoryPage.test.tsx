@@ -9,7 +9,7 @@ import type { Fault, MockOptions, SeedStage } from '../mock/options';
 function renderAt(hash: string, seed: SeedStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = hash;
   // 60ms per phase: long enough to see the progress state, short enough not to slow the suite.
-  const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 60 });
+  const adapter = createMockAdapter({ inventoryPhaseMs: 60, ...extra, seed, fault });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -185,7 +185,8 @@ describe('材料盘点', () => {
   });
 
   test('开始材料盘点后先看到分阶段进度，结束后看到结果与待确认项入口', async () => {
-    renderAt('#/task/T1/upload', 'upload');
+    // Long phases: at 60ms a loaded machine finishes the run before the progress is read.
+    renderAt('#/task/T1/upload', 'upload', null, { inventoryPhaseMs: 1000 });
     await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles(FIXTURE_FILES);
     await screen.findByRole('heading', { name: '上传批次 #1' });

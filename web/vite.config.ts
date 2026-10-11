@@ -115,6 +115,10 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       include: ['src/**/*.test.{ts,tsx}'],
       setupFiles: ['src/test/setup.ts'],
+      // A test awaits several 5 s waits (src/test/setup.ts); vitest's default 5 s would cut it off first.
+      testTimeout: 20_000,
+      // Every core by default; on the shared Mac that alone drives the load past 15 and times tests out (docs/agents/testing.md).
+      maxWorkers: '50%',
     },
   };
 });

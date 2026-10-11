@@ -19,4 +19,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm test
+      # Every package's result, not only the first red one.
+      - run: pnpm lint && pnpm -r --no-bail test
