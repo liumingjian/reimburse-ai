@@ -165,19 +165,30 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   await teardown();
+  if (verdict !== 'PASS') console.log(`--- server.log (tail) ---\n${serverTail()}`);
   transcript(`${verdict} ${name}`);
   publish();
 }
 process.exitCode = verdict === 'PASS' ? 0 : 1;
 
-// rexec exports only UTF-8 text: the transcript, snapshots and server log go back; screenshots stay in `out`.
+function serverTail(lines = 80) {
+  try {
+    return readFileSync(join(out, 'server.log'), 'utf8').split('\n').slice(-lines).join('\n');
+  } catch {
+    return '(no server.log)';
+  }
+}
+
+// rexec exports only UTF-8 text, and refuses the whole set when one file looks like it carries a credential. Snapshots
+// hold step tokens and digests, so only the transcript and the server log's tail go back; snapshots and screenshots
+// stay in `out` on the Mac.
 function publish() {
   const artifacts = process.env['REXEC_ARTIFACTS'];
   if (!artifacts) return;
   const into = join(artifacts, 'verify', basename(out));
   mkdirSync(into, { recursive: true });
-  for (const file of readdirSync(out)) {
-    if (/\.(txt|json|log)$/.test(file)) copyFileSync(join(out, file), join(into, file));
-  }
-  writeFileSync(join(into, 'screenshots.txt'), `${readdirSync(out).filter((file) => file.endsWith('.png')).map((file) => join(out, file)).join('\n')}\n`);
+  copyFileSync(join(out, 'transcript.txt'), join(into, 'transcript.txt'));
+  writeFileSync(join(into, 'server-tail.txt'), `${serverTail(200)}\n`);
+  const kept = readdirSync(out).filter((file) => /\.(png|json)$/.test(file)).map((file) => join(out, file));
+  writeFileSync(join(into, 'kept-on-mac.txt'), `${kept.join('\n')}\n`);
 }
