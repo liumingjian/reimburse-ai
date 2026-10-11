@@ -15,7 +15,8 @@ it('archives the full committed repository identically from the root and nested 
     commit: fromRoot.plan.commit,
     archiveSha256: fromRoot.plan.archiveSha256,
   });
-  expect(fromNestedDirectory.archive).toEqual(fromRoot.archive);
+  // Buffer.equals, not toEqual: vitest's deep equality walks a 20 MB archive entry by entry and runs out of heap.
+  expect(fromNestedDirectory.archive.equals(fromRoot.archive)).toBe(true);
 
   const entries = execFileSync('tar', ['-tf', '-'], { input: fromNestedDirectory.archive, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }).split('\n');
   expect(entries).toContain('package.json');

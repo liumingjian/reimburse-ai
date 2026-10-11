@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # deploy/operator's source tests plan from origin/main, which a pull_request checkout does not fetch.
+      - run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+      # dining-photo.test.ts renders Chinese SVG text for real OCR; macOS has PingFang, the runner has no CJK font.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       # .claude/skills keeps a real copy for Claude Code; .agents/skills is the source.
       - run: diff -r .agents/skills/deploy-intranet .claude/skills/deploy-intranet
       - uses: pnpm/action-setup@v4

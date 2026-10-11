@@ -18,7 +18,7 @@ it.each([0, 90, -90])('reads a wide-column synthetic receipt rotated %s degrees 
   const { default: sharp } = await import('sharp');
   const { ocrImage } = await import('./ocr');
   const { snapshotReaders } = await import('./snapshot');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="white"/><g fill="black" font-family="PingFang SC, sans-serif" font-size="36"><text x="480" y="110">结账单</text><text x="70" y="220">商户：测试餐厅</text><text x="70" y="320">日期：2025-01-02</text><text x="70" y="420">家常菜</text><text x="940" y="420">600.00</text><text x="70" y="520">优惠</text><text x="960" y="520">70.00</text><text x="70" y="650">实收金额:</text><text x="940" y="650">530.00</text></g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="white"/><g fill="black" font-family="PingFang SC, Noto Sans CJK SC, sans-serif" font-size="36"><text x="480" y="110">结账单</text><text x="70" y="220">商户：测试餐厅</text><text x="70" y="320">日期：2025-01-02</text><text x="70" y="420">家常菜</text><text x="940" y="420">600.00</text><text x="70" y="520">优惠</text><text x="960" y="520">70.00</text><text x="70" y="650">实收金额:</text><text x="940" y="650">530.00</text></g></svg>`;
   const bytes = await sharp(Buffer.from(svg)).rotate(angle).png().toBuffer();
   const observations = await ocrImage(bytes);
   const outcome = await parseMaterial({ materialId: 'wide', fileName: 'wide.png', mime: 'image/png', bytes }, snapshotReaders({ mediaType: 'image', pageCount: 1, codes: [], observations }));
@@ -42,7 +42,7 @@ it.each([0, 90, -90])('reads a wide-column synthetic receipt rotated %s degrees 
 it.each([false, true])('keeps sparse vertical text in its original page coordinates with mixed horizontal text %s', async (mixed) => {
   const { default: sharp } = await import('sharp');
   const { ocrImage } = await import('./ocr');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="800"><rect width="1100" height="800" fill="white"/><g font-family="PingFang SC, sans-serif" font-size="36" fill="black"><text transform="translate(950 140) rotate(90)">测试文字</text>${mixed ? '<text x="70" y="140">横向文字第一行</text><text x="70" y="250">横向文字第二行</text><text x="70" y="360">横向文字第三行</text>' : ''}</g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="800"><rect width="1100" height="800" fill="white"/><g font-family="PingFang SC, Noto Sans CJK SC, sans-serif" font-size="36" fill="black"><text transform="translate(950 140) rotate(90)">测试文字</text>${mixed ? '<text x="70" y="140">横向文字第一行</text><text x="70" y="250">横向文字第二行</text><text x="70" y="360">横向文字第三行</text>' : ''}</g></svg>`;
   const observations = await ocrImage(await sharp(Buffer.from(svg)).png().toBuffer());
   const vertical = observations.filter((run) => run.height > run.width * 2);
   expect(vertical).toHaveLength(1);
