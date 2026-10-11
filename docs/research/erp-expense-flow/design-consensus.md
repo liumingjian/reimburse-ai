@@ -143,6 +143,6 @@
 - [发票自动上传契约](upload-automation-contract.md)
 - [金蝶 ERP 费用报销草稿保存契约](save-contract.md)
 - [逐项验证台账](verification-ledger.md)
-- [领域词汇表](../../../CONTEXT.md)
+- [领域词汇表](../../../GLOSSARY.md)
 - [ADR-0001 用户入口是 Skill，业务判定留在确定性内核](../../adr/0001-skill-shell-deterministic-kernel.md)
 - [ADR-0002 复用用户已登录的 Chrome，由用户自行完成 ERP 登录](../../adr/0002-reuse-logged-in-chrome.md)

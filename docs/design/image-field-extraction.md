@@ -4,7 +4,7 @@
 
 > **状态：已修订（2026-09-11）。** 按[本地报销应用](standalone-app.md)，调用方改为应用服务端，不再是 `extract-reimbursement-images` Skill 的内部模块；图片只走 OCR + 规则，失败转手工补填，下文的模型视觉 Adapter 与视觉回退不再适用。模块 seam、Python Worker 与 JSONL 协议继续有效。
 
-本文是 `extract-reimbursement-images` 的实现规格。领域语言以根目录 `CONTEXT.md` 为准；架构决定见 [ADR-0013](../adr/0013-managed-local-ocr-for-image-fields.md)。
+本文是 `extract-reimbursement-images` 的实现规格。领域语言以根目录 `GLOSSARY.md` 为准；架构决定见 [ADR-0013](../adr/0013-managed-local-ocr-for-image-fields.md)。
 
 ## Module and seam
 
