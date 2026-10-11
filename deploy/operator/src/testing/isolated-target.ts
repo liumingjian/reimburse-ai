@@ -2,7 +2,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startServer, type RunningServer } from '../../../../server/src/server.js';
 import { writeBlob } from '../../../../server/src/data-dir.js';
@@ -175,7 +174,9 @@ export class LocalTargetRunner {
 }
 
 export async function createIsolatedTarget({ holdBuild = false, buildEnvironment = true, fenceOldWorker = false, snapshotAvailableBytes }: IsolatedTargetOptions = {}): Promise<IsolatedTarget> {
-  const root = mkdtempSync(join(tmpdir(), 'baox-candidate-target-'));
+  // /tmp, not tmpdir(): the target's maintenance socket sits four levels down, and under macOS's /var/folders/…/T/ its
+  // path reaches the 104-byte Unix socket limit (listen EINVAL).
+  const root = mkdtempSync('/tmp/baox-candidate-target-');
   const deployRoot = join(root, 'deploy');
   const dataDir = join(deployRoot, 'data');
   const serviceHome = join(root, 'home', 'baox');

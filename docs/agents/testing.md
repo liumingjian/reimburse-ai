@@ -34,7 +34,7 @@ name the spec: `pnpm test:e2e e2e/server/erp.spec.ts` (building takes most of th
 ## Merge gate: before merge
 
 Once, when the change is done, run the gate `docs/agents/merge-conditions.md` picks for it. Submit with `--background`
-and collect the result later; the whole e2e suite takes over 20 minutes.
+and collect the result later; the whole e2e suite takes over 30 minutes.
 
 ```bash
 rexec --background 'set -o pipefail; pnpm typecheck && pnpm test 2>&1 | tail -40'
@@ -44,11 +44,25 @@ rexec --background --timeout 3600 'set -o pipefail; pnpm test:e2e 2>&1 | tail -4
 The Mac is shared with the maintainer's desktop apps, and the web, extension and e2e suites have timing-sensitive
 tests: on a loaded Mac they fail by the dozen while the code is fine. Before a merge gate, read the load with
 `rexec --no-sync uptime`; when the 1-minute average is above 4, wait for it to drop rather than reading a red run as
-a red `main`. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`web/src/test/setup.ts`).
+a red `main`. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`web/src/test/setup.ts`), and the
+web suite and Playwright cap their own parallelism (`maxWorkers` in `web/vite.config.ts`, `workers` in
+`web/playwright.config.ts`) so they don't load the Mac by themselves.
 
 `pnpm test` is lint plus every package's unit suite, packages in parallel. Server tests that run the real OCR are the
 `server-ocr` vitest project (`server/vitest.config.ts`), one file at a time, so they cannot starve the web suite's
 timing tests; a new server test that parses an image for real goes on its `OCR_TESTS` list.
+
+rexec's sync refuses configuration files, so a rexec workspace has no `.npmrc`. Without its `use-node-version`, pnpm
+runs the Mac's bare Node 22 instead of Node 24, and under load the ERP and OCR server tests then fail spuriously. Put
+the file back at the start of every rexec command that runs pnpm (keep it in step with `/.npmrc`):
+
+```bash
+rexec --background "printf 'save-exact=true\nuse-node-version=24.21.0\nnode-mirror:release=https://npmmirror.com/mirrors/node/\n' > .npmrc; export TMPDIR=/tmp; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm typecheck && pnpm test 2>&1 | tail -40"
+```
+
+Every rexec job also starts from a fresh workspace with no `node_modules`, so install first as above. rexec's own
+`TMPDIR` is a long per-job path, and a test's maintenance socket under it passes the 104-byte Unix socket limit
+(`listen EINVAL … maintenance-gate.sock`), so point `TMPDIR` at `/tmp` as above.
 
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
 in a rexec workspace synced from a worktree.
