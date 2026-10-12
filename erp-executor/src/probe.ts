@@ -137,7 +137,7 @@ export async function probeIdentity({
         const targetId = p.cdpTargetId ?? p.tabId ?? p.pageId ?? `${p.windowId}:${p.index}`;
         return { ...verdict, ...last, transport: reportedTransport, origin, targetId: String(targetId), tabId: p.tabId ?? null, page };
       }
-      if (!fallback || verdict.status === 'not_logged_in') fallback = { ...verdict, origin, ...last };
+      if (!fallback || verdict.status === 'not_logged_in') fallback = { ...verdict, origin, ...last, page };
     }
     // `unknown` on a loaded page is often a moment, not a state: Kingdee reports `complete` before it paints the
     // login form or the console (live 2026-10-12, S8). It is looked at again within the wait, and only stands when

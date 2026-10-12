@@ -309,6 +309,30 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(inputEvents(fake)).toEqual([]);
   });
 
+  it('signs in with the ERP 凭据 on the login page when given a way to, and carries on (headless, ADR-0033)', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
+    let signIns = 0;
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => { signIns += 1; await fake.login(); return { ok: true }; },
+    });
+    expect(result).toMatchObject({ status: 'handed_over', code: null });
+    expect(signIns).toBe(1);
+    expect(server.events.some((e) => e.type === 'waiting_login')).toBe(false);
+  });
+
+  it('aborts with the sign-in\'s own reason, before any attempt or input, when ERP refuses the login', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => ({ ok: false, code: 'erp_sign_in_refused', message: 'ERP 拒绝了这组账号密码' }),
+    });
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_sign_in_refused', message: 'ERP 拒绝了这组账号密码' });
+    expect(server.events).toContainEqual({ type: 'step', step: 'login', status: 'failed' });
+    expect(server.attempts).toEqual([]);
+    expect(inputEvents(fake)).toEqual([]);
+  });
+
   it('aborts on a catalog mismatch before import, with no attempt and no input', async () => {
     const fake = await createFakeErp(fakeErpOptions({ projects: [{ code: '39163', name: '改过名的项目' }, { code: '38480', name: '中国农业发展银行河南省分行-20-1961', forbidStatus: 'B' }] }));
     const result = await run(fake);

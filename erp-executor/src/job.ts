@@ -49,6 +49,11 @@ export type ExecutorPorts = {
   pace?: Pace;
   /** How long the login probe waits for a slow ERP first screen. */
   probeWaitMs?: number;
+  /**
+   * The headless path (ADR-0033): sign in with the employee's ERP 凭据 when the probe finds the login page. Without
+   * it — the extension, where the employee logs in themselves — a login page pauses the job at `waiting_login`.
+   */
+  signIn?: (session: CdpSession) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
   newId?: () => string;
 };
 
@@ -102,11 +107,17 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
 
     // 2. Login probe. Not logged in: pause for the user, holding nothing (no attempt exists yet).
     await step('login', 'running');
-    const probe = await probeIdentity({
+    const probeLogin = (tabs: ChromiumPage[]) => probeIdentity({
       origin: plan.erpOrigin, waitMs: ports.probeWaitMs ?? 30_000, pollMs: pace.pollMs, transport: 'chromium-cdp',
-      listTabs: async () => pages,
+      listTabs: async () => tabs,
       evaluate: async (page, expression) => evalIn((await attach(page as ChromiumPage)).session, expression, { timeout: 10_000 }),
     });
+    let probe = await probeLogin(pages);
+    if (probe.status === 'not_logged_in' && probe.page && ports.signIn) {
+      const signedIn = await ports.signIn((await attach(probe.page as ChromiumPage)).session);
+      if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
+      probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
+    }
     if (probe.status === 'not_logged_in' || probe.status === 'no_tab') {
       await step('login', 'done');
       await channel.emit({ type: 'waiting_login', hint: probe.hint ?? '' });
