@@ -52,7 +52,6 @@ async function localOver({ erp, credentials = { account: 'tester', password: 'se
     request: the.request,
     connection: the.connection,
     blobs: { read: async () => INVOICE.bytes },
-    credentials: async () => credentials,
     launch: async () => {
       browsers.launched += 1;
       return { port: 0, browser: fake.browser, close: async () => { browsers.closed += 1; } };
@@ -61,7 +60,13 @@ async function localOver({ erp, credentials = { account: 'tester', password: 'se
     signInTiming: FAST_SIGN_IN,
     log: (line) => lines.push(line),
   });
-  return { fake, events: the.log, browsers, lines, fill: () => run(EXECUTOR_METHODS.fill, { plan, trigger: 'start' }), run };
+  const sent = credentials ? { credentials } : {};
+  return {
+    fake, events: the.log, browsers, lines, run,
+    fill: () => run(EXECUTOR_METHODS.fill, { plan, trigger: 'start', ...sent }),
+    reconcile: () => run(EXECUTOR_METHODS.reconcile, { plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN }, ...sent }),
+    trySignIn: () => run(EXECUTOR_METHODS.trySignIn, { erpOrigin: ERP_ORIGIN, credentials: credentials ?? { account: 'tester', password: 'secret' } }),
+  };
 }
 
 describe('the local executor runs a 去报销 in a headless browser of its own', () => {
@@ -84,7 +89,7 @@ describe('the local executor runs a 去报销 in a headless browser of its own',
     expect(local.browsers).toEqual({ launched: 1, closed: 1 });
   });
 
-  it('launches nothing without ERP 凭据', async () => {
+  it('launches nothing when the app sent no ERP 凭据 with the job', async () => {
     const local = await localOver({ credentials: null });
     expect(await local.fill()).toMatchObject({ status: 'aborted', code: NO_CREDENTIALS.code });
     expect(local.browsers.launched).toBe(0);
@@ -93,16 +98,32 @@ describe('the local executor runs a 去报销 in a headless browser of its own',
   it('runs one job at a time', async () => {
     const local = await localOver();
     const [first, second] = await Promise.all([local.fill(), local.fill()]);
-    expect(first.code).not.toBe(BUSY.code);
+    expect(first).not.toMatchObject({ code: BUSY.code });
     expect(second).toMatchObject({ status: 'aborted', code: BUSY.code });
     expect(local.browsers).toEqual({ launched: 1, closed: 1 });
   });
 
   it('reads a fresh console for 对账, because the fill\'s form closed with its browser', async () => {
     const local = await localOver();
-    const result = await local.run(EXECUTOR_METHODS.reconcile, { plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN } });
+    const result = await local.reconcile();
     expect(result).toMatchObject({ type: 'result', status: 'read' });
     expect(local.events.find((e) => e.type === 'readback')).toMatchObject({ stage: 'reconcile' });
+    expect(local.browsers).toEqual({ launched: 1, closed: 1 });
+  });
+});
+
+describe('试登录', () => {
+  it('answers with the sign-in\'s own reason in a browser of its own, then closes it', async () => {
+    const local = await localOver({ erp: { loggedIn: false } });
+    expect(await local.trySignIn()).toMatchObject({ ok: false, code: expect.stringMatching(/^erp_sign_in_/) });
+    expect(local.browsers).toEqual({ launched: 1, closed: 1 });
+    expect(local.events).toEqual([]);
+  });
+
+  it('is turned away while a job runs, without a second browser', async () => {
+    const local = await localOver();
+    const [, trial] = await Promise.all([local.fill(), local.trySignIn()]);
+    expect(trial).toEqual({ ok: false, code: BUSY.code, message: BUSY.message });
     expect(local.browsers).toEqual({ launched: 1, closed: 1 });
   });
 });

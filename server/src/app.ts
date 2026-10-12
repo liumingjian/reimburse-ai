@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -14,6 +14,9 @@ import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
 import { createFillJobs, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { createReconcileJobs } from './erp/reconcile-jobs';
+import { createCredentialVault } from './erp/credential-vault';
+import { createErpCredentialService, erpCredentialsReady } from './erp/hosted-sign-in';
+import { mountErpCredentialRoutes } from './erp/hosted-sign-in-http';
 import { createRemoteExecutor } from './erp/remote-executor';
 import { hasUnfinishedErpJobs, recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
@@ -69,6 +72,9 @@ export type AppOptions = {
   // The extension channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
   // hand.
   schedule?: Schedule;
+  // The key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`). null (default) disables them: nothing can
+  // be saved, and no 本地执行器 is sent any.
+  erpCredentialKey?: Buffer | null;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -80,7 +86,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer, erpCredentialKey = null }: AppOptions): App {
   const maintenance = createMaintenanceGate(db);
   // Session lookups usually write a sliding expiry or remove an expired row. Give those narrow housekeeping writes
   // their own admission so a read route cannot cross an admitted maintenance boundary.
@@ -98,14 +104,27 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
   // The extension's executor answers through the channel built further down, so it reaches the channel through the
   // binding rather than the value.
-  const remote = createRemoteExecutor({ db, schedule, extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) } });
+  const remote = createRemoteExecutor({
+    db, schedule,
+    extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) },
+    credentials: { forJob: (accountId) => erpCredentials.forJob(accountId), refusedInJob: (accountId, used, message) => erpCredentials.refusedInJob(accountId, used, message) },
+  });
+  // ERP 凭据 (ADR-0033) for a baox 本地执行器: the 试登录 goes to the account's executor over the same channel, and is
+  // held back while a job of the account drives ERP, whose session it would knock off.
+  const erpCredentials = createErpCredentialService({
+    db, clock: now, vault: erpCredentialKey ? createCredentialVault(erpCredentialKey) : null, erpOrigin: erpConfig.origin,
+    request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload),
+    erpBusy: (accountId) => erpLease.holder(accountId) !== null,
+    acquireWrite: () => maintenance.enter('background'),
+  });
   const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule });
   const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record, schedule });
   // Story 13: a 去报销 bound for the owner's 浏览器扩展 is refused before any job exists when there is no extension to
   // run it, saying which is missing. An injected executor (development, e2e, tests) needs no extension. The in-job
   // `extension_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
+  // A baox 本地执行器 signs in itself, so it also needs authorised ERP 凭据 before anything starts.
   const extensionReady = async (tx: Db, accountId: string) => {
-    if (extensionChannel.connected(accountId)) return null;
+    if (extensionChannel.connected(accountId)) return (await erpCredentialsReady(tx, accountId, !!erpCredentialKey)) ? null : { code: ERP_CREDENTIALS_MISSING_CODE, message: ERP_CREDENTIAL_ERRORS.missing };
     return (await hasPairing(tx, accountId))
       ? { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.extensionOffline }
       : { code: EXTENSION_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.extensionNotPaired };
@@ -293,6 +312,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     },
   });
   mountPairingRoutes(app, pairings, publicOrigin);
+  mountErpCredentialRoutes(app, erpCredentials);
   mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.

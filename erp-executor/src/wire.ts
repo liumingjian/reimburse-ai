@@ -6,9 +6,14 @@
 //
 //   server -> extension  `erp.fill`       {plan, trigger}   answered with the job's `result` event
 //   server -> extension  `erp.reconcile`  {plan}            answered with the job's `result` event
+//   server -> executor   `erp.trySignIn`  {erpOrigin, credentials}  试登录: answered with a `TrySignInAnswer`
 //   extension -> server  `erp.event`      {jobId, event}    answered with what `ExecutorChannel.emit` resolves to
 //   extension -> server  `erp.detached`   {jobId}           the `chrome.debugger` lost the page: interrupts the job
 //   extension -> server  `erp.resume`     {jobId, last, now}  answered with a `ResumeVerdict`
+//
+// A local executor (ADR-0033) signs in itself, so its `erp.fill` and `erp.reconcile` also carry the employee's ERP 凭据.
+// They travel with the request, never in the plan: the plan is stored with the job, the 凭据 must not be. A browser
+// extension is never sent any; it works in the employee's own logged-in ERP.
 //
 // Every executor event is a request, not a one-way `event`: the executor awaits each emit, and a reply per event keeps
 // the job log in order and lets a failed write reach the executor. Two replies carry weight — the durable-attempt ack
@@ -21,7 +26,7 @@ import {
   type Approval, type ApprovedPreview, type AttemptAck, type ExecutorChannel, type ExecutorEvent, type FreshGate, type ReadbackVerdict, type ResultEvent,
 } from './protocol';
 
-export const EXECUTOR_METHODS = { fill: 'erp.fill', reconcile: 'erp.reconcile', event: 'erp.event', detached: 'erp.detached', resume: 'erp.resume' } as const;
+export const EXECUTOR_METHODS = { fill: 'erp.fill', reconcile: 'erp.reconcile', trySignIn: 'erp.trySignIn', event: 'erp.event', detached: 'erp.detached', resume: 'erp.resume' } as const;
 
 // Why the server refused a job request. `unknown_job` reads the same for a job that ended, one that never existed and
 // another account's; the other two tell an interrupted job's extension what it must do next.
@@ -30,11 +35,24 @@ export const JOB_REFUSALS = { unknownJob: 'unknown_job', resumeRequired: 'resume
 // What started a fill run (the server's `FillTrigger`); `confirm_login` probes the login once and never waits for it.
 export const FILL_TRIGGERS = ['start', 'confirm_login', 'refill'] as const;
 
-export const FillRequestSchema = z.object({ plan: FillPlanSchema, trigger: z.enum(FILL_TRIGGERS) });
+export const ErpCredentialsSchema = z.object({ account: z.string().min(1).max(128), password: z.string().min(1).max(256) });
+
+export const FillRequestSchema = z.object({ plan: FillPlanSchema, trigger: z.enum(FILL_TRIGGERS), credentials: ErpCredentialsSchema.optional() });
 export type FillRequest = z.infer<typeof FillRequestSchema>;
 
-export const ReconcileRequestSchema = z.object({ plan: ReconcilePlanSchema });
+export const ReconcileRequestSchema = z.object({ plan: ReconcilePlanSchema, credentials: ErpCredentialsSchema.optional() });
 export type ReconcileRequest = z.infer<typeof ReconcileRequestSchema>;
+
+// 试登录: sign in with these 凭据 and straight out again, touching nothing else. `code` is the sign-in's own failure
+// code (`sign-in.ts`); `erp_sign_in_refused` is the one that disables the 凭据.
+export const SIGN_IN_REFUSED_CODE = 'erp_sign_in_refused';
+export const TrySignInRequestSchema = z.object({ erpOrigin: z.string().url(), credentials: ErpCredentialsSchema });
+export type TrySignInRequest = z.infer<typeof TrySignInRequestSchema>;
+export const TrySignInAnswerSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), code: z.string().min(1), message: z.string() }),
+]);
+export type TrySignInAnswer = z.infer<typeof TrySignInAnswerSchema>;
 
 export const JobEventRequestSchema = z.object({ jobId: z.string().min(1), event: ExecutorEventSchema });
 export type JobEventRequest = z.infer<typeof JobEventRequestSchema>;

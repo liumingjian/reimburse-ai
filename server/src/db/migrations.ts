@@ -697,6 +697,24 @@ export async function settleLegacyScreenshots331(db: Kysely<unknown>): Promise<v
   `.execute(db);
 }
 
+// Line 2 of erp-headless-v1.md, item 1: ERP 凭据 hosted for the baox 本地执行器 (ADR-0033). One row per 应用账号, the
+// password sealed with the server's key; and the pairing learns what paired, so the 凭据 go only to a 本地执行器.
+const erpCredentials: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('erp_credential')
+      .addColumn('account_id', 'text', (c) => c.primaryKey().references('account.account_id'))
+      .addColumn('erp_account', 'text', (c) => c.notNull())
+      .addColumn('password_sealed', 'text')
+      .addColumn('status', 'text', (c) => c.notNull())
+      .addColumn('message', 'text')
+      .addColumn('saved_at', 'text', (c) => c.notNull())
+      .addColumn('checked_at', 'text')
+      .execute();
+    await db.schema.alterTable('extension_pairing').addColumn('holder', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -726,4 +744,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0018_273_project_deadline': projectDeadline273,
   '0019_312_blob_medium': blobMedium312,
   '0020_331_screenshot_group': screenshotGroup331,
+  '0021_line2_erp_credentials': erpCredentials,
 };

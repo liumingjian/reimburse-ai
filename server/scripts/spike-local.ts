@@ -1,6 +1,7 @@
 // The local executor (@baox/local-executor) on the real ERP, end to end through its own command line: it pairs with
-// S8's stand-in app (spike/modes.ts) by 配对码, dials its channel, and each `erp.fill` the stand-in sends runs in a
-// headless Chromium the executor launched itself, signed in with the ERP 凭据, signed out and closed at the end.
+// S8's stand-in app (spike/modes.ts) by 配对码, dials its channel, and each `erp.fill` the stand-in sends — with the ERP
+// 凭据, as the app does for a 本地执行器 — runs in a headless Chromium the executor launched itself, signed in, signed
+// out and closed at the end.
 //
 // READ-ONLY, like S8: the stand-in answers `attempt_started` with `{ persisted: false }`, so each run stops before
 // 发票导入单据, imports nothing and saves nothing; its unsaved 新增单 goes with the browser. Every login may knock the
@@ -41,12 +42,9 @@ const invoice = readInvoice(resolve(here, args.invoice!));
 const app = await standInApp({ port: Number(args.port), invoice });
 const say = (line: string) => console.log(line.split(account).join('<account>').split(password).join('<secret>'));
 
-// The executor's own environment: its home, the Chromium, and the ERP 凭据 under the names it reads.
-const env = {
-  ...process.env, BAOX_LOCAL_EXECUTOR_HOME: home,
-  ...(args.chromium ? { BAOX_CHROME: resolve(here, args.chromium) } : {}),
-  BAOX_ERP_ACCOUNT: account, BAOX_ERP_PASSWORD: password,
-};
+// The executor's own environment: its home and the Chromium. The ERP 凭据 go down with each job, not through here.
+const { BAOX_ERP_TEST_ACCOUNT: _account, BAOX_ERP_TEST_PASSWORD: _password, ...inherited } = process.env;
+const env = { ...inherited, BAOX_LOCAL_EXECUTOR_HOME: home, ...(args.chromium ? { BAOX_CHROME: resolve(here, args.chromium) } : {}) };
 const executor = (command: string[]) => ['--silent', '--filter', '@baox/local-executor', 'start', ...command];
 
 // Not spawnSync: the stand-in answers the 配对码 from this very process, so its event loop must keep running.
@@ -70,6 +68,14 @@ if (!(await waitFor(async () => app.connected(), Boolean, 60_000, 500))) { say('
 const profileDir = join(home, 'profile');
 const browsersOpen = () => spawnSync('pgrep', ['-f', `--user-data-dir=${profileDir}`], { encoding: 'utf8' }).stdout.trim().split('\n').filter(Boolean).length;
 
+// The 试登录 first, as the app runs it after a save: signed in, signed out, browser closed.
+{
+  const started = Date.now();
+  const trial = await app.trySignIn(erp.origin, { account, password }).catch((error: Error) => ({ ok: false, code: 'request_failed', message: error.message }));
+  await sleep(3000);
+  say(`试登录: ${JSON.stringify(trial)} in ${Math.round((Date.now() - started) / 1000)}s, browsers-left ${browsersOpen()}`);
+}
+
 let passed = 0;
 for (let round = 1; round <= rounds; round += 1) {
   app.fresh();
@@ -80,7 +86,7 @@ for (let round = 1; round <= rounds; round += 1) {
     invoices: [{ sha256: invoice.sha256, fileName: 'local-test-invoice.pdf', mime: invoice.mime }],
     purpose: '本地执行器实测',
   };
-  const result = await app.fill(plan).catch((error: Error) => ({ status: 'error', code: 'request_failed', message: error.message }));
+  const result = await app.fill(plan, 'start', { account, password }).catch((error: Error) => ({ status: 'error', code: 'request_failed', message: error.message }));
   const events = app.events();
   const brake = events.find((e) => e.event.type === 'attempt_started');
   const failedStep = events.find((e) => e.event.type === 'step' && e.event.status === 'failed')?.event;

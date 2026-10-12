@@ -21,14 +21,17 @@
 //   server's own guard (`afterAttempts`) turns it into `unknown` — 对账, never a replay — when an attempt is durable.
 //   Nothing is re-sent in either direction: the plan is never asked for again, and the resumed extension is told how
 //   many of its events are on record so it sends none of them twice.
+// - ERP 凭据 (ADR-0033). A job bound for a baox 本地执行器 carries the account's authorised 凭据 next to the plan (never
+//   in it: the plan is stored). A login ERP refuses in that job deletes them (`hosted-sign-in.ts`).
 
 import type { Db } from '../db/database';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE, ExtensionChannelError, realTimer, type ChannelRequestHandler, type ExtensionChannel, type Schedule } from '../extension/channel';
 import type { FillExecutor } from './fill-jobs';
 import type { ReconcileExecutor } from './reconcile-job';
+import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { abortedResult, type ExecutorChannel, type ExecutorEvent, type Preconditions, type ResultEvent } from '@baox/erp-executor/protocol';
 import {
-  EXECUTOR_METHODS, JOB_REFUSALS, JobEventRequestSchema, JobRefSchema, RECONNECT_WINDOW_MS, ResumeRequestSchema, resultOf,
+  EXECUTOR_METHODS, JOB_REFUSALS, JobEventRequestSchema, JobRefSchema, RECONNECT_WINDOW_MS, ResumeRequestSchema, resultOf, SIGN_IN_REFUSED_CODE,
   type FillRequest, type PageObservation, type ReconcileRequest, type ResumeRequest, type ResumeVerdict,
 } from '@baox/erp-executor/wire';
 
@@ -105,7 +108,14 @@ function reobservationProblems({ last, now }: Pick<ResumeRequest, 'last' | 'now'
   return problems;
 }
 
-export function createRemoteExecutor({ db, extension, schedule = realTimer }: { db: Db; extension: Pick<ExtensionChannel, 'request'>; schedule?: Schedule }): RemoteExecutor {
+// What the ERP 凭据 service (`hosted-sign-in.ts`) offers a job: the 凭据 to send, if any, and the news that ERP refused them.
+export type JobCredentials = {
+  forJob(accountId: string): Promise<ErpCredentials | null>;
+  refusedInJob(accountId: string, used: ErpCredentials, message: string): Promise<void>;
+};
+const NO_CREDENTIALS: JobCredentials = { forJob: async () => null, refusedInJob: async () => undefined };
+
+export function createRemoteExecutor({ db, extension, schedule = realTimer, credentials: hosted = NO_CREDENTIALS }: { db: Db; extension: Pick<ExtensionChannel, 'request'>; schedule?: Schedule; credentials?: JobCredentials }): RemoteExecutor {
   const running = new Map<string, Running>();
 
   // Ends the job on the server's say-so, after any event already in flight has landed, so the result is judged with
@@ -139,6 +149,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
   async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest, signal?: AbortSignal): Promise<ResultEvent> {
     const { account_id: accountId } = await db.selectFrom('task').select('account_id').where('task_id', '=', plan.taskId).executeTakeFirstOrThrow();
     const originals = new Set((plan.invoices ?? []).map((invoice) => invoice.sha256));
+    const credentials = await hosted.forJob(accountId);
     let job!: Running;
     const outcome = new Promise<ResultEvent>((finish, fail) => {
       job = { accountId, taskId: plan.taskId, originals, channel, state: 'live', tail: Promise.resolve(), cancelWindow: null, lostWhileResuming: false, finish, fail };
@@ -151,7 +162,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
       job.state = 'ended';
       job.fail(new Error('这次任务已经被应用结束了。'));
     }, { once: true });
-    extension.request(accountId, method, payload).then(
+    extension.request(accountId, method, credentials ? { ...payload, credentials } : payload).then(
       // The executor's own answer counts only while the job is live: an interrupted job's late answer describes a page
       // nobody watched.
       (answer) => {
@@ -170,7 +181,9 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
       },
     );
     try {
-      return await outcome;
+      const result = await outcome;
+      if (credentials && result.code === SIGN_IN_REFUSED_CODE) await hosted.refusedInJob(accountId, credentials, result.message ?? '').catch(() => undefined);
+      return result;
     } finally {
       job.state = 'ended';
       job.cancelWindow?.();

@@ -1,5 +1,6 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
+import type { ErpCredentialsOutcome, ErpCredentialsView, SaveErpCredentialsInput } from './erp-credentials';
 import type { ExtensionPairing, ExtensionPairingOutcome } from './extension';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
@@ -105,6 +106,12 @@ export interface AppAdapter {
   getExtensionPairing(): Promise<ExtensionPairing>;
   createExtensionPairingCode(): Promise<ExtensionPairingOutcome>;
   revokeExtensionPairing(): Promise<ExtensionPairingOutcome>;
+  // ERP 凭据 (ADR-0033): read the view (never the password); save, which runs a 试登录 through the paired baox 本地执行器;
+  // run the 试登录 again; clear, which deletes them.
+  getErpCredentials(): Promise<ErpCredentialsView>;
+  saveErpCredentials(input: SaveErpCredentialsInput): Promise<ErpCredentialsOutcome>;
+  testErpCredentials(): Promise<ErpCredentialsOutcome>;
+  clearErpCredentials(): Promise<ErpCredentialsOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 

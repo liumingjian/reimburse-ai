@@ -6,6 +6,7 @@ import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import type { ParseExecutor } from './parse/executor';
 import { resolveLegacyHome } from './legacy/read';
+import { readCredentialKey } from './erp/credential-vault';
 import { readMaintenanceToken } from './maintenance-control';
 import { startServer } from './server';
 
@@ -19,6 +20,9 @@ import { startServer } from './server';
 // `BAOX_MAINTENANCE_TOKEN_FILE` is the root/baox-owned host-local credential that enables the Unix maintenance
 // control socket; `BAOX_MAINTENANCE_SOCKET_PATH` is reserved for an isolated recovery rehearsal. Production uses the
 // data-directory default, while development and existing releases may leave the credential unset.
+// `BAOX_ERP_CREDENTIAL_KEY_FILE` holds the key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`); unset
+// or not created yet (a release started before install.sh wrote it), nobody can save ERP 凭据 and no 本地执行器 is
+// sent any. A file that exists but is not a key stops the server: that is a broken host, not a missing feature.
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
 // `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean
 // nothing to the production entry. Project numbers are checked against the ERP inside each 去报销 job, in the
@@ -42,6 +46,7 @@ export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrid
     const erpConfig = erpConfigFromEnv();
     const maintenanceTokenFile = process.env['BAOX_MAINTENANCE_TOKEN_FILE'];
     const maintenanceSocketPath = process.env['BAOX_MAINTENANCE_SOCKET_PATH'];
+    const credentialKeyFile = process.env['BAOX_ERP_CREDENTIAL_KEY_FILE'];
     const server = await startServer({
       dataDir,
       port,
@@ -53,11 +58,13 @@ export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrid
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
       extensionTemplate: EXTENSION_TEMPLATE,
+      erpCredentialKey: credentialKeyFile && existsSync(credentialKeyFile) ? readCredentialKey(credentialKeyFile) : null,
       ...(maintenanceTokenFile ? {
         maintenanceToken: readMaintenanceToken(maintenanceTokenFile),
         ...(maintenanceSocketPath ? { maintenanceSocketPath } : {}),
       } : {}),
     });
+    if (credentialKeyFile && !existsSync(credentialKeyFile)) console.warn(`ERP 凭据 disabled: no key at ${credentialKeyFile}`);
     console.log(`baox server listening on ${server.url} (data ${dataDir})`);
     const stop = () => void server.close().then(() => process.exit(0));
     process.once('SIGINT', stop);

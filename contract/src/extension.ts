@@ -84,10 +84,15 @@ export const ExtensionVersionSchema = z
 // `browser`: what the extension calls the browser it runs in, shown back to the employee so they can tell which
 // browser is paired. The server stores it verbatim and never acts on it. `version` is the extension's own version,
 // reported here and again on every connect (ADR-0021); below the minimum it is refused at both.
+// `holder`: what is pairing. A baox 本地执行器 (ADR-0033) says so and is sent the ERP 凭据 with each job; anything that
+// does not say (every 浏览器扩展) is an extension and never is.
+export const EXTENSION_HOLDERS = ['extension', 'local_executor'] as const;
+export type ExtensionHolder = (typeof EXTENSION_HOLDERS)[number];
 export const ExtensionPairInputSchema = z.object({
   code: z.string().min(1).max(64),
   browser: z.string().trim().min(1).max(80).nullish(),
   version: ExtensionVersionSchema.nullish(),
+  holder: z.enum(EXTENSION_HOLDERS).nullish(),
 });
 export type ExtensionPairInput = z.infer<typeof ExtensionPairInputSchema>;
 
