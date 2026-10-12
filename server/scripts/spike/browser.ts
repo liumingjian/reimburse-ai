@@ -10,6 +10,7 @@ import { cdpBrowser, ensureChromium } from '@baox/erp-executor/browser';
 import { connect, evalIn, type CdpSession } from '@baox/erp-executor/cdp';
 import { sameOrigin } from '@baox/erp-executor/probe';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
+import { tracePage, type PageTrace } from './trace';
 
 export type MemorySample = { pids: number; rssMb: number; pssMb: number | null };
 export type MemoryPeak = { samples: number; peakRssMb: number; peakPssMb: number | null; maxPids: number; minMemAvailableMb: number | null };
@@ -18,6 +19,8 @@ export type Headless = {
   label: string; port: number; pid: number | null; profileDir: string; launchMs: number;
   /** The ERP page, attached the way the executor attaches (focus emulation included). */
   session: CdpSession;
+  /** The ERP page's network and console since attach (trace.ts). */
+  trace: PageTrace;
   /** A renderer crash or the browser process vanishing: the OOM signal S7 asks for. */
   crashes: string[];
   memory(): MemoryPeak | null;
@@ -101,11 +104,13 @@ export async function launchHeadless({ label, openUrl, origin, chromium }: { lab
   const peak: MemoryPeak = { samples: 0, peakRssMb: 0, peakPssMb: null, maxPids: 0, minMemAvailableMb: null };
   let sampler: ReturnType<typeof setInterval> | null = null;
   let session: CdpSession | null = null;
+  let trace: PageTrace | null = null;
 
   const close = async (): Promise<string[]> => {
     const notes: string[] = [];
     if (sampler) clearInterval(sampler);
     sampler = null;
+    trace?.stop();
     try { session?.close(); } catch { /* already closed */ }
     // Browser.close over the browser's own endpoint is the orderly way; the process group is the backstop.
     try {
@@ -155,9 +160,10 @@ export async function launchHeadless({ label, openUrl, origin, chromium }: { lab
     session = (await browser.attach(page)).session;
     session.on?.('Inspector.targetCrashed', () => { crashes.push('renderer-crashed'); });
     await session.send('Inspector.enable').catch(() => null);
+    trace = await tracePage(session);
     const launchMs = Date.now() - started;
     const live = session;
-    return { label, port, pid, profileDir, launchMs, session: live, crashes, memory: () => (pid !== null && process.platform === 'linux' ? { ...peak } : null), close };
+    return { label, port, pid, profileDir, launchMs, session: live, trace, crashes, memory: () => (pid !== null && process.platform === 'linux' ? { ...peak } : null), close };
   } catch (error) {
     await close();
     throw error;

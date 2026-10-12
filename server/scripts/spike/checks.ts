@@ -106,7 +106,7 @@ export async function signedInMain(ctx: Ctx): Promise<Headless> {
 }
 
 async function signIn(ctx: Ctx, h: Headless) {
-  const outcome = await login(h.session, { origin: ctx.origin, account: ctx.account, password: ctx.password, shot: (name) => ctx.report.shot(h.session, `${h.label}-${name}`) });
+  const outcome = await login(h.session, { origin: ctx.origin, account: ctx.account, password: ctx.password, trace: h.trace, shot: (name) => ctx.report.shot(h.session, `${h.label}-${name}`) });
   ctx.report.secret(outcome.displayName);
   if (outcome.ok) ctx.signedIn.add(h);
   if (h === ctx.main) ctx.mainLogin = outcome;
@@ -125,6 +125,8 @@ export async function s2(ctx: Ctx, obs: Observations): Promise<Verdict> {
     loginPageSecondFactorLike: outcome.loginPage?.secondFactor ?? [], newSecondFactor: outcome.newSecondFactor,
     alreadyOnline: outcome.alreadyOnline, errors: outcome.errors, verdict: outcome.verdict,
     dataCentre: outcome.loginPage?.dataCentre ?? null,
+    initialised: outcome.initialised, reloads: outcome.reloads, submits: outcome.submits, languageMissing: outcome.languageMissing,
+    timeline: outcome.timeline, diagnostics: outcome.diagnostics, pageText: outcome.pageText,
     identity: { displayName: !!outcome.displayName, account: !!outcome.account, tenant: !!outcome.tenant, accountMatches: outcome.account === ctx.account },
   };
   await ctx.report.shot(main.session, 'console');
