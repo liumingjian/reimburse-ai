@@ -301,6 +301,10 @@ export async function runMode(ctx: ModeCtx, mode: Mode, label: string, obs: Obse
     // The profile keeps its cache, not its last tabs: a restored ERP tab next to the new one is two identical pages,
     // and the executor rightly refuses to guess between them (CHROMIUM_CDP_AMBIGUOUS).
     rmSync(join(profileDir, 'Default', 'Sessions'), { recursive: true, force: true });
+    // Nor the extension's last worker: Chrome keeps an unpacked extension's service-worker script in the profile and,
+    // its version unchanged, ran yesterday's executor over today's build (measured 2026-10-12: the old login probe and
+    // error texts after a rebuild). The pairing lives in chrome.storage, not here.
+    if (mode === 'extension') rmSync(join(profileDir, 'Default', 'Service Worker'), { recursive: true, force: true });
     return launchBrowser({
       label, openUrl: ctx.entry, origin: ctx.origin, chromium: ctx.chromium, headless: mode === 'headless', profileDir,
       // Chrome for Testing turns every field trial on; one of them (measured on 153, 2026-10-12) refuses a navigation
