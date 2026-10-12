@@ -32,6 +32,7 @@ import { EXPENSE_ITEM_FORM, queryRows } from '@baox/erp-executor/catalog';
 import { runFillJob } from '@baox/erp-executor/job';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { ExecutorError } from '@baox/erp-executor/page';
+import { closeErpDialogs, closeInvoiceAssistant } from '@baox/erp-executor/steps';
 import { sameOrigin } from '@baox/erp-executor/probe';
 import { PROTOCOL_VERSION, type Compatibility, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
@@ -235,6 +236,11 @@ async function discardEverywhere(h: Headless, origin: string): Promise<string[]>
     const attached = await browser.attach(page).catch(() => null);
     if (!attached) continue;
     try {
+      // The job stops with the 发票助手 still open over the 新增单, and its window covers the tab's close button: shut
+      // it (and any ERP dialog) first, or closing the form waits out its whole reach budget for nothing.
+      const page = { session: attached.session };
+      if ((await closeInvoiceAssistant(page)).ok) notes.push('关闭发票助手');
+      await closeErpDialogs(page).catch(() => null);
       const actions = tabActions(attached.session);
       for (const tab of (await actions.tabs().catch(() => [])).filter((t) => t.isForm)) {
         const outcome = await closeFormTab(actions, tab.id);
