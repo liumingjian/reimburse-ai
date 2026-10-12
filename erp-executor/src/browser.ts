@@ -1,5 +1,6 @@
 // The v1 browser port: the app's dedicated Chromium profile over CDP on 127.0.0.1 (ADR-0016). `ensureChromium` starts
-// it when nothing answers on the port, headed, with its own user data directory, never the user's own profile.
+// it when nothing answers on the port, headed by default, with its own user data directory, never the user's own
+// profile. `headless` exists for the ADR-0033 spike (server/scripts/spike-headless.ts); no product path passes it yet.
 // Origin: 50931a3:kernel/src/chrome.mjs (findChrome, launch).
 
 import { spawn } from 'node:child_process';
@@ -34,21 +35,37 @@ async function reachable(port: number): Promise<boolean> {
   }
 }
 
-/** Start the dedicated Chromium unless something already answers CDP on `port`. */
-export async function ensureChromium({ port, profileDir, openUrl, env = process.env, timeoutMs = 20_000 }: { port: number; profileDir: string; openUrl: string; env?: Env; timeoutMs?: number }): Promise<{ started: boolean }> {
-  if (await reachable(port)) return { started: false };
+// A headless browser has no screen to size its window by and defaults to 800x600, where the ERP's toolbar and the
+// invoice assistant are laid out for nobody. A common desktop size keeps the page the shape every measurement in
+// this package was taken on.
+const HEADLESS_WINDOW = '1920,1080';
+
+/** The command line `ensureChromium` starts Chromium with. Headed unless `headless` is asked for. */
+export function chromiumArgs({ port, profileDir, openUrl, headless = false }: { port: number; profileDir: string; openUrl: string; headless?: boolean }): string[] {
+  return [
+    `--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', '--disable-features=Translate',
+    ...(headless ? ['--headless=new', `--window-size=${HEADLESS_WINDOW}`] : []),
+    openUrl,
+  ];
+}
+
+/**
+ * Start the dedicated Chromium unless something already answers CDP on `port`. `pid` is the started browser's own
+ * process, which leads its own process group (`detached`); null when an already-running one was found.
+ */
+export async function ensureChromium({ port, profileDir, openUrl, env = process.env, timeoutMs = 20_000, headless = false }: { port: number; profileDir: string; openUrl: string; env?: Env; timeoutMs?: number; headless?: boolean }): Promise<{ started: boolean; pid: number | null }> {
+  if (await reachable(port)) return { started: false, pid: null };
   const bin = findChrome(env);
   if (!bin) throw new ExecutorError('CHROME_NOT_FOUND', '没有找到 Chrome 或 Edge；请安装后重试，或用 BAOX_CHROME 指定可执行文件');
   mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-  const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', '--disable-features=Translate', openUrl];
-  const child = spawn(bin, args, { detached: true, stdio: 'ignore' });
+  const child = spawn(bin, chromiumArgs({ port, profileDir, openUrl, headless }), { detached: true, stdio: 'ignore' });
   let failure: Error | null = null;
   child.once('error', (error) => { failure = error; });
   child.once('exit', (code, signal) => { failure ??= new Error(`Chrome 在自动化连接就绪前退出（code=${code}, signal=${signal}）`); });
   child.unref();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await reachable(port)) return { started: true };
+    if (await reachable(port)) return { started: true, pid: child.pid ?? null };
     if (failure) throw new ExecutorError('CHROME_LAUNCH_FAILED', `专用浏览器启动失败：${(failure as Error).message}`);
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
