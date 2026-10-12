@@ -436,9 +436,11 @@ export async function formFields(session: CdpSession, formId = FORM): Promise<{ 
   };
 }
 
-/** One bill as the model holds it, by 单据编号. `data` is null when ERP did not return the bill. */
-export async function viewBill(session: CdpSession, billNo: string) {
-  const view = await call(session, 'DynamicFormService.View', [FORM, JSON.stringify({ CreateOrgId: 0, Number: billNo, Id: '', IsSortBySeq: 'false' })]);
+/** One bill as the model holds it, by 单据编号 or, for a 暂存 draft that has none, by its 内码 (FID). `data` is null when
+ * ERP did not return the bill. */
+export async function viewBill(session: CdpSession, billNo: string, { byId = false }: { byId?: boolean } = {}) {
+  const key = byId ? { Number: '', Id: billNo } : { Number: billNo, Id: '' };
+  const view = await call(session, 'DynamicFormService.View', [FORM, JSON.stringify({ CreateOrgId: 0, ...key, IsSortBySeq: 'false' })]);
   const data = view.parsed?.Result?.Result ?? null;
   return { httpStatus: view.httpStatus, ms: view.ms, status: responseStatus(view.parsed), data: data && typeof data === 'object' ? data as Record<string, unknown> : null };
 }

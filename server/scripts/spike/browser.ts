@@ -218,8 +218,10 @@ export async function launchBrowser({ label, openUrl, origin, chromium, headless
   }
 }
 
-/** The spike's original launcher: headless, on a throwaway profile. */
-export const launchHeadless = (options: Omit<LaunchOptions, 'headless' | 'profileDir' | 'extraArgs'>) => launchBrowser(options);
+/** The spike's original launcher: headless, on a throwaway profile. Without field trials, as S8 and the local executor
+ * launch: Chrome for Testing's trials block the ERP (`ERR_BLOCKED_BY_CLIENT`), so its page never loads. */
+export const launchHeadless = (options: Omit<LaunchOptions, 'headless' | 'profileDir' | 'extraArgs'>) =>
+  launchBrowser({ ...options, extraArgs: ['--disable-field-trial-config'] });
 
 /** Open `url` in a second tab of the same browser, wait for it to load, and close it again. For S1's piaozone check. */
 export async function loadInTab(port: number, url: string, { timeoutMs = 45_000, shot }: { timeoutMs?: number; shot?: (session: CdpSession) => Promise<unknown> } = {}) {

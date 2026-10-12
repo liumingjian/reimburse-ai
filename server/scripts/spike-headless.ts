@@ -23,7 +23,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import { erpConfigFromEnv } from '../src/erp/config';
-import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, type Ctx } from './spike/checks';
+import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, type Ctx } from './spike/checks';
 import { memAvailableMb } from './spike/browser';
 import { Report } from './spike/report';
 
@@ -37,13 +37,14 @@ const USAGE = `用法：pnpm --filter @baox/server exec tsx scripts/spike-headle
   --chromium <路径>      Chromium 可执行文件（默认按 BAOX_CHROME 和常见路径找）
   --out <目录>           报告目录（默认 ./spike-report-<时间>）
   --non-interactive     不提问；S3 跳过
+  --drafts-since <时间>   S9（只读）列出这之后创建的暂存单，「YYYY-MM-DD[ HH:mm]」（默认今天 00:00）
   --prefetch            登录前先把主控台脚本取进浏览器缓存（链路慢时 RequireJS 30 秒超时的对照）`;
 
 const { values: args } = parseArgs({
   options: {
     only: { type: 'string' }, invoice: { type: 'string' }, 'invoice-no': { type: 'string' }, save: { type: 'boolean', default: false },
     bill: { type: 'string' }, concurrency: { type: 'string', default: '1' }, chromium: { type: 'string' }, out: { type: 'string' },
-    'non-interactive': { type: 'boolean', default: false }, prefetch: { type: 'boolean', default: false }, help: { type: 'boolean', default: false },
+    'non-interactive': { type: 'boolean', default: false }, prefetch: { type: 'boolean', default: false }, 'drafts-since': { type: 'string' }, help: { type: 'boolean', default: false },
   },
   strict: true,
 });
@@ -52,7 +53,7 @@ const refuse = (message: string): never => { console.error(`spike refused: ${mes
 
 // pnpm runs this from server/, so relative paths are taken from where the owner typed the command.
 const here = process.env['INIT_CWD'] || process.cwd();
-const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'];
+const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9'];
 const only = new Set((args.only ?? ALL.join(',')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 for (const id of only) if (!ALL.includes(id)) refuse(`未知的检查 ${id}`);
 const invoice = args.invoice ? resolve(here, args.invoice) : null;
@@ -82,6 +83,7 @@ const ctx: Ctx = {
   chromium, invoice, invoiceNos: (args['invoice-no'] ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   save: args.save, bill: args.bill?.trim() || null, concurrency, interactive, prefetch: args.prefetch,
   main: null, mainLogin: null, formOpen: false, s4Passed: false, s4InvoiceNos: [], draftBillNo: null,
+  draftsSince: args['drafts-since']?.trim() || new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10),
   mainMemory: null, mainCrashes: [], sessions: new Set(), signedIn: new Set(),
 };
 
@@ -114,6 +116,7 @@ try {
   }
   await run('S5', '暂存与 View 模型回读', (obs) => s5(ctx, obs));
   await run('S6', '用 ExecuteBillQuery 查发票占用', (obs) => s6(ctx, obs));
+  await run('S9', '找回暂存草稿（只读：查询与按内码 View）', (obs) => s9(ctx, obs));
 
   // S4's form is discarded, and the main session's memory read, before anything else starts a browser.
   if (ctx.main) {
