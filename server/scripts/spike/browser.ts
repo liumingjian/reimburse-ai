@@ -1,12 +1,14 @@
-// One headless Chromium per spike session: a throwaway profile, a free CDP port, the executor's own launcher
-// (`ensureChromium` with `headless`) and its own attach path (`cdpBrowser`), plus what only a spike needs — the process
-// tree's memory, read from /proc, and a teardown that leaves no browser and no profile behind.
-import { readdirSync, readFileSync } from 'node:fs';
+// One Chromium per spike session: a free CDP port, the executor's own command line (`chromiumArgs`, headless unless S8
+// asks for a window) and its own attach path (`cdpBrowser`), plus what only a spike needs — the process tree's memory,
+// read from /proc on Linux and from `ps` on macOS, and a teardown that leaves no browser behind. The profile is a
+// throwaway one, deleted on close, unless the caller names a persistent one (S8: the profile an employee's PC keeps).
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cdpBrowser, ensureChromium } from '@baox/erp-executor/browser';
+import { cdpBrowser, chromiumArgs, findChrome } from '@baox/erp-executor/browser';
 import { connect, evalIn, type CdpSession } from '@baox/erp-executor/cdp';
 import { sameOrigin } from '@baox/erp-executor/probe';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
@@ -16,7 +18,7 @@ export type MemorySample = { pids: number; rssMb: number; pssMb: number | null }
 export type MemoryPeak = { samples: number; peakRssMb: number; peakPssMb: number | null; maxPids: number; minMemAvailableMb: number | null };
 
 export type Headless = {
-  label: string; port: number; pid: number | null; profileDir: string; launchMs: number;
+  label: string; port: number; pid: number | null; profileDir: string; launchMs: number; headless: boolean;
   /** The ERP page, attached the way the executor attaches (focus emulation included). */
   session: CdpSession;
   /** The ERP page's network and console since attach (trace.ts). */
@@ -30,7 +32,7 @@ export type Headless = {
 const mb = (kb: number) => Math.round(kb / 1024);
 
 /** Ask the kernel for a port nobody holds, then give it back for Chromium to take. */
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
     server.once('error', reject);
@@ -83,6 +85,23 @@ export function treeMemory(root: number): MemorySample {
   return { pids: pids.length, rssMb: mb(rss), pssMb: pssKnown ? mb(pss) : null };
 }
 
+/** The same over `ps` on macOS: RSS of every process in the tree, no PSS. */
+function psTreeMemory(root: number): MemorySample | null {
+  let out: string;
+  try { out = execFileSync('ps', ['-axo', 'pid=,ppid=,pgid=,rss='], { encoding: 'utf8' }); } catch { return null; }
+  const rows = out.trim().split('\n').map((line) => line.trim().split(/\s+/).map(Number));
+  const tree = new Set<number>([root]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [pid, ppid, pgid] of rows) if (!tree.has(pid!) && (tree.has(ppid!) || pgid === root)) { tree.add(pid!); grew = true; }
+  }
+  const mine = rows.filter(([pid]) => tree.has(pid!));
+  return { pids: mine.length, rssMb: mb(mine.reduce((sum, row) => sum + (row[3] ?? 0), 0)), pssMb: null };
+}
+
+const sampleTree = (root: number): MemorySample | null =>
+  (process.platform === 'linux' ? treeMemory(root) : process.platform === 'darwin' ? psTreeMemory(root) : null);
+
 /** MemAvailable from /proc/meminfo, in MB; null off Linux. */
 export function memAvailableMb(): number | null {
   try { return mb(kbOf(readFileSync('/proc/meminfo', 'utf8'), 'MemAvailable')); } catch { return null; }
@@ -90,14 +109,42 @@ export function memAvailableMb(): number | null {
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
+export type LaunchOptions = {
+  label: string; openUrl: string; origin: string; chromium: string | null;
+  /** Default true. S8 also runs the same browser with a window. */
+  headless?: boolean;
+  /** A profile that outlives the run (S8); null: a throwaway one, deleted on close. */
+  profileDir?: string | null;
+  /** Put before the URL, after `chromiumArgs`' own: S8's `--load-extension`. */
+  extraArgs?: string[];
+};
+
+/** Start Chromium the way `ensureChromium` does (same binary lookup, same `chromiumArgs`), plus `extraArgs`. */
+async function startChromium({ port, profileDir, openUrl, chromium, headless, extraArgs }: { port: number; profileDir: string; openUrl: string; chromium: string | null; headless: boolean; extraArgs: string[] }): Promise<number | null> {
+  const bin = findChrome(chromium ? { ...process.env, BAOX_CHROME: chromium } : process.env);
+  if (!bin) throw new Error('没有找到 Chrome 或 Chromium；用 --chromium 或 BAOX_CHROME 指定');
+  mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  const args = chromiumArgs({ port, profileDir, openUrl, headless });
+  args.splice(args.length - 1, 0, ...extraArgs);
+  const child = spawn(bin, args, { detached: true, stdio: 'ignore' });
+  let failure: string | null = null;
+  child.once('error', (error) => { failure = error.message; });
+  child.once('exit', (code, signal) => { failure ??= `Chromium 在自动化端口就绪前退出（code=${code}, signal=${signal}）`; });
+  child.unref();
+  const up = async () => (failure ? null : fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false));
+  const ready = await waitFor(up, (state) => state !== false, 45_000, 300);
+  if (failure) throw new Error(failure);
+  if (ready !== true) throw new Error(`Chromium 已启动，但自动化端口 ${port} 在 45 秒内没有响应`);
+  return child.pid ?? null;
+}
+
 /**
- * Start one headless Chromium on a fresh profile, open `openUrl`, and attach to that page through the executor's
+ * Start one Chromium (headless unless asked otherwise), open `openUrl`, and attach to that page through the executor's
  * `cdpBrowser` — the same attach a real job uses. Throws if the browser cannot be started or the page never appears.
  */
-export async function launchHeadless({ label, openUrl, origin, chromium }: { label: string; openUrl: string; origin: string; chromium: string | null }): Promise<Headless> {
-  const profileDir = await mkdtemp(join(tmpdir(), `baox-spike-${label}-`));
+export async function launchBrowser({ label, openUrl, origin, chromium, headless = true, profileDir: keep = null, extraArgs = [] }: LaunchOptions): Promise<Headless> {
+  const profileDir = keep ?? await mkdtemp(join(tmpdir(), `baox-spike-${label}-`));
   const port = await freePort();
-  const env = chromium ? { ...process.env, BAOX_CHROME: chromium } : process.env;
   const started = Date.now();
   let pid: number | null = null;
   const crashes: string[] = [];
@@ -128,20 +175,21 @@ export async function launchHeadless({ label, openUrl, origin, chromium }: { lab
         if (process.platform === 'linux') for (const child of treePids(pid)) { try { process.kill(child, 'SIGKILL'); } catch { /* raced */ } }
       }
     }
-    // A profile holds the ERP session cookie; it must not outlive the run.
-    for (let i = 0; i < 5; i += 1) {
+    // A throwaway profile holds the ERP session cookie; it must not outlive the run. A persistent one is kept on purpose.
+    for (let i = 0; i < 5 && !keep; i += 1) {
       try { await rm(profileDir, { recursive: true, force: true }); break; } catch { await sleep(500); }
     }
-    notes.push(`${label}: 浏览器已关闭，临时配置目录已删除`);
+    notes.push(`${label}: 浏览器已关闭，${keep ? '持久配置目录保留' : '临时配置目录已删除'}`);
     return notes;
   };
 
   try {
-    pid = (await ensureChromium({ port, profileDir, openUrl, env, timeoutMs: 45_000, headless: true })).pid;
-    if (pid !== null && process.platform === 'linux') {
+    pid = await startChromium({ port, profileDir, openUrl, chromium, headless, extraArgs });
+    if (pid !== null && (process.platform === 'linux' || process.platform === 'darwin')) {
       const take = () => {
         if (!alive(pid!)) { if (!crashes.includes('browser-exited')) crashes.push('browser-exited'); return; }
-        const now = treeMemory(pid!);
+        const now = sampleTree(pid!);
+        if (!now) return;
         const free = memAvailableMb();
         peak.samples += 1;
         peak.peakRssMb = Math.max(peak.peakRssMb, now.rssMb);
@@ -150,7 +198,7 @@ export async function launchHeadless({ label, openUrl, origin, chromium }: { lab
         if (free !== null) peak.minMemAvailableMb = Math.min(peak.minMemAvailableMb ?? free, free);
       };
       take();
-      sampler = setInterval(take, 500);
+      sampler = setInterval(take, process.platform === 'linux' ? 500 : 1000);
       sampler.unref();
     }
     const browser = cdpBrowser(port);
@@ -163,12 +211,15 @@ export async function launchHeadless({ label, openUrl, origin, chromium }: { lab
     trace = await tracePage(session);
     const launchMs = Date.now() - started;
     const live = session;
-    return { label, port, pid, profileDir, launchMs, session: live, trace, crashes, memory: () => (pid !== null && process.platform === 'linux' ? { ...peak } : null), close };
+    return { label, port, pid, profileDir, launchMs, headless, session: live, trace, crashes, memory: () => (pid !== null && peak.samples > 0 ? { ...peak } : null), close };
   } catch (error) {
     await close();
     throw error;
   }
 }
+
+/** The spike's original launcher: headless, on a throwaway profile. */
+export const launchHeadless = (options: Omit<LaunchOptions, 'headless' | 'profileDir' | 'extraArgs'>) => launchBrowser(options);
 
 /** Open `url` in a second tab of the same browser, wait for it to load, and close it again. For S1's piaozone check. */
 export async function loadInTab(port: number, url: string, { timeoutMs = 45_000, shot }: { timeoutMs?: number; shot?: (session: CdpSession) => Promise<unknown> } = {}) {
