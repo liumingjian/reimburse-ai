@@ -119,6 +119,8 @@ export type LoginOutcome = {
   /** Each wait for the page to set itself up: the first, after a reload, before a resubmit. */
   initialised: Initialised[];
   reloads: number; submits: number;
+  /** --prefetch: the console's scripts fetched into the HTTP cache before submitting, and what that took. */
+  prefetch: Prefetch | null;
   /** Second-factor-looking controls that appeared only AFTER submitting: those, not the login page's own links, gate a login. */
   newSecondFactor: string[];
   alreadyOnline: { seen: boolean; text: string | null; confirmed: boolean; buttons: number };
@@ -132,6 +134,30 @@ export type LoginOutcome = {
   diagnostics: Record<string, TraceSnapshot>;
   pageState: PageState | null;
 };
+
+type Prefetch = { ok: boolean; versioned: boolean; files: Array<{ file: string; status: number; kb: number; ms: number; error?: string }> };
+
+// After ValidateLoginInfo the login page loads the console's scripts through RequireJS with waitSeconds:30
+// (kdformjsloader.min.js). kendo.all.min.js is 2.9 MB, served uncompressed, and over a slow link takes longer than
+// that; RequireJS gives up and the login silently stops (2026-10-12: 8 of 8 runs at ~45 KB/s). Fetching the same
+// URLs first, with the same ?ver= the loader appends, puts them in the HTTP cache so the loader's own request is
+// answered at once. Without window.KDResVer the loader appends a timestamp, nothing can be cached, and this says so.
+const CONSOLE_SCRIPTS = ['thirdpart/kendo/kendo.all.min.js', 'kdvgrid.min.js'];
+const PREFETCH = `(async () => {
+  const res = window.KDResVer ? String(window.KDResVer) : '';
+  const root = (window.KD && typeof KD.getUrlRoot === 'function' && typeof KD.getSubPath === 'function')
+    ? KD.getUrlRoot() + '/' + KD.getSubPath() + '/script' : location.origin + '/k3cloud/html5/script';
+  const files = [];
+  for (const file of ${JSON.stringify(CONSOLE_SCRIPTS)}) {
+    const started = Date.now();
+    try {
+      const r = await fetch(root + '/' + file + (res ? '?ver=' + encodeURIComponent(res.substring(5)) : ''), { cache: 'force-cache', credentials: 'include' });
+      const body = await r.arrayBuffer();
+      files.push({ file, status: r.status, kb: Math.round(body.byteLength / 1024), ms: Date.now() - started });
+    } catch (e) { files.push({ file, status: 0, kb: 0, ms: Date.now() - started, error: String(e).slice(0, 80) }); }
+  }
+  return { ok: !!res && files.every((f) => f.status === 200), versioned: !!res, files };
+})()`;
 
 type PageState = { path: string; ready: string; titleLength: number; text: string; busy: string[]; frames: string[] };
 
@@ -193,10 +219,10 @@ async function untilInitialised(session: CdpSession, trace: PageTrace | undefine
  * the way. 「语言未加载」 is confirmed and the form resubmitted. With a `trace`, every wait that runs out leaves the
  * page's open and failed requests and console errors in `diagnostics`. The secret goes into the page and nowhere else.
  */
-export async function login(session: CdpSession, { origin, account, password, shot, trace }: { origin: string; account: string; password: string; shot?: (name: string) => Promise<unknown>; trace?: PageTrace }): Promise<LoginOutcome> {
+export async function login(session: CdpSession, { origin, account, password, shot, trace, prefetch = false }: { origin: string; account: string; password: string; shot?: (name: string) => Promise<unknown>; trace?: PageTrace; prefetch?: boolean }): Promise<LoginOutcome> {
   const started = Date.now();
   const out: LoginOutcome = {
-    ok: false, why: '', ms: 0, submitted: false, formMs: null, consoleMs: null, loginPage: null, initialised: [], reloads: 0, submits: 0,
+    ok: false, why: '', ms: 0, submitted: false, formMs: null, consoleMs: null, loginPage: null, initialised: [], reloads: 0, submits: 0, prefetch: null,
     newSecondFactor: [], alreadyOnline: { seen: false, text: null, confirmed: false, buttons: 0 }, languageMissing: { seen: 0, confirmed: 0 },
     errors: [], verdict: 'unknown', onMainConsole: false, displayName: null, account: null, tenant: null, timeline: [], noEffect: 0, diagnostics: {}, pageState: null,
   };
@@ -247,6 +273,8 @@ export async function login(session: CdpSession, { origin, account, password, sh
   }
   if (ready.facts) out.loginPage = ready.facts;
   // Not set up even then: submit anyway, because what the ERP answers to that is the evidence this spike is after.
+
+  if (prefetch) out.prefetch = await evalIn<Prefetch>(session, PREFETCH, { timeout: 240_000 }).catch((e: Error) => ({ ok: false, versioned: false, files: [{ file: '*', status: 0, kb: 0, ms: 0, error: e.message }] }));
 
   // 3. Submit.
   if (!(await submit())) return finish(false, '登录表单填不进去（signInSnippet 没有找到账号框、密码框或登录按钮）');

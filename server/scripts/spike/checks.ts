@@ -29,6 +29,8 @@ export type Ctx = {
   account: string; password: string; tenant: string | null;
   chromium: string | null; invoice: string | null; invoiceNos: string[];
   save: boolean; bill: string | null; concurrency: number; interactive: boolean;
+  /** --prefetch: warm the HTTP cache with the console's scripts before each login (spike/erp.ts PREFETCH). */
+  prefetch: boolean;
   /** The headless session S1 starts and S2–S6 share. */
   main: Headless | null; mainLogin: LoginOutcome | null;
   /** S4's form is open (unsaved) and must be discarded; S4 passed; S4's recognised invoice numbers, in memory only. */
@@ -106,7 +108,7 @@ export async function signedInMain(ctx: Ctx): Promise<Headless> {
 }
 
 async function signIn(ctx: Ctx, h: Headless) {
-  const outcome = await login(h.session, { origin: ctx.origin, account: ctx.account, password: ctx.password, trace: h.trace, shot: (name) => ctx.report.shot(h.session, `${h.label}-${name}`) });
+  const outcome = await login(h.session, { origin: ctx.origin, account: ctx.account, password: ctx.password, trace: h.trace, prefetch: ctx.prefetch, shot: (name) => ctx.report.shot(h.session, `${h.label}-${name}`) });
   ctx.report.secret(outcome.displayName);
   if (outcome.ok) ctx.signedIn.add(h);
   if (h === ctx.main) ctx.mainLogin = outcome;
@@ -125,7 +127,7 @@ export async function s2(ctx: Ctx, obs: Observations): Promise<Verdict> {
     loginPageSecondFactorLike: outcome.loginPage?.secondFactor ?? [], newSecondFactor: outcome.newSecondFactor,
     alreadyOnline: outcome.alreadyOnline, errors: outcome.errors, verdict: outcome.verdict,
     dataCentre: outcome.loginPage?.dataCentre ?? null,
-    initialised: outcome.initialised, reloads: outcome.reloads, submits: outcome.submits, languageMissing: outcome.languageMissing,
+    initialised: outcome.initialised, reloads: outcome.reloads, submits: outcome.submits, prefetch: outcome.prefetch, languageMissing: outcome.languageMissing,
     noEffect: outcome.noEffect, timeline: outcome.timeline, diagnostics: outcome.diagnostics, pageState: outcome.pageState,
     identity: { displayName: !!outcome.displayName, account: !!outcome.account, tenant: !!outcome.tenant, accountMatches: outcome.account === ctx.account },
   };
