@@ -1,8 +1,8 @@
 // The ADR-0033 / ADR-0034 spike: can 去报销 run in a headless Chromium on the intranet host, signed in with hosted ERP
 // credentials? It runs S1–S7 of docs/design/erp-headless-v1.md §验证计划 and prints one PASS / FAIL / SKIP line each.
 //
-// The owner runs it on 10.250.0.222 with their own ERP account; nobody else can, because S3 needs them at their own
-// browser and every check needs their credentials. It is READ-ONLY by default:
+// It runs on the test environment, the Mac mini, with the test ERP account (10.250.0.222 only hosts the server and
+// never drives ERP); S3 needs the account's owner at their own browser. It is READ-ONLY by default:
 //   - S1, S2, S6, S7 (login only) read; S3 logs in and out and asks the owner what they saw;
 //   - S4 (needs --invoice) imports one invoice into an UNSAVED 新增 form and closes it with 否. The bill is never saved,
 //     but 发票导入单据 mints or overwrites that invoice's 收票单 in ERP (ADR-0025, ADR-0026);
