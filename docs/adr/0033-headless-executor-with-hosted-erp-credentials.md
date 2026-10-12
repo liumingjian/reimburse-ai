@@ -6,6 +6,16 @@ remains the shipped path. On acceptance this ADR supersedes, for the default pat
 leaves the user's machine" and ERP authorisation by the employee's own login, and ADR-0028's "baox never clicks 保存".
 It implements the 暂存 half of ADR-0029, not its delete gateway.
 
+**Amended 2026-10-12 (owner): the executor runs on the employee's own PC, not on the server.** `10.250.0.222` only
+hosts the server and never drives ERP. Whether the browser on the PC is headless, a dedicated headed one, or the
+extension in the employee's own Chrome is chosen by measurement: whichever is more stable and faster. The browser keeps
+a persistent profile, so Kingdee's console scripts stay cached (the spike found that a cold cache over a slow link
+trips RequireJS's 30 s limit; see the design's S2 result). Until this ADR is rewritten after that comparison, read
+"the server" and "the host" below as "the employee's PC" for where the browser runs; the capacity section (host
+memory, two concurrent jobs, a queue) no longer applies. Open: today only the extension runs on a PC and it cannot
+start a process, so a dedicated or headless browser needs a new local component on every PC; and where the ERP
+credentials are kept once the login happens on the PC.
+
 The extension path works end to end but is not stable enough: runs most often stop for 转人工 on an exception. About
 half of the instability the 2026-10-11 audit found comes from running in the employee's visible browser:
 - the employee switches, minimises or occludes the tab and clicks are silently dropped (V-53);
