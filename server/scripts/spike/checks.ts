@@ -126,7 +126,7 @@ export async function s2(ctx: Ctx, obs: Observations): Promise<Verdict> {
     alreadyOnline: outcome.alreadyOnline, errors: outcome.errors, verdict: outcome.verdict,
     dataCentre: outcome.loginPage?.dataCentre ?? null,
     initialised: outcome.initialised, reloads: outcome.reloads, submits: outcome.submits, languageMissing: outcome.languageMissing,
-    timeline: outcome.timeline, diagnostics: outcome.diagnostics, pageText: outcome.pageText,
+    noEffect: outcome.noEffect, timeline: outcome.timeline, diagnostics: outcome.diagnostics, pageState: outcome.pageState,
     identity: { displayName: !!outcome.displayName, account: !!outcome.account, tenant: !!outcome.tenant, accountMatches: outcome.account === ctx.account },
   };
   await ctx.report.shot(main.session, 'console');

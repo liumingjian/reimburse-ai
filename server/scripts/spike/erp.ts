@@ -126,27 +126,46 @@ export type LoginOutcome = {
   errors: string[];
   verdict: string; onMainConsole: boolean; displayName: string | null; account: string | null; tenant: string | null;
   timeline: Moment[];
-  /** Wire and console records (trace.ts), taken when a wait ran out; and the page's visible text at the end of a failure. */
+  /** Submits after which the page started no request at all within NO_EFFECT_MS, and were therefore repeated. */
+  noEffect: number;
+  /** Wire and console records (trace.ts), taken when a wait ran out; and where the page stood at the end of a failure. */
   diagnostics: Record<string, TraceSnapshot>;
-  pageText: string | null;
+  pageState: PageState | null;
 };
 
+type PageState = { path: string; ready: string; titleLength: number; text: string; busy: string[]; frames: string[] };
+
 const factsOf = (session: CdpSession) => evalIn<LoginFacts>(session, LOGIN_FACTS, { timeout: 10_000 }).catch(() => null);
-const PAGE_TEXT = `String(document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 600)`;
+/** Where the page stands: its path, its visible text, which spinner-like elements are up, and which frames it holds. */
+const PAGE_STATE = `(() => {
+  const vis = ${VIS};
+  const bare = (u) => { try { const x = new URL(u, location.href); return x.origin + x.pathname; } catch { return String(u).slice(0, 80); } };
+  return {
+    path: location.pathname, ready: document.readyState, titleLength: document.title.length,
+    text: String(document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 600),
+    busy: [...document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="mask" i], [id*="loading" i]')].filter(vis)
+      .map((n) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + '.' + String(n.className).trim().split(/\\s+/).slice(0, 3).join('.')).slice(0, 8),
+    frames: [...document.querySelectorAll('iframe, frame')].map((f) => bare(f.src || 'about:blank') + (vis(f) ? '' : ' (hidden)')).slice(0, 10),
+  };
+})()`;
 
 const FORM_MS = 60_000;
-const READY_MS = 60_000;
+/** Over the Mac's link kendo.all.min.js alone takes about 48 s (2026-10-12 runs). */
+const READY_MS = 120_000;
 const QUIET_MS = 1500;
 /** After submitting: long enough to tell a slow ERP from a hung one (runs 1 and 3 sat on a spinner for the old 120 s). */
 const CONSOLE_MS = 300_000;
 const RESUBMITS = 2;
-/** A request open this long no longer counts as the page still setting up: it is reported as hung instead. */
+/** A submit after which the page starts no request at all for this long did nothing (runs 2–4 of 2026-10-12 10:53). */
+const NO_EFFECT_MS = 20_000;
+/** A request still open this long when the wait runs out is named in the failure as the one that hung. */
 const HUNG_MS = 20_000;
 
 /**
  * Wait until the login page has set itself up: the form is up, the data-centre list has entries, no 语言未加载 prompt
- * is showing, and no request younger than HUNG_MS has been open for QUIET_MS. Run 4 submitted a form whose data-centre
- * list was still empty and got 「语言未加载」 back; this is the wait that run lacked.
+ * is showing, and no request at all has been open for QUIET_MS. Run 4 submitted a form whose data-centre list was still
+ * empty and got 「语言未加载」 back; later runs submitted while kendo.all.min.js was still arriving and their click did
+ * nothing. A request that never ends holds this wait to READY_MS, and the not-initialised record names it.
  */
 async function untilInitialised(session: CdpSession, trace: PageTrace | undefined) {
   const started = Date.now();
@@ -155,7 +174,7 @@ async function untilInitialised(session: CdpSession, trace: PageTrace | undefine
   let pending = 0;
   while (Date.now() - started < READY_MS) {
     facts = await factsOf(session);
-    pending = trace ? trace.pending().filter((r) => r.ageMs < HUNG_MS && r.type !== 'WebSocket' && r.type !== 'EventSource').length : 0;
+    pending = trace ? trace.pending().filter((r) => r.type !== 'EventSource').length : 0;
     const dc = facts?.dataCentre;
     const dcReady = !dc?.present || dc.options > 0 || dc.textLength > 0;
     if (facts?.loginFormVisible && dcReady && !facts.languageMissing && pending === 0) {
@@ -179,13 +198,13 @@ export async function login(session: CdpSession, { origin, account, password, sh
   const out: LoginOutcome = {
     ok: false, why: '', ms: 0, submitted: false, formMs: null, consoleMs: null, loginPage: null, initialised: [], reloads: 0, submits: 0,
     newSecondFactor: [], alreadyOnline: { seen: false, text: null, confirmed: false, buttons: 0 }, languageMissing: { seen: 0, confirmed: 0 },
-    errors: [], verdict: 'unknown', onMainConsole: false, displayName: null, account: null, tenant: null, timeline: [], diagnostics: {}, pageText: null,
+    errors: [], verdict: 'unknown', onMainConsole: false, displayName: null, account: null, tenant: null, timeline: [], noEffect: 0, diagnostics: {}, pageState: null,
   };
   const diagnose = async (name: string) => { if (trace) out.diagnostics[name] = await trace.snapshot(); };
   const finish = async (ok: boolean, why: string) => {
     if (!ok) {
       await diagnose('end');
-      out.pageText = await evalIn<string>(session, PAGE_TEXT).catch(() => null);
+      out.pageState = await evalIn<PageState>(session, PAGE_STATE).catch(() => null);
     }
     out.ok = ok; out.why = why; out.ms = Date.now() - started;
     return out;
@@ -197,10 +216,13 @@ export async function login(session: CdpSession, { origin, account, password, sh
     if (!r.ok) { await diagnose(`not-initialised-${label}`); await shot?.(`not-initialised-${label}`); }
     return r;
   };
+  let sentAt = 0;
+  let requestsAtSubmit = 0;
   const submit = async () => {
     for (let i = 0; i < 30; i += 1) {
+      requestsAtSubmit = trace?.started() ?? 0;
       const r = await evalIn<{ ok: boolean; why?: string }>(session, signInSnippet(account, password)).catch(() => ({ ok: false, why: 'no answer' }));
-      if (r.ok) { out.submitted = true; out.submits += 1; return true; }
+      if (r.ok) { out.submitted = true; out.submits += 1; sentAt = Date.now(); return true; }
       await sleep(1000);
     }
     return false;
@@ -259,6 +281,16 @@ export async function login(session: CdpSession, { origin, account, password, sh
     if (key !== lastKey && out.timeline.length < 200) { out.timeline.push(moment); lastKey = key; }
     if (!midway && Date.now() - submittedAt > 60_000) { midway = true; await diagnose('submit+60s'); await shot?.('login-60s'); }
     if (!facts) continue;
+    // The click reached nothing that listens: the page has sent no request since. Press 登录 again.
+    if (trace && facts.loginFormVisible && !facts.languageMissing && !facts.alreadyOnline && trace.started() === requestsAtSubmit
+      && Date.now() - sentAt > NO_EFFECT_MS && out.submits <= RESUBMITS) {
+      out.noEffect += 1;
+      await diagnose(`no-effect-${out.submits}`);
+      await shot?.(`no-effect-${out.submits}`);
+      if (!(await submit())) return finish(false, '再次提交时表单填不进去');
+      deadline = Date.now() + CONSOLE_MS;
+      continue;
+    }
     if (facts.languageMissing) {
       out.languageMissing.seen += 1;
       if (facts.languageMissing.reach?.onTarget && out.submits <= RESUBMITS) {
