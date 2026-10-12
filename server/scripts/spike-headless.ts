@@ -13,7 +13,7 @@
 //
 //   set -a; . ~/.baox-erp-live.env; set +a
 //   pnpm --filter @baox/server exec tsx scripts/spike-headless.ts [--only S1,S2,...] [--invoice <pdf>] [--invoice-no <号码,…>]
-//     [--save] [--bill <单据编号>] [--concurrency 2] [--chromium <path>] [--out <dir>] [--non-interactive]
+//     [--save] [--bill <单据编号>] [--concurrency 2] [--chromium <path>] [--out <dir>] [--non-interactive] [--prefetch]
 //
 // Env: BAOX_ERP_TEST_ACCOUNT, BAOX_ERP_TEST_PASSWORD (never printed, never on a command line); optional
 // BAOX_ERP_TEST_TENANT (S2 compares the 账套 it lands in), BAOX_ERP_ORIGIN / BAOX_ERP_BUILD (erp/config.ts), BAOX_CHROME.
@@ -36,13 +36,14 @@ const USAGE = `用法：pnpm --filter @baox/server exec tsx scripts/spike-headle
   --concurrency <n>     S7 并行的无头会话数（默认 1）
   --chromium <路径>      Chromium 可执行文件（默认按 BAOX_CHROME 和常见路径找）
   --out <目录>           报告目录（默认 ./spike-report-<时间>）
-  --non-interactive     不提问；S3 跳过`;
+  --non-interactive     不提问；S3 跳过
+  --prefetch            登录前先把主控台脚本取进浏览器缓存（链路慢时 RequireJS 30 秒超时的对照）`;
 
 const { values: args } = parseArgs({
   options: {
     only: { type: 'string' }, invoice: { type: 'string' }, 'invoice-no': { type: 'string' }, save: { type: 'boolean', default: false },
     bill: { type: 'string' }, concurrency: { type: 'string', default: '1' }, chromium: { type: 'string' }, out: { type: 'string' },
-    'non-interactive': { type: 'boolean', default: false }, help: { type: 'boolean', default: false },
+    'non-interactive': { type: 'boolean', default: false }, prefetch: { type: 'boolean', default: false }, help: { type: 'boolean', default: false },
   },
   strict: true,
 });
@@ -79,7 +80,7 @@ const ctx: Ctx = {
   report, origin: erp.origin, entry: erpEntryOf(erp.origin), erpBuild: erp.compatibility.erpBuild,
   account, password, tenant: process.env['BAOX_ERP_TEST_TENANT']?.trim() || null,
   chromium, invoice, invoiceNos: (args['invoice-no'] ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-  save: args.save, bill: args.bill?.trim() || null, concurrency, interactive,
+  save: args.save, bill: args.bill?.trim() || null, concurrency, interactive, prefetch: args.prefetch,
   main: null, mainLogin: null, formOpen: false, s4Passed: false, s4InvoiceNos: [], draftBillNo: null,
   mainMemory: null, mainCrashes: [], sessions: new Set(), signedIn: new Set(),
 };

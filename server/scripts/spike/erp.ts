@@ -12,6 +12,7 @@ import { identityFromObservation, READ_ONLY_SNIPPET, type Observation } from '@b
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { signInSnippet } from '@baox/erp-executor/recording/sign-in';
 import { dialogsSnippet } from '@baox/erp-executor/tabs';
+import type { PageTrace, TraceSnapshot } from './trace';
 
 export const FORM = 'ER_ExpReimbursement';
 const stub = (name: string) => `Kingdee.BOS.WebApi.ServicesStub.${name}.common.kdsvc`;
@@ -63,18 +64,23 @@ const LOGIN_FACTS = `(() => {
       .map((n) => n.tagName.toLowerCase() + '#' + (n.id || '?')),
     ...leaves.filter((n) => words.test(txt(n)) && txt(n).length <= 40).map((n) => 'text「' + txt(n).slice(0, 30) + '」'),
   ];
-  const online = leaves.filter((n) => /已登录在线|已在其他|已经登录|在线用户/.test(txt(n)));
-  let alreadyOnline = null;
-  if (online.length) {
-    // Climb from the message to the nearest ancestor that holds a confirm button, and click only that box's one.
-    let box = online[0];
+  // A prompt is a visible message with a single 确定/确认 in the box around it. Climb from the message to the nearest
+  // ancestor that holds a confirm button, and offer only that box's one.
+  const prompt = (re) => {
+    const hits = leaves.filter((n) => re.test(txt(n)));
+    if (!hits.length) return null;
+    let box = hits[0];
     const confirms = (root) => [...root.querySelectorAll('button, a, input[type=button], span, div[role=button]')]
       .filter((n) => vis(n) && /^(确定|确认)$/.test(String(n.value || txt(n))));
     for (let i = 0; i < 8 && box.parentElement && confirms(box).length === 0; i += 1) box = box.parentElement;
     const found = confirms(box);
     const outer = found.filter((n) => !found.some((m) => m !== n && m.contains(n)));
-    alreadyOnline = { text: txt(online[0]).slice(0, 80), buttons: outer.length, reach: outer.length === 1 ? hitOf(outer[0]) : null };
-  }
+    return { text: txt(hits[0]).slice(0, 80), buttons: outer.length, reach: outer.length === 1 ? hitOf(outer[0]) : null };
+  };
+  const alreadyOnline = prompt(/已登录在线|已在其他|已经登录|在线用户/);
+  // 「金蝶提示：语言未加载。」: the login page submitted before its language resources arrived.
+  const languageMissing = prompt(/语言未加载/);
+  const busy = [...document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="mask" i], [id*="loading" i]')].filter(vis).length;
   const passwords = [...document.querySelectorAll('input[type=password]')].filter(vis);
   const errors = leaves.map(txt).filter((t) => t.length <= 80 && /密码错误|用户名或密码|不存在|已锁定|锁定|登录失败|错误|过期|禁用/.test(t)).slice(0, 3);
   const dc = document.getElementById('datacenter_ct');
@@ -84,62 +90,204 @@ const LOGIN_FACTS = `(() => {
     loginFormVisible: passwords.length > 0,
     secondFactor: [...new Set(secondFactor)].slice(0, 8),
     alreadyOnline,
+    languageMissing,
+    busy,
     errors,
     dataCentre: { present: !!dc, visible: !!dc && vis(dc), textLength: dc ? txt(dc).length : 0, options: dcOptions },
   };
 })()`;
 
+type Prompt = { text: string; buttons: number; reach: Reach | null };
 type LoginFacts = {
   ready: string; loginFormVisible: boolean; secondFactor: string[]; errors: string[];
-  alreadyOnline: { text: string; buttons: number; reach: Reach | null } | null;
+  alreadyOnline: Prompt | null; languageMissing: Prompt | null;
+  /** Visible loading-, spinner- or mask-like elements. */
+  busy: number;
   dataCentre: { present: boolean; visible: boolean; textLength: number; options: number };
 };
+
+/** Whether the login page had finished setting itself up before it was submitted, and what it took. */
+type Initialised = { label: string; ok: boolean; ms: number; dataCentreOptions: number; pending: number; languageMissing: boolean };
+
+/** One line per change of what the login looks like: when the page moved on, and when it stopped moving. */
+type Moment = { tMs: number; verdict: string; form: boolean; busy: number; pending: number; oldestPending: string | null; dialogs: string[] };
 
 export type LoginOutcome = {
   ok: boolean; why: string; ms: number; submitted: boolean;
   formMs: number | null; consoleMs: number | null;
   loginPage: LoginFacts | null;
+  /** Each wait for the page to set itself up: the first, after a reload, before a resubmit. */
+  initialised: Initialised[];
+  reloads: number; submits: number;
+  /** --prefetch: the console's scripts fetched into the HTTP cache before submitting, and what that took. */
+  prefetch: Prefetch | null;
   /** Second-factor-looking controls that appeared only AFTER submitting: those, not the login page's own links, gate a login. */
   newSecondFactor: string[];
   alreadyOnline: { seen: boolean; text: string | null; confirmed: boolean; buttons: number };
+  languageMissing: { seen: number; confirmed: number };
   errors: string[];
   verdict: string; onMainConsole: boolean; displayName: string | null; account: string | null; tenant: string | null;
+  timeline: Moment[];
+  /** Submits after which the page started no request at all within NO_EFFECT_MS, and were therefore repeated. */
+  noEffect: number;
+  /** Wire and console records (trace.ts), taken when a wait ran out; and where the page stood at the end of a failure. */
+  diagnostics: Record<string, TraceSnapshot>;
+  pageState: PageState | null;
 };
 
+type Prefetch = { ok: boolean; versioned: boolean; files: Array<{ file: string; status: number; kb: number; ms: number; error?: string }> };
+
+// After ValidateLoginInfo the login page loads the console's scripts through RequireJS with waitSeconds:30
+// (kdformjsloader.min.js), and dform.aspx loads k3cloud.min.js the same way. kendo.all.min.js (2.8 MB) and
+// k3cloud.min.js (3.4 MB) are served uncompressed and over a slow link take longer than that; RequireJS gives up
+// and the login silently stops, on the login page or on a console spinner (2026-10-12: 9 of 9 runs at 40-75 KB/s).
+// Fetching the same URLs first, with the same ?ver= the loader appends, puts them in the HTTP cache so the loader's
+// own request is answered at once. Without window.KDResVer the loader appends a timestamp, nothing can be cached,
+// and this says so.
+const CONSOLE_SCRIPTS = ['thirdpart/kendo/kendo.all.min.js', 'k3cloud.min.js', 'kdvgrid.min.js'];
+const PREFETCH = `(async () => {
+  const res = window.KDResVer ? String(window.KDResVer) : '';
+  const root = (window.KD && typeof KD.getUrlRoot === 'function' && typeof KD.getSubPath === 'function')
+    ? KD.getUrlRoot() + '/' + KD.getSubPath() + '/script' : location.origin + '/k3cloud/html5/script';
+  const files = [];
+  for (const file of ${JSON.stringify(CONSOLE_SCRIPTS)}) {
+    const started = Date.now();
+    try {
+      const r = await fetch(root + '/' + file + (res ? '?ver=' + encodeURIComponent(res.substring(5)) : ''), { cache: 'force-cache', credentials: 'include' });
+      const body = await r.arrayBuffer();
+      files.push({ file, status: r.status, kb: Math.round(body.byteLength / 1024), ms: Date.now() - started });
+    } catch (e) { files.push({ file, status: 0, kb: 0, ms: Date.now() - started, error: String(e).slice(0, 80) }); }
+  }
+  return { ok: !!res && files.every((f) => f.status === 200), versioned: !!res, files };
+})()`;
+
+type PageState = { path: string; ready: string; titleLength: number; text: string; busy: string[]; frames: string[] };
+
 const factsOf = (session: CdpSession) => evalIn<LoginFacts>(session, LOGIN_FACTS, { timeout: 10_000 }).catch(() => null);
+/** Where the page stands: its path, its visible text, which spinner-like elements are up, and which frames it holds. */
+const PAGE_STATE = `(() => {
+  const vis = ${VIS};
+  const bare = (u) => { try { const x = new URL(u, location.href); return x.origin + x.pathname; } catch { return String(u).slice(0, 80); } };
+  return {
+    path: location.pathname, ready: document.readyState, titleLength: document.title.length,
+    text: String(document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 600),
+    busy: [...document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="mask" i], [id*="loading" i]')].filter(vis)
+      .map((n) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + '.' + String(n.className).trim().split(/\\s+/).slice(0, 3).join('.')).slice(0, 8),
+    frames: [...document.querySelectorAll('iframe, frame')].map((f) => bare(f.src || 'about:blank') + (vis(f) ? '' : ' (hidden)')).slice(0, 10),
+  };
+})()`;
+
+const FORM_MS = 60_000;
+/** Over the Mac's link kendo.all.min.js alone takes about 48 s (2026-10-12 runs). */
+const READY_MS = 120_000;
+const QUIET_MS = 1500;
+/** After submitting: long enough to tell a slow ERP from a hung one (runs 1 and 3 sat on a spinner for the old 120 s). */
+const CONSOLE_MS = 300_000;
+const RESUBMITS = 2;
+/** A submit after which the page starts no request at all for this long did nothing (runs 2–4 of 2026-10-12 10:53). */
+const NO_EFFECT_MS = 20_000;
+/** A request still open this long when the wait runs out is named in the failure as the one that hung. */
+const HUNG_MS = 20_000;
 
 /**
- * Sign in with the hosted credentials: wait for the form, fill it with the harness's `signInSnippet`, then watch until
- * the console is up or something stands in the way. The secret goes into the page and nowhere else.
+ * Wait until the login page has set itself up: the form is up, the data-centre list has entries, no 语言未加载 prompt
+ * is showing, and no request at all has been open for QUIET_MS. Run 4 submitted a form whose data-centre list was still
+ * empty and got 「语言未加载」 back; later runs submitted while kendo.all.min.js was still arriving and their click did
+ * nothing. A request that never ends holds this wait to READY_MS, and the not-initialised record names it.
  */
-export async function login(session: CdpSession, { origin, account, password, shot }: { origin: string; account: string; password: string; shot?: (name: string) => Promise<unknown> }): Promise<LoginOutcome> {
+async function untilInitialised(session: CdpSession, trace: PageTrace | undefined) {
+  const started = Date.now();
+  let quietSince: number | null = null;
+  let facts: LoginFacts | null = null;
+  let pending = 0;
+  while (Date.now() - started < READY_MS) {
+    facts = await factsOf(session);
+    pending = trace ? trace.pending().filter((r) => r.type !== 'EventSource').length : 0;
+    const dc = facts?.dataCentre;
+    const dcReady = !dc?.present || dc.options > 0 || dc.textLength > 0;
+    if (facts?.loginFormVisible && dcReady && !facts.languageMissing && pending === 0) {
+      quietSince ??= Date.now();
+      if (Date.now() - quietSince >= QUIET_MS) break;
+    } else quietSince = null;
+    await sleep(500);
+  }
+  const ok = quietSince !== null && Date.now() - quietSince >= QUIET_MS;
+  return { ok, ms: Date.now() - started, dataCentreOptions: facts?.dataCentre.options ?? 0, pending, languageMissing: !!facts?.languageMissing, facts };
+}
+
+/**
+ * Sign in with the hosted credentials: wait for the form and for the page to set itself up (reloading once if it
+ * never does), fill it with the harness's `signInSnippet`, then watch until the console is up or something stands in
+ * the way. 「语言未加载」 is confirmed and the form resubmitted. With a `trace`, every wait that runs out leaves the
+ * page's open and failed requests and console errors in `diagnostics`. The secret goes into the page and nowhere else.
+ */
+export async function login(session: CdpSession, { origin, account, password, shot, trace, prefetch = false }: { origin: string; account: string; password: string; shot?: (name: string) => Promise<unknown>; trace?: PageTrace; prefetch?: boolean }): Promise<LoginOutcome> {
   const started = Date.now();
   const out: LoginOutcome = {
-    ok: false, why: '', ms: 0, submitted: false, formMs: null, consoleMs: null, loginPage: null, newSecondFactor: [],
-    alreadyOnline: { seen: false, text: null, confirmed: false, buttons: 0 }, errors: [], verdict: 'unknown', onMainConsole: false,
-    displayName: null, account: null, tenant: null,
+    ok: false, why: '', ms: 0, submitted: false, formMs: null, consoleMs: null, loginPage: null, initialised: [], reloads: 0, submits: 0, prefetch: null,
+    newSecondFactor: [], alreadyOnline: { seen: false, text: null, confirmed: false, buttons: 0 }, languageMissing: { seen: 0, confirmed: 0 },
+    errors: [], verdict: 'unknown', onMainConsole: false, displayName: null, account: null, tenant: null, timeline: [], noEffect: 0, diagnostics: {}, pageState: null,
   };
-  const finish = (ok: boolean, why: string) => { out.ok = ok; out.why = why; out.ms = Date.now() - started; return out; };
+  const diagnose = async (name: string) => { if (trace) out.diagnostics[name] = await trace.snapshot(); };
+  const finish = async (ok: boolean, why: string) => {
+    if (!ok) {
+      await diagnose('end');
+      out.pageState = await evalIn<PageState>(session, PAGE_STATE).catch(() => null);
+    }
+    out.ok = ok; out.why = why; out.ms = Date.now() - started;
+    return out;
+  };
+  const settle = async (label: string) => {
+    const r = await untilInitialised(session, trace);
+    const { facts: _facts, ...record } = r;
+    out.initialised.push({ label, ...record });
+    if (!r.ok) { await diagnose(`not-initialised-${label}`); await shot?.(`not-initialised-${label}`); }
+    return r;
+  };
+  let sentAt = 0;
+  let requestsAtSubmit = 0;
+  const submit = async () => {
+    for (let i = 0; i < 30; i += 1) {
+      requestsAtSubmit = trace?.started() ?? 0;
+      const r = await evalIn<{ ok: boolean; why?: string }>(session, signInSnippet(account, password)).catch(() => ({ ok: false, why: 'no answer' }));
+      if (r.ok) { out.submitted = true; out.submits += 1; sentAt = Date.now(); return true; }
+      await sleep(1000);
+    }
+    return false;
+  };
 
   // 1. The form. readyState reaches complete well before Kendo lays the form out (probe-login.ts), so poll the form itself.
-  const page = await waitFor(() => factsOf(session), (f) => f?.loginFormVisible === true, 60_000, 1000);
+  const page = await waitFor(() => factsOf(session), (f) => f?.loginFormVisible === true, FORM_MS, 1000);
   out.loginPage = page;
-  if (!page?.loginFormVisible) return finish(false, '60 秒内没有出现登录表单');
+  if (!page?.loginFormVisible) return finish(false, `${FORM_MS / 1000} 秒内没有出现登录表单`);
   out.formMs = Date.now() - started;
   await shot?.('login-form');
 
-  // 2. Submit.
-  for (let i = 0; i < 30 && !out.submitted; i += 1) {
-    const r = await evalIn<{ ok: boolean; why?: string }>(session, signInSnippet(account, password)).catch(() => ({ ok: false, why: 'no answer' }));
-    if (r.ok) out.submitted = true;
-    else await sleep(1000);
+  // 2. The page set up. One reload if it never is: a page that loaded badly once may load well the second time, and
+  //    whether it does is itself an answer for the executor.
+  let ready = await settle('first');
+  if (!ready.ok) {
+    out.reloads += 1;
+    await session.send('Page.reload', { ignoreCache: false }).catch(() => null);
+    await sleep(2000);
+    await waitFor(() => factsOf(session), (f) => f?.loginFormVisible === true, FORM_MS, 1000);
+    ready = await settle('reload');
   }
-  if (!out.submitted) return finish(false, '登录表单填不进去（signInSnippet 没有找到账号框、密码框或登录按钮）');
+  if (ready.facts) out.loginPage = ready.facts;
+  // Not set up even then: submit anyway, because what the ERP answers to that is the evidence this spike is after.
 
-  // 3. Watch. Each poll reads the executor's verdict first, then what might be in its way.
+  if (prefetch) out.prefetch = await evalIn<Prefetch>(session, PREFETCH, { timeout: 240_000 }).catch((e: Error) => ({ ok: false, versioned: false, files: [{ file: '*', status: 0, kb: 0, ms: 0, error: e.message }] }));
+
+  // 3. Submit.
+  if (!(await submit())) return finish(false, '登录表单填不进去（signInSnippet 没有找到账号框、密码框或登录按钮）');
+  const submittedAt = Date.now();
+
+  // 4. Watch. Each poll reads the executor's verdict first, then what might be in its way.
   const before = new Set(page.secondFactor);
-  const deadline = Date.now() + 120_000;
+  let deadline = Date.now() + CONSOLE_MS;
   let stuckSince: number | null = null;
+  let lastKey = '';
+  let midway = false;
   while (Date.now() < deadline) {
     await sleep(1000);
     const now = await observe(session, origin);
@@ -154,7 +302,39 @@ export async function login(session: CdpSession, { origin, account, password, sh
     }
     out.verdict = now.verdict;
     const facts = await factsOf(session);
+    const open = trace?.pending() ?? [];
+    const moment: Moment = {
+      tMs: Date.now() - started, verdict: now.verdict, form: !!facts?.loginFormVisible, busy: facts?.busy ?? -1,
+      pending: open.length, oldestPending: open[0] ? `${open[0].method} ${open[0].url}` : null, dialogs: await dialogs(session),
+    };
+    const key = JSON.stringify({ ...moment, tMs: 0, pending: Math.min(moment.pending, 5) });
+    if (key !== lastKey && out.timeline.length < 200) { out.timeline.push(moment); lastKey = key; }
+    if (!midway && Date.now() - submittedAt > 60_000) { midway = true; await diagnose('submit+60s'); await shot?.('login-60s'); }
     if (!facts) continue;
+    // The click reached nothing that listens: the page has sent no request since. Press 登录 again.
+    if (trace && facts.loginFormVisible && !facts.languageMissing && !facts.alreadyOnline && trace.started() === requestsAtSubmit
+      && Date.now() - sentAt > NO_EFFECT_MS && out.submits <= RESUBMITS) {
+      out.noEffect += 1;
+      await diagnose(`no-effect-${out.submits}`);
+      await shot?.(`no-effect-${out.submits}`);
+      if (!(await submit())) return finish(false, '再次提交时表单填不进去');
+      deadline = Date.now() + CONSOLE_MS;
+      continue;
+    }
+    if (facts.languageMissing) {
+      out.languageMissing.seen += 1;
+      if (facts.languageMissing.reach?.onTarget && out.submits <= RESUBMITS) {
+        await shot?.('language-missing');
+        await diagnose(`language-missing-${out.submits}`);
+        await clickReach(session, facts.languageMissing.reach, '「语言未加载」的确定');
+        out.languageMissing.confirmed += 1;
+        await settle(`resubmit-${out.submits}`);
+        if (!(await submit())) return finish(false, '「语言未加载」之后表单填不进去');
+        deadline = Date.now() + CONSOLE_MS;
+        stuckSince = null;
+        continue;
+      }
+    }
     if (facts.alreadyOnline) {
       out.alreadyOnline.seen = true;
       out.alreadyOnline.text = facts.alreadyOnline.text;
@@ -169,19 +349,24 @@ export async function login(session: CdpSession, { origin, account, password, sh
     const fresh = facts.secondFactor.filter((s) => !before.has(s));
     if (fresh.length) out.newSecondFactor = fresh;
     if (facts.errors.length) out.errors = facts.errors;
-    // A second factor or a refusal does not clear by itself; give the page ten seconds to move on, then report it.
-    // Only while the login form is still up: text on a console that is still loading is not the login's answer.
-    if (facts.loginFormVisible && (fresh.length || facts.errors.length)) {
+    // A second factor, a refusal or a 语言未加载 that cannot be confirmed any more does not clear by itself; give the
+    // page ten seconds to move on, then report it. Only while the login form is still up: text on a console that is
+    // still loading is not the login's answer.
+    const language = facts.languageMissing ? `「${facts.languageMissing.text}」` : null;
+    if (facts.loginFormVisible && (fresh.length || facts.errors.length || language)) {
       stuckSince ??= Date.now();
       if (Date.now() - stuckSince > 10_000) {
         await shot?.('login-blocked');
-        return finish(false, fresh.length ? `提交后出现了第二道校验：${fresh.join('、')}` : `ERP 拒绝了登录：${facts.errors.join('；')}`);
+        return finish(false, fresh.length ? `提交后出现了第二道校验：${fresh.join('、')}`
+          : language ? `ERP 提示语言未加载，已提交 ${out.submits} 次：${language}` : `ERP 拒绝了登录：${facts.errors.join('；')}`);
       }
     } else stuckSince = null;
   }
   await shot?.('login-timeout');
   const seen = out.newSecondFactor.length ? `；提交后新出现：${out.newSecondFactor.join('、')}` : '';
-  return finish(false, `提交后 120 秒没有进入主控台（执行器判定：${out.verdict}${seen}）`);
+  const hung = trace?.pending(HUNG_MS)[0];
+  const open = hung ? `；最久未返回的请求：${hung.method} ${hung.url}（${Math.round(hung.ageMs / 1000)} 秒）` : '';
+  return finish(false, `提交后 ${CONSOLE_MS / 1000} 秒没有进入主控台（执行器判定：${out.verdict}${seen}${open}）`);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

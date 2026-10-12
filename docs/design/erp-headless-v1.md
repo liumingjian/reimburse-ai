@@ -118,6 +118,7 @@ pnpm --filter @baox/server exec tsx scripts/spike-headless.ts \
   - `--invoice-no <号码,…>`：S6 额外查询的发票号码。
   - `--only S1,S2`：只跑选中的检查。
   - `--out <目录>`：报告目录。
+  - `--prefetch`：登录前先把主控台的大脚本取进浏览器缓存，原因见下面「S2 的结果」。链路慢时要加。
 - **结果**：
   - 每项打印一行 PASS / FAIL / SKIP 和原因；
   - 报告目录（默认在运行命令的目录下 `spike-report-<时间>/`）里有 `report.json` 和每一步的截图。
@@ -125,7 +126,23 @@ pnpm --filter @baox/server exec tsx scripts/spike-headless.ts \
     截图是真实画面，交给别人之前先看一眼。
 - **收尾**：脚本结束时（含 Ctrl-C）登出它自己创建的 ERP 会话，关掉它启动的所有浏览器，删除临时配置目录。
 
+### S2 的结果（2026-10-12，在 Mac 上，不是 10.250.0.222）
+
+无头登录本身没有问题，卡住登录的是链路带宽：
+
+- 点「登录」后 `UserService.ValidateLoginInfo` 返回 200，接着页面用 RequireJS 加载主控台脚本。
+  `kdformjsloader.min.js` 把 RequireJS 的 `waitSeconds` 设为 30。
+- `kendo.all.min.js`（2.8 MB）和 `k3cloud.min.js`（3.4 MB）不压缩、没有 `Cache-Control`。
+  Mac 到 ERP 只有 40–75 KB/s，每个都要 29–67 秒。
+- 超过 30 秒，RequireJS 放弃，登录静默停住：要么一直停在登录页，要么停在 `dform.aspx` 的转圈上。
+  没有报错，也没有未返回的请求。
+- 不预取：0/9 通过。只预取 `kendo.all`：2/3。预取两者（`--prefetch`）：5/5，84–105 秒进入主控台，每次都确认已登出。
+- 先前怀疑过的无头 UA 不是原因。「语言未加载」在这一轮没有再出现；脚本已能识别它、点确定并重新提交。
+
 ## 留到验证之后再定
 
+- 执行器怎样保证主控台脚本在 RequireJS 要它之前已在缓存里：沿用持久的浏览器配置目录，
+  或登录前预取（同 `--prefetch`）。还要在 `10.250.0.222` 上实测链路：内网够快的话，这一条只是保险。
+- `10.250.0.222` 访问 `http://erp.antute.com.cn/` 得到 HTTP 403，Mac 是 200；可能要走 `build.env` 里的代理或加白名单。
 - S2 如果需要选账套：凭据里是否要多存一个账套字段。
 - 主机 Chromium 的安装形态：系统包，还是随发布分发的固定版本。
