@@ -532,6 +532,18 @@ describe('opening a new 费用报销单', () => {
     await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))
       .rejects.toMatchObject({ code: 'ERP_NEW_FORM_NOT_OPENED' });
   });
+
+  // Live 2026-10-12 (S8, headless, right after login): a navigation click landed and did nothing — the list stood open
+  // with one visible 新增 and no form came; on another run the main menu stayed shut. Each was clicked once only.
+  it('clicks 新增 again when the first click opened nothing', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newFormDeadClicks: 1 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
+
+  it('clicks 我的费用报销 again when the first click opened no list', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ openListDeadClicks: 1 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
 });
 
 // Live 2026-09-20: a 去报销 wrote 费用明细 row 1 in full — 项目, 费用项目, 发票类型, both dates, both amounts — read

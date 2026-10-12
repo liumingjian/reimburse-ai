@@ -209,6 +209,13 @@ export type FakeErpOptions = {
    */
   newFormClickDead?: boolean;
   /**
+   * The first N clicks on 新增, or on the 我的费用报销 shortcut, land and do nothing; the next one works. Measured live
+   * 2026-10-12 (S8, headless, right after login): the 我的费用报销 list stood open with one visible 新增, and 45 s
+   * after its click no form had opened; on another run the main menu stayed shut after its click.
+   */
+  newFormDeadClicks?: number;
+  openListDeadClicks?: number;
+  /**
    * Raise ERP's own idle-timeout prompt (金蝶提示「系统闲置时间过长」) before the run starts, covering the element
    * this selector names — the state an unattended run inherits when the session was left sitting. Measured live
    * 2026-09-20: the prompt's overlay covered the header strip, so every click under it was refused and the run
@@ -1053,6 +1060,8 @@ const kendoDate = (raw: string) => {
     mutate('save', billNo);
   }
 
+  let deadNewFormClicks = 0;
+  let deadOpenListClicks = 0;
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
     if (visible(assistant) && !assistant.contains(el)) return; // the modal assistant swallows clicks
@@ -1073,10 +1082,13 @@ const kendoDate = (raw: string) => {
     if (td && !td.parentElement.classList.contains('k-footer-template')) return editCell(td);
     commitEditor();
     switch (action) {
-      case 'open-list': return show(q('#expense-list'), true);
+      case 'open-list':
+        if (deadOpenListClicks < (options.openListDeadClicks ?? 0)) { deadOpenListClicks += 1; return undefined; }
+        return show(q('#expense-list'), true);
       // @unverified: clicking 新增 reveals the form in the same document, where live adds a tab panel (recordings/new-form) [fake]
       case 'new-form':
         if (options.newFormClickDead) return undefined;
+        if (deadNewFormClicks < (options.newFormDeadClicks ?? 0)) { deadNewFormClicks += 1; return undefined; }
         show(q('#expense-list'), false);
         show(q('#expense-form'), true);
         if (options.sectionOverlayTicks) {

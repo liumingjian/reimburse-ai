@@ -20,7 +20,8 @@ credentials are kept once the login happens on the PC.
 click, headless passed 10/13 and reached it in about 30 s; the dedicated headed browser passed 1/3 and the extension
 2/3, both in about 42 s (the design's S8 result). Headless is also invisible to the employee, who therefore cannot
 click into a run. Its failures — the 新增单 not opening right after login, and (seen on the extension) the login probe
-giving up early — are executor bugs, not properties of headless, and are fixed on line 2.
+giving up early — were executor bugs, not properties of headless. Both are fixed; afterwards headless and the
+extension each passed 8/8 in about 31 s, so what decides is that the employee neither sees nor touches the run.
 
 The extension path works end to end but is not stable enough: runs most often stop for 转人工 on an exception. About
 half of the instability the 2026-10-11 audit found comes from running in the employee's visible browser:
