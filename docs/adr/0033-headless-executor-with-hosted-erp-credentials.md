@@ -16,6 +16,12 @@ memory, two concurrent jobs, a queue) no longer applies. Open: today only the ex
 start a process, so a dedicated or headless browser needs a new local component on every PC; and where the ERP
 credentials are kept once the login happens on the PC.
 
+**Amended 2026-10-12 (owner): S8 chose headless.** On the Mac mini, with one real invoice up to the 发票导入单据
+click, headless passed 10/13 and reached it in about 30 s; the dedicated headed browser passed 1/3 and the extension
+2/3, both in about 42 s (the design's S8 result). Headless is also invisible to the employee, who therefore cannot
+click into a run. Its failures — the 新增单 not opening right after login, and (seen on the extension) the login probe
+giving up early — are executor bugs, not properties of headless, and are fixed on line 2.
+
 The extension path works end to end but is not stable enough: runs most often stop for 转人工 on an exception. About
 half of the instability the 2026-10-11 audit found comes from running in the employee's visible browser:
 - the employee switches, minimises or occludes the tab and clicks are silently dropped (V-53);
