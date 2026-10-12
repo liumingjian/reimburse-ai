@@ -100,6 +100,30 @@ describe('ERP login probe (登录探测)', () => {
     expect(evaluated, 'must not read and pick the first of several pages').toBe(0);
   });
 
+  // Live 2026-10-12 (S8): the extension's fresh tab reads `complete` a moment before Kingdee paints its login form,
+  // and the probe gave up on that one blank read with `unknown` instead of looking again within its wait.
+  it('looks again when a loaded page shows neither a user nor the login form yet', async () => {
+    const blank: Observation = { ...loginPage, loginFormVisible: false };
+    const reads = [blank, blank, loginPage];
+    const result = await probeIdentity({
+      origin: 'http://erp.antute.com.cn', waitMs: 1000, pollMs: 1, transport: 'chromium-cdp',
+      listTabs: async () => [{ url: defaultPage.url }],
+      evaluate: async () => reads.shift() ?? loginPage,
+    });
+    expect(result.status).toBe('not_logged_in');
+    expect(reads).toHaveLength(0);
+  });
+
+  it('still asks for a person when the page stays unreadable for the whole wait', async () => {
+    const result = await probeIdentity({
+      origin: 'http://erp.antute.com.cn', waitMs: 20, pollMs: 1, transport: 'chromium-cdp',
+      listTabs: async () => [{ url: defaultPage.url }],
+      evaluate: async () => ({ ...loginPage, loginFormVisible: false }),
+    });
+    expect(result.status).toBe('unknown');
+    expect(result.hint).toMatch(/请人工看一眼/);
+  });
+
   it('does not turn a JS/automation permission error into "not logged in"', async () => {
     await expect(probeIdentity({
       origin: 'http://erp.antute.com.cn', waitMs: 0, transport: { transport: 'default' },
