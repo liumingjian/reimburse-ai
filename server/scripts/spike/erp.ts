@@ -138,11 +138,13 @@ export type LoginOutcome = {
 type Prefetch = { ok: boolean; versioned: boolean; files: Array<{ file: string; status: number; kb: number; ms: number; error?: string }> };
 
 // After ValidateLoginInfo the login page loads the console's scripts through RequireJS with waitSeconds:30
-// (kdformjsloader.min.js). kendo.all.min.js is 2.9 MB, served uncompressed, and over a slow link takes longer than
-// that; RequireJS gives up and the login silently stops (2026-10-12: 8 of 8 runs at ~45 KB/s). Fetching the same
-// URLs first, with the same ?ver= the loader appends, puts them in the HTTP cache so the loader's own request is
-// answered at once. Without window.KDResVer the loader appends a timestamp, nothing can be cached, and this says so.
-const CONSOLE_SCRIPTS = ['thirdpart/kendo/kendo.all.min.js', 'kdvgrid.min.js'];
+// (kdformjsloader.min.js), and dform.aspx loads k3cloud.min.js the same way. kendo.all.min.js (2.8 MB) and
+// k3cloud.min.js (3.4 MB) are served uncompressed and over a slow link take longer than that; RequireJS gives up
+// and the login silently stops, on the login page or on a console spinner (2026-10-12: 9 of 9 runs at 40-75 KB/s).
+// Fetching the same URLs first, with the same ?ver= the loader appends, puts them in the HTTP cache so the loader's
+// own request is answered at once. Without window.KDResVer the loader appends a timestamp, nothing can be cached,
+// and this says so.
+const CONSOLE_SCRIPTS = ['thirdpart/kendo/kendo.all.min.js', 'k3cloud.min.js', 'kdvgrid.min.js'];
 const PREFETCH = `(async () => {
   const res = window.KDResVer ? String(window.KDResVer) : '';
   const root = (window.KD && typeof KD.getUrlRoot === 'function' && typeof KD.getSubPath === 'function')
