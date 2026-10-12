@@ -21,6 +21,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'mock', testDir: './e2e', testIgnore: 'server/**' },
-    { name: 'server', testDir: './e2e/server' },
+    // One at a time: each spec boots a server, Chrome and the real OCR. Three in parallel still drove the Mac's load to 15
+    // and timed out specs that pass alone (docs/agents/testing.md).
+    { name: 'server', testDir: './e2e/server', workers: 1 },
   ],
 });

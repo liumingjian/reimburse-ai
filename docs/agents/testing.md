@@ -46,7 +46,7 @@ tests: on a loaded Mac they fail by the dozen while the code is fine. Before a m
 `rexec --no-sync uptime`; when the 1-minute average is above 4, wait for it to drop rather than reading a red run as
 a red `main`. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`web/src/test/setup.ts`), and the
 web suite and Playwright cap their own parallelism (`maxWorkers` in `web/vite.config.ts`, `workers` in
-`web/playwright.config.ts`) so they don't load the Mac by themselves.
+`web/playwright.config.ts`, one at a time for the server specs) so they don't load the Mac by themselves.
 
 `pnpm test` is lint plus every package's unit suite, packages in parallel. Server tests that run the real OCR are the
 `server-ocr` vitest project (`server/vitest.config.ts`), one file at a time, so they cannot starve the web suite's
