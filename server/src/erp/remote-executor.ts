@@ -50,7 +50,8 @@ export type RemoteExecutor = {
 };
 
 // `live` takes events. `interrupted` takes only `erp.resume`, until the window closes. `resuming` is a resume being
-// judged: the window is already closed and nothing else is taken. `ended` takes nothing.
+// judged: the window is already closed and nothing else is taken; an interruption heard meanwhile is held until the
+// verdict (`lostWhileResuming`). `ended` takes nothing.
 type JobState = 'live' | 'interrupted' | 'resuming' | 'ended';
 
 type Running = {
@@ -64,6 +65,10 @@ type Running = {
   tail: Promise<unknown>;
   // Closes the reconnection window early; set only while interrupted.
   cancelWindow: (() => void) | null;
+  // The socket went (or the debugger detached) while a resume was being judged. The verdict then reaches nobody, and
+  // the extension's retry would find a live job and give up, leaving it running for ever: so the job is interrupted
+  // again the moment it would have gone live, and the window opens anew.
+  lostWhileResuming: boolean;
   // Settle `run`: the job is over on this side.
   finish: (result: ResultEvent) => void;
   fail: (error: unknown) => void;
@@ -119,6 +124,10 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
 
   // A lost socket or a detached debugger: the same event, whichever reported it first.
   function interrupt(job: Running): void {
+    if (job.state === 'resuming') {
+      job.lostWhileResuming = true;
+      return;
+    }
     if (job.state !== 'live') return;
     job.state = 'interrupted';
     job.cancelWindow = schedule(() => {
@@ -127,14 +136,21 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
     }, RECONNECT_WINDOW_MS);
   }
 
-  async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest): Promise<ResultEvent> {
+  async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest, signal?: AbortSignal): Promise<ResultEvent> {
     const { account_id: accountId } = await db.selectFrom('task').select('account_id').where('task_id', '=', plan.taskId).executeTakeFirstOrThrow();
     const originals = new Set((plan.invoices ?? []).map((invoice) => invoice.sha256));
     let job!: Running;
     const outcome = new Promise<ResultEvent>((finish, fail) => {
-      job = { accountId, taskId: plan.taskId, originals, channel, state: 'live', tail: Promise.resolve(), cancelWindow: null, finish, fail };
+      job = { accountId, taskId: plan.taskId, originals, channel, state: 'live', tail: Promise.resolve(), cancelWindow: null, lostWhileResuming: false, finish, fail };
     });
     running.set(plan.jobId, job);
+    // The server ended the job (its deadline): it is over on this side, whatever state it was in. Its window closes, and
+    // anything the extension still sends for it reads like no job at all.
+    signal?.addEventListener('abort', () => {
+      if (job.state === 'ended') return;
+      job.state = 'ended';
+      job.fail(new Error('这次任务已经被应用结束了。'));
+    }, { once: true });
     extension.request(accountId, method, payload).then(
       // The executor's own answer counts only while the job is live: an interrupted job's late answer describes a page
       // nobody watched.
@@ -176,6 +192,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
     job.cancelWindow?.();
     job.cancelWindow = null;
     job.state = 'resuming';
+    job.lostWhileResuming = false;
     try {
       await job.tail;
       const attempt = await db
@@ -187,7 +204,10 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
         return { ok: false, reasons: problems };
       }
       const { recorded } = await db.selectFrom('erp_job_event').select((eb) => eb.fn.countAll<number>().as('recorded')).where('job_id', '=', request.jobId).executeTakeFirstOrThrow();
+      // Ended while being judged (the server's deadline): there is no job left to carry on.
+      if (job.state !== 'resuming') throw new ExtensionChannelError(JOB_REFUSALS.unknownJob, '这次任务不在这个浏览器扩展里运行。');
       job.state = 'live';
+      if (job.lostWhileResuming) interrupt(job);
       return { ok: true, recorded: Number(recorded) };
     } catch (error) {
       job.state = 'ended';
@@ -197,8 +217,8 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
   }
 
   return {
-    fill: (plan, channel, { trigger }) => run(plan, channel, EXECUTOR_METHODS.fill, { plan, trigger }),
-    reconcile: (plan, channel) => run(plan, channel, EXECUTOR_METHODS.reconcile, { plan }),
+    fill: (plan, channel, { trigger, signal }) => run(plan, channel, EXECUTOR_METHODS.fill, { plan, trigger }, signal),
+    reconcile: (plan, channel, options) => run(plan, channel, EXECUTOR_METHODS.reconcile, { plan }, options?.signal),
     async answer(accountId, method, payload) {
       switch (method) {
         case EXECUTOR_METHODS.event: {
