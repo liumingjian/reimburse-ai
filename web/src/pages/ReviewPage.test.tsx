@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '@baox/contract';
+import { ERP_SIGN_IN_KNOCKS_OFF, EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '@baox/contract';
 import type { SeedStage } from '../mock/options';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
@@ -83,6 +83,22 @@ describe('整单明细确认', () => {
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
     expect(screen.queryByRole('button', { name: '追加材料' })).toBeNull();
+  });
+
+  test('保存过报销系统账号密码（走 baox 本地执行器）：去报销卡片说明由本地执行器登录，并提醒会把别处的登录挤下线；没保存过照旧说浏览器扩展', async () => {
+    const adapter = renderReview();
+    await screen.findByRole('heading', { name: '整单明细确认' });
+    fireEvent.click(checkbox());
+    await screen.findByRole('button', { name: '去报销' });
+    expect(screen.getByText(/已配对的浏览器扩展会为这次报销打开报销系统标签页/)).toBeTruthy();
+    expect(screen.queryByTestId('erp-knocks-off')).toBeNull();
+    cleanup();
+
+    await adapter.saveErpCredentials({ account: 'zhangsan', password: 'secret' });
+    render(<App adapter={adapter} />);
+    await screen.findByRole('button', { name: '去报销' });
+    expect((await screen.findByTestId('erp-knocks-off')).textContent).toBe(ERP_SIGN_IN_KNOCKS_OFF);
+    expect(screen.getByText(/baox 本地执行器会在你的电脑上用你保存的报销系统账号密码登录/)).toBeTruthy();
   });
 
   test('点「确认」：出现并列的去打印与去报销；去打印进入打印稿，去报销请服务端开始写入并进入 ERP 填报页（没有开始填报）', async () => {

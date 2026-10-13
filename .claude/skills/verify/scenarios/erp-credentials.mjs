@@ -34,7 +34,16 @@ export default async function erpCredentials(v) {
     await expect(section.getByRole('heading', { name: '已保存，还没有试登录成功' })).toBeVisible();
     expect(await page.content()).not.toContain(PASSWORD);
   });
+  const taskId = await v.confirmedTask();
+  await v.step('the 去报销 card on the review page says the 本地执行器 signs in, and warns about 挤下线', async () => {
+    await page.goto(`/#/task/${taskId}/review`);
+    await expect(page.getByRole('button', { name: '去报销', exact: true })).toBeVisible();
+    await expect(page.getByText('baox 本地执行器会在你的电脑上用你保存的报销系统账号密码登录', { exact: false })).toBeVisible();
+    await expect(page.getByText('挤下线')).toBeVisible();
+    await v.shot('review-knocks-off');
+  });
   await v.step('清除 and confirm', async () => {
+    await page.goto('/#/settings');
     await section.getByRole('button', { name: '清除报销系统账号密码' }).click();
     await page.getByRole('dialog').getByRole('button', { name: '清除报销系统账号密码' }).click();
     await expect(section.getByRole('heading', { name: '还没有保存' })).toBeVisible();
