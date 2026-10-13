@@ -57,6 +57,7 @@ export function rerunRefusal(check: Exclude<RerunCheck, { ok: true }>): string {
     case 'rerun_draft_found':
       return `没有自动重新去报销：报销系统里已经有这次报销暂存的单据（内码 ${check.drafts.join('、')}）。报销系统没有被改动。`;
     case 'rerun_check_failed':
-      return `没有自动重新去报销：查不清这次的发票是否已被别的单据占用（${check.reason}）。报销系统没有被改动。`;
+      // ERP's own wording of why it could not answer stays out of the employee's sentence: it may name the system.
+      return '没有自动重新去报销：查不清这次的发票是否已被别的单据占用。报销系统没有被改动。';
   }
 }

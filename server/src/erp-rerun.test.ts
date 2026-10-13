@@ -101,6 +101,7 @@ describe('自动重新去报销', () => {
     expect(snapshot).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['wait', 'hand_off'] } });
     // Its own sentence: the re-run wrote nothing, so 「写入结果不确定」 would be false about it.
     expect(snapshot.erp.abortReason).toBe('没有自动重新去报销：这次的发票已经关联在费用报销单 FYBX20260911000011 上。报销系统没有被改动。');
+    expect(snapshot.erp.rerunNotice).toBeNull();
   });
 
   it('never starts over after 暂存 was pressed', async () => {

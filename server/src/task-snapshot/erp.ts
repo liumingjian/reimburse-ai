@@ -131,7 +131,8 @@ export function erpView(record: ErpRecord): Erp {
       return { ...idle, ...readState, status: 'done', outcome: 'saved', draftNo: record.result?.billNo ?? null };
     case 'unknown':
       return { ...idle, ...readState, status: 'aborted', draftNo: record.result?.billNo ?? null,
-        rerunNotice: rerunNo ? rerunSpent(rerunNo) : null,
+        // A re-run that stopped before uploading filled nothing: its own reason says so, and «仍然没有完成» would not.
+        rerunNotice: rerunNo && !RERUN_STOPPED.test(record.result?.code ?? '') ? rerunSpent(rerunNo) : null,
         abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL || RERUN_STOPPED.test(record.result?.code ?? '')
           ? reason
           : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };

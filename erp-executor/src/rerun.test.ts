@@ -54,6 +54,7 @@ describe('自动重新去报销 on the executor', () => {
   it('stops when ERP cannot answer, rather than taking silence for a clear field', async () => {
     const { fake, result } = await rerun({ occupancyQueryFails: true });
     expect(result).toMatchObject({ status: 'aborted', code: 'rerun_check_failed' });
+    expect(result.message).not.toMatch(/ERP|字段/);
     expect(wrote(fake)).toEqual([]);
   });
 
