@@ -41,9 +41,10 @@ export const NO_CREDENTIALS = {
   code: 'erp_credentials_missing',
   message: '应用没有随这次任务发来报销系统账号密码，baox 本地执行器没有登录报销系统。报销系统没有被改动。',
 } as const;
-// A job that stopped on a navigation click leaves its page to be described before the browser goes: the employee
-// cannot look at a headless page, and live 2026-10-12 one such stop (two visible 新增) left nothing to read.
-const NAVIGATION_STOPS = new Set(['CHROMIUM_TARGET_NOT_FOUND', 'CHROMIUM_TARGET_NOT_UNIQUE', 'CHROMIUM_TARGET_OBSTRUCTED', 'ERP_NEW_FORM_NOT_OPENED']);
+// A job that stopped on a navigation click, or on a page it could not tell signed in from signed out, leaves its page
+// to be described before the browser goes: the employee cannot look at a headless page. Live 2026-10-12 one such stop
+// (two visible 新增) left nothing to read; live 2026-10-13 two of ten rounds stopped on erp_login_unknown, the same.
+const NAVIGATION_STOPS = new Set(['CHROMIUM_TARGET_NOT_FOUND', 'CHROMIUM_TARGET_NOT_UNIQUE', 'CHROMIUM_TARGET_OBSTRUCTED', 'ERP_NEW_FORM_NOT_OPENED', 'erp_login_unknown']);
 
 export const BUSY = { code: 'local_executor_busy', message: '这台电脑上的 baox 本地执行器正在运行另一次去报销。' } as const;
 

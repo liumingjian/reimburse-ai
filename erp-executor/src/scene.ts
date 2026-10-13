@@ -20,7 +20,9 @@ export const NAVIGATION_SCENE = `(() => {
   const floating = [...document.querySelectorAll('.k-window, .k-overlay, [class*="mask"], [class*="loading"], [class*="modal"]')].filter(vis)
     .slice(0, 8).map((n) => ({ cls: String(n.className || '').slice(0, 60), box: box(n) }));
   const tabs = [...document.querySelectorAll('[class*="tabstrip"] li, .k-tabstrip-items li')].map((n) => String(n.textContent || '').trim().slice(0, 20)).slice(0, 12);
-  return { ready: document.readyState, sinceLoadMs: Math.round(performance.now()), captions,
+  const passwords = [...document.querySelectorAll('input[type="password"]')];
+  return { path: location.pathname, title: document.title.slice(0, 40), passwordInputs: { all: passwords.length, visible: passwords.filter(vis).length },
+    ready: document.readyState, sinceLoadMs: Math.round(performance.now()), captions,
     systemMenu: { all: menus.length, visible: menus.filter(vis).length }, floating, tabs };
 })()`;
 
