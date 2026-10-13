@@ -23,7 +23,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import { erpConfigFromEnv } from '../src/erp/config';
-import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, s10, type Ctx } from './spike/checks';
+import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, s10, s11, type Ctx } from './spike/checks';
 import { memAvailableMb } from './spike/browser';
 import { Report } from './spike/report';
 
@@ -31,7 +31,7 @@ const USAGE = `用法：pnpm --filter @baox/server exec tsx scripts/spike-headle
   --only S1,S2,…        只跑这些检查（默认全部）
   --invoice <文件>       S4 用的测试发票（pdf/png/jpg，一个文件一张发票）；没有就跳过 S4
   --invoice-no <号码,…>  S6 额外查询的发票号码
-  --save                S5 点「暂存」，在 ERP 留下一张测试草稿（需要手工删除）
+  --save                S5 点「暂存」，在 ERP 留下一张测试草稿（需要手工删除）；或 S11 用执行器的暂存入口暂存、核对后自动删除
   --bill <单据编号>       S6 的对照：一张已保存、带发票的单据；没有 --save 时 S5 只读 View 它
   --concurrency <n>     S7 并行的无头会话数（默认 1）
   --chromium <路径>      Chromium 可执行文件（默认按 BAOX_CHROME 和常见路径找）
@@ -54,9 +54,9 @@ const refuse = (message: string): never => { console.error(`spike refused: ${mes
 
 // pnpm runs this from server/, so relative paths are taken from where the owner typed the command.
 const here = process.env['INIT_CWD'] || process.cwd();
-const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9', 'S10'];
-// S10 deletes, so it never runs by default: it needs --only S10 and --delete-draft.
-const only = new Set((args.only ?? ALL.filter((id) => id !== 'S10').join(',')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
+const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9', 'S10', 'S11'];
+// S10 deletes and S11 暂存s, so neither runs by default: S10 needs --only S10 and --delete-draft, S11 --only and --save.
+const only = new Set((args.only ?? ALL.filter((id) => id !== 'S10' && id !== 'S11').join(',')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 for (const id of only) if (!ALL.includes(id)) refuse(`未知的检查 ${id}`);
 const invoice = args.invoice ? resolve(here, args.invoice) : null;
 if (invoice && !existsSync(invoice)) refuse(`找不到测试发票 ${invoice}`);
@@ -65,7 +65,8 @@ const chromium = args.chromium ? resolve(here, args.chromium) : null;
 if (chromium && !existsSync(chromium)) refuse(`找不到 Chromium：${chromium}`);
 const concurrency = Number(args.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) refuse('--concurrency 只能是 1–4');
-if (args.save && !only.has('S5')) refuse('--save 只对 S5 有意义，而这次没有选 S5');
+if (args.save && !only.has('S5') && !only.has('S11')) refuse('--save 只对 S5 或 S11 有意义，而这次都没有选');
+if (only.has('S5') && only.has('S11')) refuse('S5 和 S11 都会在 S4 那张单上点暂存，一次只选一个');
 if (only.has('S10') !== Boolean(args['delete-draft'])) refuse('S10 与 --delete-draft 要一起给');
 if (only.has('S10') && !args['drafts-since']) refuse('S10 要 --drafts-since：只删这之后创建的暂存单');
 
@@ -120,6 +121,7 @@ try {
     else await report.skip('S4', '无头环境下发票助手上传、识别、导入', '没有 --invoice <测试发票>，跳过');
   }
   await run('S5', '暂存与 View 模型回读', (obs) => s5(ctx, obs));
+  await run('S11', '执行器暂存入口：归属标记、暂存、按标记找回、View 核对（之后删除）', (obs) => s11(ctx, obs));
   await run('S6', '用 ExecuteBillQuery 查发票占用', (obs) => s6(ctx, obs));
   await run('S9', '找回暂存草稿（只读：查询与按内码 View）', (obs) => s9(ctx, obs));
   await run('S10', '删除一张测试暂存单（按内码）', (obs) => s10(ctx, obs));

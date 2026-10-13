@@ -1,20 +1,22 @@
 // The v1 in-process ERP executor: one fill plan in, protocol events out (ADR-0016).
 //
 // Job order: Chromium ready -> login probe -> 报销信息核对 (catalog check) -> navigate + compatibility fingerprint
-// -> import -> fill -> strict read-back -> hand-over. The job never clicks 保存 (save): it ends with the 费用报销单
-// filled and unsaved, and the employee commits it (ADR-0028). Before each mutation the executor observes its preconditions,
+// -> import -> fill -> strict read-back -> hand-over. The job never clicks 保存 (save). On the attended path it ends
+// with the 费用报销单 filled and unsaved, and the employee commits it (ADR-0028); on the unattended path (a plan with
+// `draft`, sent to a baox 本地执行器 only) it presses 暂存 and ends at the draft, found by its marker (ADR-0029). Before each mutation the executor observes its preconditions,
 // sends `attempt_started`, waits for the server to persist it, and re-checks target, form-instance UUID, 新增 mode
 // and URL. Failure before the first attempt aborts cleanly (retryable); anything after it is ERP 写入结果未知
 // (write result unknown) and goes to reconcile, never to replay. The executor never judges read-backs: it sends
 // them as `readback` and acts on the server's verdict.
 
 import {
-  FillPlanSchema, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
+  FillPlanSchema, markedPurpose, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
   type ExecutorChannel, type Mutation, type Preconditions, type ReadbackStage, type ResultEvent, type ResultStatus, type FreshGate,
 } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './page';
+import { compareDraft, findDrafts, pressDraft, viewDraft, waitDrafted } from './draft';
 import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
 import { DEFAULT_PACE, waitFor, type Pace } from './pace';
@@ -27,6 +29,11 @@ import {
 import type { InvoiceStaging, StagedInvoices } from './invoice-files';
 import { stageInvoices } from './staging';
 import { prepareErpWrite } from './write-context';
+
+/** A grid's filled data rows, as the 暂存 read-back compares them with ERP's model. */
+const filledRows = (grid: CurrentReadings['receiptsGrid']) => (grid?.ok === true && Array.isArray(grid.rows) ? grid.rows : [])
+  .filter((row) => row.kind === 'data').map((row) => ({ values: row.values ?? {} }))
+  .filter((row) => Object.values(row.values).some((v) => String(v ?? '').trim() !== ''));
 
 /** How the executor reaches Chromium. v1: the dedicated profile over CDP; tests: the fake ERP. */
 export type BrowserPort = {
@@ -80,15 +87,15 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   let compatibility: Compatibility | null = null;
   let currentStep: Parameters<typeof step>[0] | null = null;
 
-  async function step(name: 'chromium' | 'login' | 'catalog' | 'compatibility' | 'navigate' | 'import' | 'fill' | 'handover' | 'readback', status: 'running' | 'done' | 'failed') {
+  async function step(name: 'chromium' | 'login' | 'catalog' | 'compatibility' | 'navigate' | 'import' | 'fill' | 'handover' | 'save' | 'readback', status: 'running' | 'done' | 'failed') {
     currentStep = status === 'running' ? name : null;
     await channel.emit({ type: 'step', step: name, status });
   }
 
-  async function finish(status: ResultStatus, code: string | null, message: string | null, billNo: string | null = null): Promise<ResultEvent> {
-    if (currentStep && status !== 'handed_over') await step(currentStep, 'failed');
+  async function finish(status: ResultStatus, code: string | null, message: string | null, billNo: string | null = null, draftId: string | null = null): Promise<ResultEvent> {
+    if (currentStep && status !== 'handed_over' && status !== 'drafted') await step(currentStep, 'failed');
     const capture = status === 'aborted' || status === 'unknown' ? (write ? await captureErpError(write) : null) : null;
-    const event: ResultEvent = { type: 'result', status, code, message, billNo, capture };
+    const event: ResultEvent = { type: 'result', status, code, message, billNo, capture, ...(draftId ? { draftId } : {}) };
     await channel.emit(event);
     return event;
   }
@@ -296,8 +303,9 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     }
     await startAttempt('fill', { formMode: 'new', billNo: null, detailRowCount: preview.lines.length });
     await step('fill', 'running');
+    const causa = plan.draft ? markedPurpose(preview.purpose, plan.draft.mark) : null;
     const filled = await fillApprovedPreview(write, {
-      approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'),
+      approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'), causa,
       addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs,
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
@@ -311,8 +319,29 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     });
     if (handOver.status !== 'handed_over') return await finish('unknown', handOver.problems?.[0]?.code ?? 'hand_over_failed', handOver.problems?.map(problemText).join('；') ?? null);
     await step('handover', 'done');
-    // ERP 单据已交接: the form is filled and unsaved, so there is no 单据编号 (bill number) to report.
-    return await finish('handed_over', null, null, null);
+    // ERP 单据已交接 (the attended path, ADR-0028): the form is filled and unsaved, so there is no 单据编号 to report.
+    if (!plan.draft) return await finish('handed_over', null, null, null);
+
+    // 8. 暂存 (the unattended path, ADR-0029), on the form the hand-over gate has just verified. The attempt is durable
+    //    before the press; from the press on, every ending that is not `drafted` is `unknown` (对账), never `aborted`.
+    const mark = plan.draft.mark;
+    const verified = { causa: causa!, receipts: filledRows(handOver.readings?.receiptsGrid), details: filledRows(handOver.readings?.detailGrid) };
+    await startAttempt('save', { formMode: 'modify', billNo: null, draftMark: mark, detailRowCount: preview.lines.length });
+    await step('save', 'running');
+    await pressDraft(session, { timeoutMs: Math.min(10_000, pace.longMs), pollMs: pace.pollMs });
+    const drafted = await waitDrafted(async () => (await readForm(session)).formMode.value, { timeoutMs: Math.min(60_000, pace.longMs), pollMs: pace.pollMs });
+    if (!drafted) return await finish('unknown', 'draft_not_observed', '点了「暂存」之后页签没有变成「修改」：不知道报销系统有没有暂存这张单。');
+    const found = await findDrafts(session, mark);
+    if (!found.ok) return await finish('unknown', 'draft_query_failed', `已经点了「暂存」，但按归属标记查暂存单失败：${found.reason}`);
+    if (found.drafts.length !== 1) return await finish('unknown', 'draft_not_unique', `已经点了「暂存」，按归属标记找到 ${found.drafts.length} 张暂存单，应当恰好一张。`);
+    const draft = found.drafts[0]!;
+    const model = await viewDraft(session, draft.id);
+    if (!model) return await finish('unknown', 'draft_view_failed', `暂存单（内码 ${draft.id}）找到了，但按内码读不回它。`, null, draft.id);
+    const problems = compareDraft(model, verified);
+    if (problems.length) return await finish('unknown', 'draft_readback_mismatch', `暂存单（内码 ${draft.id}）和填写时回读的不一致：${problems.join('；')}`, null, draft.id);
+    await step('save', 'done');
+    // ERP 草稿已交接: found by its marker, read back by its 内码; it has no 单据编号 until the employee saves it.
+    return await finish('drafted', null, null, null, draft.id);
   } catch (error: any) {
     return await finish(attempted ? 'unknown' : 'aborted', error?.code ?? 'executor_error', error?.message ?? String(error));
   } finally {

@@ -834,7 +834,7 @@ export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'extension_connecti
 export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
 export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
 
-export const ERP_OUTCOMES = ['none', 'filled', 'saved'] as const;
+export const ERP_OUTCOMES = ['none', 'filled', 'drafted', 'saved'] as const;
 export const ErpOutcomeSchema = z.enum(ERP_OUTCOMES);
 export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
 
@@ -1013,6 +1013,10 @@ export type Reconcile = z.infer<typeof ReconcileSchema>;
 // and payment remain facts of the ERP system, not consequences of filling the form (ADR-0028).
 export const HANDOVER_COMPLETED_NOTICE =
   '报销单已经按你确认的明细填好，还没有保存或提交。请在报销系统里逐行核对，由你自己点「保存」并按流程提交。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存后回到这里再对一次账。应用只确认已填好，不代表已保存、已提交、已审批或已付款。';
+
+// ERP 草稿已交接 (ADR-0029): the baox 本地执行器 暂存'd the bill. A 暂存单 has no 单据编号 until it is saved.
+export const DRAFT_HANDOVER_NOTICE =
+  '报销单已经按你确认的明细填好，并在报销系统里暂存为草稿，还没有单据编号。请到报销系统「我的费用报销」打开这张暂存单逐行核对，由你自己点「保存」并按流程提交。事由末尾以 baox 开头的一串字母是应用找回这张草稿用的标记，请保留。应用只确认已暂存，不代表已保存、已提交、已审批或已付款。';
 
 export const ERP_SAVED_OUTCOME_NOTICE =
   '已从报销系统读到这张单据已保存。应用没有读到提交、审批或付款事实。';

@@ -2,16 +2,19 @@
 // steps are the executor's own (`steps.ts`, `reader.ts`, `tabs.ts`, `catalog.ts`); what is new here is only the
 // measuring around them. Read-only except S4's import into an unsaved form (discarded afterwards) and S5's 暂存,
 // which runs only with --save.
+import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { connect as tcpConnect } from 'node:net';
 import type { Interface } from 'node:readline/promises';
 import { evalIn } from '@baox/erp-executor/cdp';
 import { EXPENSE_ITEM_FORM, isSafeKey, queryRows } from '@baox/erp-executor/catalog';
-import type { Grid } from '@baox/erp-executor/erpform';
+import { compareDraft, findDrafts, pressDraft as pressDraftGateway, viewDraft, waitDrafted } from '@baox/erp-executor/draft';
+import { writeHeader, type Grid } from '@baox/erp-executor/erpform';
 import { readPane } from '@baox/erp-executor/invoice-grid';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { COMPATIBILITY_SNIPPET } from '@baox/erp-executor/probe';
-import { readForm, readHeaderField } from '@baox/erp-executor/reader';
+import { markedPurpose } from '@baox/erp-executor/protocol';
+import { protocolReadings, readForm, readHeaderField } from '@baox/erp-executor/reader';
 import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
 import { launchHeadless, loadInTab, memAvailableMb, type Headless, type MemoryPeak } from './browser';
@@ -483,6 +486,58 @@ export async function s10(ctx: Ctx, obs: Observations): Promise<Verdict> {
   if (!answer?.ok) return { status: 'FAIL', reason: `报销系统拒绝删除：${answer?.errors.join('；') || deleted.raw || '没有回答'}` };
   if (!after.ok || after.rows.length) return { status: 'FAIL', reason: '删除回答成功，但之后按内码还查得到（或查不了）' };
   return { status: 'PASS', reason: `内码 ${fid}（暂存，无单据编号，创建于 ${createdAt}）已删除，按内码再查为空` };
+}
+
+/**
+ * S11 (with --save only): 暂存 through the executor's own gateway on S4's form, the way a 本地执行器 job ends (ADR-0029):
+ * 事由 with a fresh ownership marker, 暂存, the tab turning to 修改, the draft found by the marker, read back by its 内码
+ * and compared with the page. Then the draft it made is deleted through S10's checks, so the run leaves nothing behind.
+ * Reports column names, counts and the model's own field names, never values.
+ */
+export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  if (!ctx.save) return { status: 'SKIP', reason: '没有 --save，不暂存' };
+  if (!ctx.s4Passed || !ctx.formOpen) return { status: 'SKIP', reason: '需要 S4 先通过：暂存的是 S4 导入了测试发票、尚未保存的那张单' };
+  const main = await signedInMain(ctx);
+  const mark = `baox-${randomBytes(5).toString('hex')}`;
+  const causa = markedPurpose('baox 暂存实测', mark);
+  ctx.report.say(`S11 将用执行器的暂存入口暂存一张测试草稿（归属标记 ${mark}），核对后删除它。只点暂存，不点保存、提交、审核。`);
+  const header = await writeHeader(main.session, 'FCAUSA', causa);
+  obs['header'] = { ok: header.ok };
+  if (!header.ok) return { status: 'FAIL', reason: `事由写不进去，没有暂存：${'reason' in header ? header.reason : ''}` };
+  const page = protocolReadings(await readForm(main.session));
+  const filled = (grid: typeof page.receiptsGrid) => (grid.ok ? grid.rows : []).filter((row) => row.kind === 'data' && Object.values(row.values).some((v) => String(v ?? '').trim()));
+  const expected = { causa, receipts: filled(page.receiptsGrid), details: filled(page.detailGrid) };
+  obs['page'] = { receipts: expected.receipts.length, details: expected.details.length };
+  await ctx.report.shot(main.session, 's11-before-draft');
+  const started = Date.now();
+  try { await pressDraftGateway(main.session); } catch (error) { return { status: 'FAIL', reason: `没有点「暂存」：${(error as Error).message}` }; }
+  const drafted = await waitDrafted(async () => (await readForm(main.session)).formMode.value, { timeoutMs: 60_000, pollMs: 1000 });
+  obs['draftedMs'] = Date.now() - started;
+  await ctx.report.shot(main.session, 's11-after-draft');
+  if (!drafted) return { status: 'FAIL', reason: `点了「暂存」，60 秒内页签没有变成「修改」；可能留下了一张草稿，请用 S9 查（标记 ${mark}）` };
+  const found = await findDrafts(main.session, mark);
+  obs['found'] = found.ok ? { count: found.drafts.length } : { reason: found.reason };
+  if (!found.ok || found.drafts.length !== 1) return { status: 'FAIL', reason: `按归属标记查暂存单：${found.ok ? `${found.drafts.length} 张` : found.reason}（标记 ${mark}，请用 S9 查）` };
+  const draft = found.drafts[0]!;
+  console.log(`[spike] S11 暂存单：内码 ${draft.id}，单据编号 ${draft.billNo ?? '（空）'}，状态 ${draft.status}`);
+  const model = await viewDraft(main.session, draft.id);
+  const problems = model ? compareDraft(model, expected) : ['按内码 View 读不回这张单'];
+  obs['compare'] = {
+    problems,
+    modelKeys: model ? Object.keys(model).filter((k) => !Array.isArray(model[k])).slice(0, 120) : [],
+    entries: model ? Object.fromEntries(Object.entries(model).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).length])) : {},
+  };
+  // Cleanup: only this run's own draft, and only while it is still a 暂存 draft with no 单据编号.
+  let cleaned = '没有删除';
+  if (draft.status === 'Z' && !draft.billNo) {
+    const deleted = await deleteDraft(main.session, draft.id);
+    const after = await findDrafts(main.session, mark);
+    cleaned = responseStatus(deleted.parsed)?.ok && after.ok && after.drafts.length === 0 ? '已删除' : '删除没有确认';
+  }
+  obs['cleanup'] = cleaned;
+  console.log(`[spike] S11 测试草稿 ${draft.id}：${cleaned}`);
+  if (problems.length) return { status: 'FAIL', reason: `暂存成功并按标记找到（内码 ${draft.id}，${cleaned}），但 View 与页面不一致：${problems.join('；')}` };
+  return { status: 'PASS', reason: `${secs(Number(obs['draftedMs']))} 变成修改；按归属标记找到唯一一张暂存单，View 与页面一致（收票 ${expected.receipts.length} 行、明细 ${expected.details.length} 行）；测试草稿${cleaned}` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

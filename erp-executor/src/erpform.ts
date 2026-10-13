@@ -35,7 +35,9 @@ export async function formTabs(session: CdpSession): Promise<FormTab[]> {
     for (const n of document.querySelectorAll('*')) {
       if (n.children.length !== 0 || !vis(n)) continue;
       const t = n.textContent.trim();
-      if (/^费用报销单-(新增|修改)$/.test(t)) {
+      // 修改 with or without spaces: live 2026-10-13 the tab read 「费用报销单 - 修改」 after 暂存 (tabs.ts has met the
+      // spaced caption on a loading 新增 too), and the exact match read that as no form at all.
+      if (/^费用报销单(-新增|\\s*-\\s*修改)$/.test(t)) {
         const b = n.getBoundingClientRect();
         tabs.push({ label: t, mode: t.endsWith('修改') ? 'modify' : 'new',
           x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) });

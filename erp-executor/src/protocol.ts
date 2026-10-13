@@ -23,6 +23,15 @@ export type BlobRef = z.infer<typeof BlobRefSchema>;
 export const CompatibilitySchema = z.object({ erpBuild: z.string().min(1), formId: z.string().min(1) });
 export type Compatibility = z.infer<typeof CompatibilitySchema>;
 
+/**
+ * baox's ownership marker (归属标记, ADR-0029): `baox-` and ten random lower-case letters and digits, one per job. It
+ * names a job, nobody types it, and it is plain enough to survive 事由 verbatim and to sit in a query's LIKE without
+ * escaping.
+ */
+export const DRAFT_MARK = /^baox-[a-z0-9]{10}$/;
+/** 事由 as a 暂存 fill writes it. */
+export const markedPurpose = (purpose: string, mark: string) => `${purpose} ${mark}`;
+
 const CatalogEntrySchema = z.object({ code: z.string().min(1), name: z.string().min(1) });
 
 export const FillPlanSchema = z.object({
@@ -40,6 +49,10 @@ export const FillPlanSchema = z.object({
   // fresh one. 对账 offers that recovery only over a 新增 with no 单据编号, or over no form at all, so the tab it
   // closes is the unsaved bill the banner already told the employee would be replaced.
   replaceAbandonedForm: z.boolean().optional(),
+  // 暂存 (ADR-0029, the unattended path only): set by the server for a job it sends to a baox 本地执行器 and for
+  // nothing else; the 浏览器扩展 hands the form over unsaved (ADR-0028). The fill writes 事由 as the purpose followed
+  // by a space and `mark`, presses 暂存, and finds the draft again by that mark: a 暂存 draft has no 单据编号.
+  draft: z.object({ mark: z.string().regex(DRAFT_MARK) }).optional(),
 });
 export type FillPlan = z.infer<typeof FillPlanSchema>;
 
@@ -107,10 +120,12 @@ export type ErrorCapture = z.infer<typeof ErrorCaptureSchema>;
 
 // `handed_over`: ERP 单据已交接 — the form is filled, the strict read-back matched, and baox released the ERP
 // 自动化控制权 (automation control) without saving (ADR-0028). It is a fill job's only success status.
+// `drafted`: ERP 草稿已交接 — the unattended path's success (ADR-0029): the filled form was 暂存'd, found again by its
+// ownership marker and read back by its 内码 (`draftId`); it has no 单据编号 until the employee saves it.
 // `saved`: no longer produced by a fill job, but still a valid stored value — legacy imported tasks really did save,
 // and a 对账 (reconcile) that proves 已保存 synthesises one.
 // `read`: a reconcile job delivered its read-back (the bucket is the server's, not the executor's).
-export const RESULT_STATUSES = ['saved', 'handed_over', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch', 'read'] as const;
+export const RESULT_STATUSES = ['saved', 'handed_over', 'drafted', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch', 'read'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const ExecutorEventSchema = z.discriminatedUnion('type', [
@@ -142,6 +157,8 @@ export const ExecutorEventSchema = z.discriminatedUnion('type', [
     message: z.string().nullable(),
     billNo: z.string().nullable(),
     capture: ErrorCaptureSchema.nullable(),
+    // The 暂存 draft's 内码 (FID), on `drafted` and on an `unknown` after 暂存 that found it.
+    draftId: z.string().nullable().optional(),
   }),
 ]);
 export type ExecutorEvent = z.infer<typeof ExecutorEventSchema>;

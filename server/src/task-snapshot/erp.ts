@@ -36,7 +36,7 @@ function stepsOf(record: ErpRecord): ErpStep[] {
       else if (seen === 'running' && status !== 'failed') status = 'running';
       else if (seen === 'done' && status === 'todo') status = 'done';
     }
-    if (phase === 'handed_over' || phase === 'saved') status = 'done';
+    if (phase === 'handed_over' || phase === 'drafted' || phase === 'saved') status = 'done';
     if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
   });
@@ -115,6 +115,9 @@ export function erpView(record: ErpRecord): Erp {
       };
     case 'handed_over':
       return { ...idle, ...readState, status: 'done', outcome: 'filled', draftNo: null };
+    // ERP 草稿已交接: the draft has no 单据编号 until the employee saves it.
+    case 'drafted':
+      return { ...idle, ...readState, status: 'done', outcome: 'drafted', draftNo: null };
     case 'saved':
       return { ...idle, ...readState, status: 'done', outcome: 'saved', draftNo: record.result?.billNo ?? null };
     case 'unknown':
@@ -145,7 +148,7 @@ const centsOf = (amount: string | null | undefined) => {
  */
 export function readbackView(record: ErpRecord, lines: readonly Line[]): Readback {
   const phase = record.facts?.phase;
-  if (phase !== 'handed_over' && phase !== 'saved') return EMPTY_READBACK;
+  if (phase !== 'handed_over' && phase !== 'drafted' && phase !== 'saved') return EMPTY_READBACK;
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const rows: ReadbackRow[] = lines.map((line) => {
