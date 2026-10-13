@@ -17,6 +17,7 @@ import type { ChromiumPage } from '@baox/erp-executor/page';
 import { sameOrigin } from '@baox/erp-executor/probe';
 import { abortedResult, type BlobSource, type ResultEvent } from '@baox/erp-executor/protocol';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
+import { navigationScene } from '@baox/erp-executor/scene';
 import { signIn, signOut, type ErpCredentials, type SignInTiming } from '@baox/erp-executor/sign-in';
 import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, TrySignInRequestSchema, type TrySignInAnswer, type WireRequest } from '@baox/erp-executor/wire';
 import { createJobLink, type AttachedPage, type ChannelWatch, type JobLink } from '@baox/extension/job-link';
@@ -40,6 +41,10 @@ export const NO_CREDENTIALS = {
   code: 'erp_credentials_missing',
   message: '应用没有随这次任务发来报销系统账号密码，baox 本地执行器没有登录报销系统。报销系统没有被改动。',
 } as const;
+// A job that stopped on a navigation click leaves its page to be described before the browser goes: the employee
+// cannot look at a headless page, and live 2026-10-12 one such stop (two visible 新增) left nothing to read.
+const NAVIGATION_STOPS = new Set(['CHROMIUM_TARGET_NOT_FOUND', 'CHROMIUM_TARGET_NOT_UNIQUE', 'CHROMIUM_TARGET_OBSTRUCTED', 'ERP_NEW_FORM_NOT_OPENED']);
+
 export const BUSY = { code: 'local_executor_busy', message: '这台电脑上的 baox 本地执行器正在运行另一次去报销。' } as const;
 
 export function createLocalRunner(ports: LocalRunnerPorts): (method: string, payload: unknown) => Promise<ResultEvent | TrySignInAnswer> {
@@ -75,7 +80,9 @@ export function createLocalRunner(ports: LocalRunnerPorts): (method: string, pay
           return { ...attached, session: link.adopt(current) };
         },
       };
-      return await run({ link, headless, credentials, browser });
+      const result = await run({ link, headless, credentials, browser });
+      if (result.status === 'aborted' && NAVIGATION_STOPS.has(result.code ?? '')) await describe(headless, erpOrigin, jobId);
+      return result;
     } catch (error) {
       const own = link.ownResult();
       if (own) return own;
@@ -84,6 +91,18 @@ export function createLocalRunner(ports: LocalRunnerPorts): (method: string, pay
       unwatch();
       link.close();
       await leave(headless, erpOrigin);
+    }
+  }
+
+  // The ERP page's navigation scene, into this PC's log only. ERP's own captions and counts, never business text.
+  async function describe(headless: Headless, erpOrigin: string, jobId: string) {
+    try {
+      const page = (await headless.browser.listPages()).find((p) => sameOrigin(p.url, erpOrigin));
+      if (!page) return log(`job ${jobId} scene: no ERP page`);
+      const { session } = await headless.browser.attach(page);
+      try { log(`job ${jobId} scene: ${JSON.stringify(await navigationScene(session))}`); } finally { session.close(); }
+    } catch (error) {
+      log(`job ${jobId} scene failed: ${(error as Error)?.message ?? String(error)}`);
     }
   }
 

@@ -34,6 +34,7 @@ import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { ExecutorError } from '@baox/erp-executor/page';
 import { closeErpDialogs, closeInvoiceAssistant } from '@baox/erp-executor/steps';
 import { sameOrigin } from '@baox/erp-executor/probe';
+import { navigationScene } from '@baox/erp-executor/scene';
 import { PROTOCOL_VERSION, type Compatibility, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
 import { EXECUTOR_METHODS, wireChannel } from '@baox/erp-executor/wire';
@@ -437,28 +438,6 @@ export async function runMode(ctx: ModeCtx, mode: Mode, label: string, obs: Obse
   }
 }
 
-/**
- * The page as it stood when opening the 新增单 failed: how many nodes carry each caption of the menu path (all and
- * visible, with the visible ones' tag, class and box), whether the main menu exists and is shown, what floats over the
- * page, and the tab strip. ERP's own captions and counts only, never business text.
- */
-const navigationScene = (session: CdpSession) => evalIn(session, `(() => {
-  const vis = (n) => { const b = n.getBoundingClientRect(); const st = getComputedStyle(n); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
-  const leaves = (text) => [...document.querySelectorAll('body *')].filter((n) => n.children.length === 0 && String(n.textContent || '').replace(/\\s+/g, ' ').trim() === text);
-  const box = (n) => { const b = n.getBoundingClientRect(); return [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)]; };
-  const captions = {};
-  for (const text of ['员工服务', '我的费用报销', '新增', '费用报销单-新增']) {
-    const all = leaves(text);
-    const shown = all.filter(vis);
-    captions[text] = { all: all.length, visible: shown.length, shown: shown.slice(0, 4).map((n) => ({ tag: n.tagName, cls: String(n.className || '').slice(0, 60), parent: String(n.parentElement?.className || '').slice(0, 60), box: box(n) })) };
-  }
-  const menus = [...document.querySelectorAll('.kd_SystemMenu')];
-  const floating = [...document.querySelectorAll('.k-window, .k-overlay, [class*="mask"], [class*="loading"], [class*="modal"]')].filter(vis)
-    .slice(0, 8).map((n) => ({ cls: String(n.className || '').slice(0, 60), box: box(n) }));
-  const tabs = [...document.querySelectorAll('[class*="tabstrip"] li, .k-tabstrip-items li')].map((n) => String(n.textContent || '').trim().slice(0, 20)).slice(0, 12);
-  return { ready: document.readyState, sinceLoadMs: Math.round(performance.now()), captions,
-    systemMenu: { all: menus.length, visible: menus.filter(vis).length }, floating, tabs };
-})()`);
 
 /** One real expense item, read once on the first signed-in page and kept in memory, so 报销信息核对 really queries. */
 async function catalogOnce(ctx: ModeCtx, session: CdpSession) {

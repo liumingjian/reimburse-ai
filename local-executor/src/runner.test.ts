@@ -70,6 +70,17 @@ async function localOver({ erp, credentials = { account: 'tester', password: 'se
 }
 
 describe('the local executor runs a 去报销 in a headless browser of its own', () => {
+  // Live 2026-10-12 round 9 stopped on two visible 新增 and the browser closed with nothing to read.
+  it('describes the page in its own log when a navigation click stops the job, then still signs out and closes', async () => {
+    const local = await localOver({ erp: { newFormClickDead: true } });
+    const result = await local.fill();
+    expect(result).toMatchObject({ type: 'result', status: 'aborted', code: 'ERP_NEW_FORM_NOT_OPENED' });
+    const scene = local.lines.find((line) => line.startsWith('job job-1 scene: '));
+    expect(JSON.parse(scene!.slice('job job-1 scene: '.length))).toMatchObject({ captions: { 新增: { visible: 1 } } });
+    expect(scene).not.toContain(INVOICE.invoiceNumber);
+    expect(local.browsers).toEqual({ launched: 1, closed: 1 });
+  });
+
   it('runs the job in a browser it launched, then signs out and closes it', async () => {
     const local = await localOver();
     const result = await local.fill();
