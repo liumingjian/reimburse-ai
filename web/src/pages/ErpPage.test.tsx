@@ -220,4 +220,18 @@ describe('ERP 填报', () => {
     const row = await screen.findByRole('row', { name: /2026-08 上海出差（产品评审）/ });
     expect(await within(row).findByText('已转人工')).toBeTruthy();
   });
+
+  test('自动重新去报销时说明这是应用自己换了一张新单，第几次', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    const notice = '上一次没有填完，应用已自动换一张新单重新填报（第 1 次）。';
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, rerunNotice: notice } };
+    });
+    render(<App adapter={adapter} />);
+    expect((await screen.findByTestId('erp-rerun-notice')).textContent).toContain(notice);
+    expect(notice).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
 });

@@ -607,6 +607,7 @@
     "draftNo": null,
     "abortReason": "写入报销系统的结果不确定，应用已停止写入，不会重放。原因：ERP 明细「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致",
     "loginNotice": null,
+    "rerunNotice": null,
     "erpAccount": {
       "displayName": "测试员",
       "account": "erp.tester",

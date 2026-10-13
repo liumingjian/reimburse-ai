@@ -221,6 +221,12 @@ export type FakeErpOptions = {
   draftMarkTaken?: boolean;
   /** What ERP stores as 事由 when it is not what was typed (a cut, say), to prove the read-back of the model. */
   draftStoresCausa?: string;
+  /** 费用报销单 that already hold an invoice, by invoice number: its 单据编号, or '' for a 暂存 draft (V-63). */
+  heldInvoices?: Record<string, string>;
+  /** 暂存 drafts already in ERP before the run, by 事由. */
+  draftsBefore?: string[];
+  /** ExecuteBillQuery refuses a query by 发票号码. */
+  occupancyQueryFails?: boolean;
   /**
    * Raise ERP's own idle-timeout prompt (金蝶提示「系统闲置时间过长」) before the run starts, covering the element
    * this selector names — the state an unattended run inherits when the session was left sitting. Measured live
@@ -1092,7 +1098,15 @@ const kendoDate = (raw: string) => {
     q('.form-tab').textContent = '费用报销单 - 修改';
     mutate('draft', id);
   }
+  for (const causa of options.draftsBefore ?? []) drafts.push({ id: String(nextDraftId++), causa, receipts: [], details: [] });
+  // @unverified: ExecuteBillQuery on 费用报销单 filtered by an invoice-number field answers one row per bill holding the number; the field is the test's, live has none confirmed [fake]
+  function answerOccupancy(filter: string): unknown {
+    if (options.occupancyQueryFails) return [[{ Result: { ResponseStatus: { IsSuccess: false, Errors: [{ Message: '字段FInvoiceNo不存在' }] } } }]];
+    const asked = [...filter.matchAll(/FInvoiceNo = '(\d+)'/g)].map((m) => m[1]!);
+    return asked.filter((no) => no in (options.heldInvoices ?? {})).map((no) => [options.heldInvoices![no] || ' ', options.heldInvoices![no] ? 'C' : 'Z', no]);
+  }
   function answerDraftQuery(payload: { FilterString?: string }): unknown {
+    if (String(payload.FilterString ?? '').includes('FInvoiceNo')) return answerOccupancy(String(payload.FilterString));
     const like = /FCausa like '%([^%']*)%'/.exec(String(payload.FilterString ?? ''));
     return drafts.filter((d) => like && d.causa.includes(like[1]!)).map((d) => [d.id, ' ', 'Z', d.causa]);
   }

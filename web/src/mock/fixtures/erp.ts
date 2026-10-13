@@ -45,6 +45,7 @@ export function idleErp(): Erp {
     draftNo: null,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
   };
 }

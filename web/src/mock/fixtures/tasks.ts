@@ -263,6 +263,7 @@ export function t2Snapshot(): TaskSnapshot {
     draftNo: T2_DRAFT_NO,
     abortReason: '严格回读时没有读到报销系统的结果，写入结果不确定。',
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
   };
   snapshot.readback = readbackOf(T2_ROWS);
@@ -314,6 +315,7 @@ export function t3Snapshot(): TaskSnapshot {
     draftNo: T3_DRAFT_NO,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
   };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };

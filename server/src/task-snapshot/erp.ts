@@ -74,6 +74,13 @@ const CATALOG_QUERY_FAILED_REASON = '没能在报销系统里查到项目与费�
  */
 const FORM_OBSTRUCTED_BEFORE_FILL = 'form_obstructed_before_fill';
 
+// 自动重新去报销 (ADR-0034): what the employee is told while baox starts over by itself, and after it gave up; and the
+// executor's codes for a re-run that stopped before uploading because ERP showed the bill landed (or could not say).
+// Their own sentence says what happened; 「写入结果不确定」 would be false about a run that wrote nothing.
+const rerunRunning = (no: number) => `上一次没有填完，应用已自动换一张新单重新填报（第 ${no} 次）。`;
+const rerunSpent = (no: number) => `应用已自动换新单重新填报 ${no} 次，仍然没有完成，需要你来决定下一步。`;
+const RERUN_STOPPED = /^rerun_/;
+
 const LOGIN_NOT_DETECTED = '还没有检测到登录。请在为这次报销打开的报销系统标签页里登录本人账号（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
 
 export function erpView(record: ErpRecord): Erp {
@@ -87,6 +94,7 @@ export function erpView(record: ErpRecord): Erp {
     draftNo: null,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: record.erpAccount,
   };
   const facts = record.facts;
@@ -99,9 +107,10 @@ export function erpView(record: ErpRecord): Erp {
     allowedActions: erpActionsOf(facts.phase),
   };
   const reason = record.result?.message ?? record.result?.code ?? '';
+  const rerunNo = facts.trigger === 'rerun' ? (record.frozen?.rerunOf?.no ?? 1) : null;
   switch (facts.phase) {
     case 'running':
-      return { ...idle, ...readState, status: 'running' };
+      return { ...idle, ...readState, status: 'running', rerunNotice: rerunNo ? rerunRunning(rerunNo) : null };
     case 'waiting_login':
       return { ...idle, ...readState, status: 'waiting_login', loginNotice: facts.trigger === 'confirm_login' ? LOGIN_NOT_DETECTED : null };
     case 'aborted':
@@ -122,7 +131,8 @@ export function erpView(record: ErpRecord): Erp {
       return { ...idle, ...readState, status: 'done', outcome: 'saved', draftNo: record.result?.billNo ?? null };
     case 'unknown':
       return { ...idle, ...readState, status: 'aborted', draftNo: record.result?.billNo ?? null,
-        abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL
+        rerunNotice: rerunNo ? rerunSpent(rerunNo) : null,
+        abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL || RERUN_STOPPED.test(record.result?.code ?? '')
           ? reason
           : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
     default:
@@ -363,6 +373,7 @@ export function legacyErpView(legacy: LegacyTaskTable): Erp {
     draftNo: legacy.bill_no,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
   };
 }

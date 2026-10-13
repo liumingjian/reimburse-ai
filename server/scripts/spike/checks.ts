@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { connect as tcpConnect } from 'node:net';
 import type { Interface } from 'node:readline/promises';
-import { evalIn } from '@baox/erp-executor/cdp';
+import { evalIn, type CdpSession } from '@baox/erp-executor/cdp';
 import { EXPENSE_ITEM_FORM, isSafeKey, queryRows } from '@baox/erp-executor/catalog';
 import { compareDraft, findDrafts, pressDraft as pressDraftGateway, viewDraft, waitDrafted } from '@baox/erp-executor/draft';
 import { writeHeader, type Grid } from '@baox/erp-executor/erpform';
@@ -489,6 +489,45 @@ export async function s10(ctx: Ctx, obs: Observations): Promise<Verdict> {
 }
 
 /**
+ * Which query finds the bill holding an invoice (ADR-0034's precondition), asked while S11's own draft holds S4's test
+ * invoice: the positive control S6 never had. S6 (2026-10-13) found 发票号码 only on 电子发票 (FEInvoiceEntity), which
+ * V-60 read empty on a bill whose 收票信息 had 4 rows; 收票信息 itself has only 收票单, 从源单携带 and 发票序列号. So each
+ * candidate is asked for FID and scored on whether it finds this draft. Read-only. Reports field names and hits, never
+ * values.
+ */
+async function occupancyProbe(session: CdpSession, fid: string, invoiceNos: string[], receipts: Array<{ values: Record<string, string> }>, model: Record<string, unknown> | null): Promise<Observations> {
+  const receiptNos = receipts.map((row) => String(row.values['收票单'] ?? '').trim()).filter((no) => isSafeKey(no));
+  const invoices = invoiceNos.filter((no) => isSafeKey(no));
+  const rowKeys = (entry: string) => {
+    const rows = model?.[entry];
+    const first = Array.isArray(rows) ? rows[0] as Record<string, unknown> | undefined : undefined;
+    if (!first) return null;
+    return Object.fromEntries(Object.entries(first).map(([k, v]) => [k, v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v as object).slice(0, 40) : typeof v]));
+  };
+  const candidates = [
+    ...invoices.flatMap((no) => [
+      { field: 'FIVSerialNo', by: '发票号码', value: no },
+      { field: 'FInvoiceNumber', by: '发票号码', value: no },
+      { field: 'FRecInv.FInvoiceNo', by: '发票号码', value: no },
+      { field: 'FRecInv.FInvoiceNumber', by: '发票号码', value: no },
+    ]),
+    ...receiptNos.flatMap((no) => [
+      { field: 'FRecInv.FBillNo', by: '收票单号', value: no },
+      { field: 'FRecInv.FNumber', by: '收票单号', value: no },
+      { field: 'FRecInvBillNo', by: '收票单号', value: no },
+    ]),
+  ];
+  const results = [];
+  for (const c of candidates) {
+    const res = await queryRows(session, { formId: FORM, fieldKeys: 'FID', filter: `${c.field} = '${c.value}'`, limit: 20 });
+    results.push(res.ok
+      ? { field: c.field, by: c.by, ok: true, rows: res.rows.length, findsThisDraft: res.rows.some((row) => String(row[0]) === fid) }
+      : { field: c.field, by: c.by, ok: false, reason: res.reason.slice(0, 160) });
+  }
+  return { invoices: invoices.length, receiptNos: receiptNos.length, results, recInvInfoRow: rowKeys('RecInvInfo'), eInvoiceRow: rowKeys('FEInvoiceEntity') ?? rowKeys('EInvoiceEntity') };
+}
+
+/**
  * S11 (with --save only): 暂存 through the executor's own gateway on S4's form, the way a 本地执行器 job ends (ADR-0029):
  * 事由 with a fresh ownership marker, 暂存, the tab turning to 修改, the draft found by the marker, read back by its 内码
  * and compared with the page. Then the draft it made is deleted through S10's checks, so the run leaves nothing behind.
@@ -527,6 +566,10 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
     modelKeys: model ? Object.keys(model).filter((k) => !Array.isArray(model[k])).slice(0, 120) : [],
     entries: model ? Object.fromEntries(Object.entries(model).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).length])) : {},
   };
+  const occupancy = await occupancyProbe(main.session, draft.id, ctx.s4InvoiceNos, expected.receipts, model);
+  obs['occupancy'] = occupancy;
+  const scored = (occupancy['results'] as Array<{ field: string; ok: boolean; findsThisDraft?: boolean }>).map((r) => `${r.field}：${r.ok ? (r.findsThisDraft ? '找到' : '没找到') : '查询被拒'}`);
+  console.log(`[spike] S11 发票占用查法（发票 ${String(occupancy['invoices'])} 张、收票单 ${String(occupancy['receiptNos'])} 张）：${scored.join('；') || '没有可试的号码'}`);
   // Cleanup: only this run's own draft, and only while it is still a 暂存 draft with no 单据编号.
   let cleaned = '没有删除';
   if (draft.status === 'Z' && !draft.billNo) {

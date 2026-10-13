@@ -30,6 +30,7 @@ import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { unavailableCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
 import { createMaintenanceGate, MAINTENANCE_WRITE_CODE, MAINTENANCE_WRITE_MESSAGE, type MaintenanceGate } from './maintenance';
+import { RECEIPT_INVOICE_NO } from '@baox/erp-executor/occupancy';
 import { ActionRefusedError, createTaskService, parseBacklogOfAllAccounts, StaleStepError, TaskNotFoundError, type ErpServiceOptions, type TaskService, type UploadedFile } from './tasks';
 
 // The HTTP app. Wire rules (contract/src/http.ts): success is 200 with the whole new snapshot; failure is
@@ -75,6 +76,9 @@ export type AppOptions = {
   // The key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`). null (default) disables them: nothing can
   // be saved, and no 本地执行器 is sent any.
   erpCredentialKey?: Buffer | null;
+  // 自动重新去报销 (ADR-0034). Off until the executor knows how to ask ERP whether a bill holds an invoice
+  // (`erp-executor/src/occupancy.ts`): without that every re-run would sign in again only to stop before uploading.
+  autoRerun?: boolean;
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
@@ -86,7 +90,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer, erpCredentialKey = null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer, erpCredentialKey = null, autoRerun = RECEIPT_INVOICE_NO !== null }: AppOptions): App {
   const maintenance = createMaintenanceGate(db);
   // Session lookups usually write a sliding expiry or remove an expired row. Give those narrow housekeeping writes
   // their own admission so a read route cannot cross an admitted maintenance boundary.
@@ -117,7 +121,8 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     erpBusy: (accountId) => erpLease.holder(accountId) !== null,
     acquireWrite: () => maintenance.enter('background'),
   });
-  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule });
+  // A settled 去报销 may start an 自动重新去报销 (ADR-0034); the owner's task service decides.
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule, onSettled: (run, outcome) => serviceFor(run.accountId).autoRerun(run.taskId, run.jobId, outcome) });
   const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record, schedule });
   // Story 13: a 去报销 bound for the owner's 浏览器扩展 is refused before any job exists when there is no extension to
   // run it, saying which is missing. An injected executor (development, e2e, tests) needs no extension. The in-job
@@ -137,6 +142,8 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     acquireErp: () => maintenance.enter('erp'),
     acquireBackground: () => maintenance.enter('background'),
     ...(erpExecutor ? {} : { executorReady: extensionReady }),
+    // The same test that decides whether a job is sent 凭据 (and 暂存s): only then is the executor a 本地执行器.
+    unattended: async (accountId) => autoRerun && (await erpCredentials.forJob(accountId)) !== null,
   };
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>

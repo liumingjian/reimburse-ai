@@ -607,6 +607,7 @@
     "draftNo": null,
     "abortReason": null,
     "loginNotice": null,
+    "rerunNotice": null,
     "erpAccount": {
       "displayName": "测试员",
       "account": "erp.tester",

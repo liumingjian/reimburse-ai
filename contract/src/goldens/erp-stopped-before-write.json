@@ -607,6 +607,7 @@
     "draftNo": null,
     "abortReason": "上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：报销系统的版本与上次核对时不一致，没有继续：期望 8.2.830.9 / ER_ExpReimbursement，实际 8.3.101.2 / ER_ExpReimbursement。报销系统没有被改动。",
     "loginNotice": null,
+    "rerunNotice": null,
     "erpAccount": null
   },
   "readback": {

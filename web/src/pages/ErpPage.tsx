@@ -86,6 +86,10 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         />
       ) : null}
 
+      {erp.rerunNotice ? (
+        <InlineNotification data-testid="erp-rerun-notice" kind="info" role="status" lowContrast hideCloseButton statusIconDescription="说明" title={erp.rerunNotice} />
+      ) : null}
+
       <section className="app-block" aria-label="填报进度">
         {erp.steps.length === 0 ? (
           <p className="app-caption">还没有填报进度。</p>
