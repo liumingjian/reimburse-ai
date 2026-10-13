@@ -23,7 +23,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import { erpConfigFromEnv } from '../src/erp/config';
-import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, type Ctx } from './spike/checks';
+import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, s10, type Ctx } from './spike/checks';
 import { memAvailableMb } from './spike/browser';
 import { Report } from './spike/report';
 
@@ -38,13 +38,14 @@ const USAGE = `用法：pnpm --filter @baox/server exec tsx scripts/spike-headle
   --out <目录>           报告目录（默认 ./spike-report-<时间>）
   --non-interactive     不提问；S3 跳过
   --drafts-since <时间>   S9（只读）列出这之后创建的暂存单，「YYYY-MM-DD[ HH:mm]」（默认今天 00:00）
+  --delete-draft <内码>   S10 删除这一张测试暂存单：只删暂存、无单据编号、创建于 --drafts-since 之后的（需要所有者同意）
   --prefetch            登录前先把主控台脚本取进浏览器缓存（链路慢时 RequireJS 30 秒超时的对照）`;
 
 const { values: args } = parseArgs({
   options: {
     only: { type: 'string' }, invoice: { type: 'string' }, 'invoice-no': { type: 'string' }, save: { type: 'boolean', default: false },
     bill: { type: 'string' }, concurrency: { type: 'string', default: '1' }, chromium: { type: 'string' }, out: { type: 'string' },
-    'non-interactive': { type: 'boolean', default: false }, prefetch: { type: 'boolean', default: false }, 'drafts-since': { type: 'string' }, help: { type: 'boolean', default: false },
+    'non-interactive': { type: 'boolean', default: false }, prefetch: { type: 'boolean', default: false }, 'drafts-since': { type: 'string' }, 'delete-draft': { type: 'string' }, help: { type: 'boolean', default: false },
   },
   strict: true,
 });
@@ -53,8 +54,9 @@ const refuse = (message: string): never => { console.error(`spike refused: ${mes
 
 // pnpm runs this from server/, so relative paths are taken from where the owner typed the command.
 const here = process.env['INIT_CWD'] || process.cwd();
-const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9'];
-const only = new Set((args.only ?? ALL.join(',')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
+const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9', 'S10'];
+// S10 deletes, so it never runs by default: it needs --only S10 and --delete-draft.
+const only = new Set((args.only ?? ALL.filter((id) => id !== 'S10').join(',')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 for (const id of only) if (!ALL.includes(id)) refuse(`未知的检查 ${id}`);
 const invoice = args.invoice ? resolve(here, args.invoice) : null;
 if (invoice && !existsSync(invoice)) refuse(`找不到测试发票 ${invoice}`);
@@ -64,6 +66,8 @@ if (chromium && !existsSync(chromium)) refuse(`找不到 Chromium：${chromium}`
 const concurrency = Number(args.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) refuse('--concurrency 只能是 1–4');
 if (args.save && !only.has('S5')) refuse('--save 只对 S5 有意义，而这次没有选 S5');
+if (only.has('S10') !== Boolean(args['delete-draft'])) refuse('S10 与 --delete-draft 要一起给');
+if (only.has('S10') && !args['drafts-since']) refuse('S10 要 --drafts-since：只删这之后创建的暂存单');
 
 const account = process.env['BAOX_ERP_TEST_ACCOUNT']?.trim() ?? '';
 const password = process.env['BAOX_ERP_TEST_PASSWORD']?.trim() ?? '';
@@ -84,6 +88,7 @@ const ctx: Ctx = {
   save: args.save, bill: args.bill?.trim() || null, concurrency, interactive, prefetch: args.prefetch,
   main: null, mainLogin: null, formOpen: false, s4Passed: false, s4InvoiceNos: [], draftBillNo: null,
   draftsSince: args['drafts-since']?.trim() || new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10),
+  deleteDraft: args['delete-draft']?.trim() || null,
   mainMemory: null, mainCrashes: [], sessions: new Set(), signedIn: new Set(),
 };
 
@@ -102,7 +107,7 @@ async function teardown() {
 process.once('SIGINT', () => { report.note('收到 Ctrl-C，正在登出并关闭浏览器'); void teardown().finally(() => { report.write(); process.exit(130); }); });
 
 report.say(`ERP ${ctx.origin}；报告目录 ${report.dir}`);
-report.say(`检查：${[...only].join(' ')}；${args.save ? '带 --save：S5 会暂存一张测试草稿' : '只读（不带 --save，S5 不暂存）'}`);
+report.say(`检查：${[...only].join(' ')}；${args.save ? '带 --save：S5 会暂存一张测试草稿' : '只读（不带 --save，S5 不暂存）'}${ctx.deleteDraft ? `；S10 会删除内码 ${ctx.deleteDraft} 这一张测试暂存单` : ''}`);
 report.say('截图是真实页面画面，可能含姓名和金额；把报告目录交给别人之前请先看一眼。');
 if (needsLogin) report.say('每次登录都可能挤掉同一账号在别处的 ERP 会话（ADR-0033 已接受）；脚本结束时会登出它自己的会话。');
 const run = (id: string, title: string, body: Parameters<Report['check']>[2]) => (only.has(id) ? report.check(id, title, body) : null);
@@ -117,6 +122,7 @@ try {
   await run('S5', '暂存与 View 模型回读', (obs) => s5(ctx, obs));
   await run('S6', '用 ExecuteBillQuery 查发票占用', (obs) => s6(ctx, obs));
   await run('S9', '找回暂存草稿（只读：查询与按内码 View）', (obs) => s9(ctx, obs));
+  await run('S10', '删除一张测试暂存单（按内码）', (obs) => s10(ctx, obs));
 
   // S4's form is discarded, and the main session's memory read, before anything else starts a browser.
   if (ctx.main) {

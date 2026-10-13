@@ -15,7 +15,7 @@ import { readForm, readHeaderField } from '@baox/erp-executor/reader';
 import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
 import { launchHeadless, loadInTab, memAvailableMb, type Headless, type MemoryPeak } from './browser';
-import { caption, dialogs, FORM, formFields, knownNotices, login, logout, observe, pressDraft, shape, viewBill, type LoginOutcome } from './erp';
+import { caption, deleteDraft, dialogs, FORM, formFields, knownNotices, login, logout, observe, pressDraft, responseStatus, shape, viewBill, type LoginOutcome } from './erp';
 import type { Observations, Report, Verdict } from './report';
 
 // Where the invoice assistant lives. The executor only ever matches `piaozone` in a frame URL (steps.ts); these are
@@ -36,8 +36,10 @@ export type Ctx = {
   /** S4's form is open (unsaved) and must be discarded; S4 passed; S4's recognised invoice numbers, in memory only. */
   formOpen: boolean; s4Passed: boolean; s4InvoiceNos: string[];
   draftBillNo: string | null;
-  /** S9: list the 暂存 drafts created at or after this ERP-local time. */
+  /** S9: list the 暂存 drafts created at or after this ERP-local time. S10: the draft to delete must be this recent. */
   draftsSince: string;
+  /** S10: the 内码 of the one test draft to delete (--delete-draft), or null. */
+  deleteDraft: string | null;
   mainMemory: MemoryPeak | null; mainCrashes: string[];
   /** Every browser started, and which of them are signed in, so teardown misses none. */
   sessions: Set<Headless>; signedIn: Set<Headless>;
@@ -447,6 +449,40 @@ export async function s9(ctx: Ctx, obs: Observations): Promise<Verdict> {
     status: unread ? 'FAIL' : 'PASS',
     reason: `${ctx.draftsSince} 之后有 ${res.rows.length} 张暂存单，${drafts.filter((d) => !d.billNo).length} 张没有单据编号；View 按内码读到 ${drafts.length - unread}/${drafts.length} 张`,
   };
+}
+
+/**
+ * S10, the owner's go-ahead per run: delete ONE test draft, named by its 内码 (--delete-draft). Only a 暂存 draft with
+ * no 单据编号 created since --drafts-since qualifies; anything else is refused before the delete. Then the same query
+ * must find nothing.
+ */
+export async function s10(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  const fid = ctx.deleteDraft;
+  if (!fid || !/^\d+$/.test(fid)) return { status: 'FAIL', reason: `--delete-draft 要一个数字内码：${fid ?? '（没给）'}` };
+  if (!SINCE.test(ctx.draftsSince)) return { status: 'FAIL', reason: `--drafts-since 不是「YYYY-MM-DD[ HH:mm[:ss]]」：${ctx.draftsSince}` };
+  const main = await signedInMain(ctx);
+  const find = () => queryRows(main.session, { formId: FORM, fieldKeys: 'FID,FBillNo,FDocumentStatus,FCreateDate', filter: `FID = ${fid}`, limit: 2 });
+  const before = await find();
+  if (!before.ok) return { status: 'FAIL', reason: `按内码查询被拒绝，没有删除：${before.reason}` };
+  const row = before.rows[0];
+  obs['before'] = row ? { fid: String(row[0]), billNo: String(row[1] ?? '').trim() || null, status: String(row[2] ?? ''), createdAt: String(row[3] ?? '') } : null;
+  if (!row) return { status: 'FAIL', reason: `内码 ${fid} 查不到（已删除，或不在这个账号权限内），没有删除` };
+  const billNo = String(row[1] ?? '').trim();
+  const status = String(row[2] ?? '');
+  const createdAt = String(row[3] ?? '').replace('T', ' ');
+  if (status !== 'Z') return { status: 'FAIL', reason: `内码 ${fid} 的单据状态是 ${status}，不是暂存，没有删除` };
+  if (billNo) return { status: 'FAIL', reason: `内码 ${fid} 有单据编号 ${billNo}，不是测试暂存单，没有删除` };
+  if (createdAt < ctx.draftsSince) return { status: 'FAIL', reason: `内码 ${fid} 创建于 ${createdAt}，早于 ${ctx.draftsSince}，没有删除` };
+
+  const deleted = await deleteDraft(main.session, fid);
+  const answer = responseStatus(deleted.parsed);
+  obs['delete'] = { httpStatus: deleted.httpStatus, ms: deleted.ms, ok: answer?.ok ?? null, errors: answer?.errors ?? [] };
+  const after = await find();
+  obs['after'] = after.ok ? { rows: after.rows.length } : { reason: after.reason };
+  console.log(`[spike] S10 内码 ${fid}（暂存，无单据编号，创建于 ${createdAt}）：删除${answer?.ok ? '成功' : '没有成功'}，之后查询${after.ok ? `${after.rows.length} 行` : '失败'}`);
+  if (!answer?.ok) return { status: 'FAIL', reason: `报销系统拒绝删除：${answer?.errors.join('；') || deleted.raw || '没有回答'}` };
+  if (!after.ok || after.rows.length) return { status: 'FAIL', reason: '删除回答成功，但之后按内码还查得到（或查不了）' };
+  return { status: 'PASS', reason: `内码 ${fid}（暂存，无单据编号，创建于 ${createdAt}）已删除，按内码再查为空` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
