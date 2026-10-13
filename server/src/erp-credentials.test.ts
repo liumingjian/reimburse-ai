@@ -80,7 +80,7 @@ describe('ERP 凭据 on the settings page', () => {
     expect(await view(await save())).toMatchObject({ status: 'untested', message: '要短信验证码。' });
   });
 
-  it.each([
+  it.each<[string, () => Promise<void>, string]>([
     ['nothing is paired', async () => undefined, ERP_CREDENTIAL_ERRORS.notPaired],
     ['no 本地执行器 is connected', async () => { await pair(alice, 'local_executor'); }, ERP_CREDENTIAL_ERRORS.noExecutor],
     ['the pairing is a 浏览器扩展', async () => { await executor({ ok: true }, undefined, 'extension'); }, ERP_CREDENTIAL_ERRORS.notLocalExecutor],
