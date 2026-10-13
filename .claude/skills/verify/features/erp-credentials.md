@@ -12,7 +12,8 @@ shows only the account and the status: 还没有保存, 已保存还没有试登
   浏览器扩展 paired, a job running, timed out, a second factor).
 - 再试登录一次, 换一组账号密码, 清除 (with a confirm dialog).
 - No key on the server: the section says saving is unavailable.
-- With 凭据 saved, the 去报销 card on 整单确认 says the 本地执行器 signs in and repeats the 挤下线 warning.
+- With authorised 凭据, the 去报销 card on 整单确认 says the 本地执行器 signs in and repeats the 挤下线 warning;
+  otherwise it keeps the 浏览器扩展 copy.
 
 ## How to get to it (user POV)
 
@@ -26,8 +27,8 @@ Scenario `erp-credentials`. It needs the server's key, passed through the enviro
 rexec --background --timeout 1500 'node -e "process.stdout.write(require(\"crypto\").randomBytes(32).toString(\"hex\"))" > /tmp/verify-erp.key && BAOX_ERP_CREDENTIAL_KEY_FILE=/tmp/verify-erp.key .claude/skills/verify/verify.sh run erp-credentials'
 ```
 
-It drives save → untested (no 本地执行器) → reload → a confirmed task's review page (the 去报销 card says the 本地执行器
-signs in and warns about 挤下线) → 清除, and asserts the API view never carries the password.
+It drives save → untested (no 本地执行器) → reload → a confirmed task's review page (untested 凭据: the 去报销 card keeps the
+浏览器扩展 copy) → 清除, and asserts the API view never carries the password.
 
 ## Gotchas
 

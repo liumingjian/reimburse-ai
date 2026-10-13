@@ -141,7 +141,8 @@ function cellsOf(line: Line): readonly Cell[] {
 }
 
 // Whether this employee's 去报销 runs in the baox 本地执行器, which signs in to ERP itself with the saved ERP 凭据
-// (ADR-0033): only that path has 凭据 saved. Read once while 去报销 can still start; a failed read keeps the 浏览器扩展 copy.
+// (ADR-0033): only a 试登录 through a 本地执行器 makes them authorised (saved but untested or refused says nothing about
+// what is paired). Read once while 去报销 can still start; a failed read keeps the 浏览器扩展 copy.
 function useHostedSignIn(asking: boolean): boolean {
   const store = useAppStore();
   const [hosted, setHosted] = useState(false);
@@ -149,7 +150,7 @@ function useHostedSignIn(asking: boolean): boolean {
     if (!asking) return;
     let live = true;
     store.adapter.getErpCredentials().then(
-      (view) => { if (live) setHosted(view.status !== 'none'); },
+      (view) => { if (live) setHosted(view.status === 'authorised'); },
       () => undefined,
     );
     return () => { live = false; };
