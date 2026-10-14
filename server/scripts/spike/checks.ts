@@ -13,7 +13,11 @@ import { writeHeader, type Grid } from '@baox/erp-executor/erpform';
 import { readPane } from '@baox/erp-executor/invoice-grid';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { COMPATIBILITY_SNIPPET } from '@baox/erp-executor/probe';
-import { markedPurpose } from '@baox/erp-executor/protocol';
+import { checkRerun } from '@baox/erp-executor/occupancy';
+import { INVOICE_NO, markedPurpose } from '@baox/erp-executor/protocol';
+
+// The field S11 puts through the executor's shipped occupancy check (ADR-0034), until one passes live.
+const OCCUPANCY_CANDIDATE = 'FRecInv.FIVNUMBER';
 import { protocolReadings, readForm, readHeaderField } from '@baox/erp-executor/reader';
 import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
@@ -510,6 +514,8 @@ async function occupancyProbe(session: CdpSession, fid: string, invoiceNos: stri
       { field: 'FInvoiceNumber', by: '发票号码', value: no },
       { field: 'FRecInv.FInvoiceNo', by: '发票号码', value: no },
       { field: 'FRecInv.FInvoiceNumber', by: '发票号码', value: no },
+      // 2026-10-13 live: the 收票单 a 收票信息 row references carries the number as FIVNUMBER (View of S11's draft).
+      { field: 'FRecInv.FIVNUMBER', by: '发票号码', value: no },
     ]),
     ...receiptNos.flatMap((no) => [
       { field: 'FRecInv.FBillNo', by: '收票单号', value: no },
@@ -570,6 +576,21 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
   obs['occupancy'] = occupancy;
   const scored = (occupancy['results'] as Array<{ field: string; ok: boolean; findsThisDraft?: boolean }>).map((r) => `${r.field}：${r.ok ? (r.findsThisDraft ? '找到' : '没找到') : '查询被拒'}`);
   console.log(`[spike] S11 发票占用查法（发票 ${String(occupancy['invoices'])} 张、收票单 ${String(occupancy['receiptNos'])} 张）：${scored.join('；') || '没有可试的号码'}`);
+  // The executor's own precondition (occupancy.ts checkRerun), as shipped, on the candidate field: this draft holds the
+  // test invoice, so it must answer «held»; a number nobody holds, with a mark nobody wrote, must answer «clear».
+  const invoices = ctx.s4InvoiceNos.filter((no) => INVOICE_NO.test(no));
+  if (invoices.length) {
+    const held = await checkRerun(main.session, { invoiceNos: invoices, marks: [mark] }, OCCUPANCY_CANDIDATE);
+    const free = await checkRerun(main.session, { invoiceNos: [invoices[0]!.replace(/\d$/, (d) => String((Number(d) + 5) % 10))], marks: [`baox-${randomBytes(5).toString('hex')}`] }, OCCUPANCY_CANDIDATE);
+    const heldOk = !held.ok && held.code === 'rerun_invoice_held' && held.holders.length > 0;
+    obs['shippedCheck'] = {
+      field: OCCUPANCY_CANDIDATE,
+      held: held.ok ? 'clear' : held.code === 'rerun_invoice_held' ? { code: held.code, holders: held.holders.length, statuses: held.holders.map((h) => h.status), billNoEmpty: held.holders.every((h) => !h.billNo) } : { code: held.code, reason: 'reason' in held ? held.reason.slice(0, 160) : null },
+      free: free.ok ? 'clear' : { code: free.code, reason: 'reason' in free ? free.reason.slice(0, 160) : null },
+      verdict: heldOk && free.ok ? 'PASS' : 'FAIL',
+    };
+    console.log(`[spike] S11 执行器占用检查（${OCCUPANCY_CANDIDATE}）：占着的票 ${heldOk ? '判为被占用' : '没有判为被占用'}；没人占的号码 ${free.ok ? '判为空闲' : '没有判为空闲'}`);
+  }
   // Cleanup: only this run's own draft, and only while it is still a 暂存 draft with no 单据编号.
   let cleaned = '没有删除';
   if (draft.status === 'Z' && !draft.billNo) {

@@ -194,6 +194,10 @@ pnpm --filter @baox/local-executor start run
   按 `FInvoiceNumber` 查询 ERP 不报错，但 V-60 读过的那张单收票信息 4 行、电子发票分录是空的，所以导入的发票
   很可能根本不在这个字段上，查不到不能当成没被占用。S11 现在会在删除自己的测试草稿之前，用这张草稿占着的测试发票
   逐个试候选查法（`FIVSerialNo`、`FInvoiceNumber`、`FRecInv.*`、明细的 `FRecInvBillNo`），看哪个能找回它。
+  - 2026-10-14，S11 第一次带探查（job 05490224，测试草稿已删）：`FIVSerialNo`、`FInvoiceNumber` 查询被接受但**找不到**
+    这张占着测试发票的草稿，坐实了不能用；`FRecInv.FInvoiceNo` / `FInvoiceNumber` / `FNumber` 被拒（引用字段不存在）；
+    明细的 `FRecInvBillNo` 找不到；**`FRecInv.FBillNo = 收票单号` 找到了它**。View 显示收票单引用里带 `FIVNUMBER`。
+    下一轮 S11 用执行器原样的 `checkRerun` 试 `FRecInv.FIVNUMBER`：占着的测试发票必须判为被占用，没人占的号码必须判为空闲。
   在那之前执行器不带这个字段（`occupancy.ts` 的 `RECEIPT_INVOICE_NO = null`），服务端随之不开自动重跑（`autoRerun`
   默认跟着这个常量），免得为一次注定停下的重跑再登录一次、挤掉员工别处的会话。所以现在合进去，行为和以前一样；
   找到字段之后改这一个常量，自动重新去报销才生效。即使服务端开了，没有字段的执行器也会在上传之前按「查不了」停下。
