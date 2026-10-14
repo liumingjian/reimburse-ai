@@ -605,6 +605,38 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// S12
+
+/**
+ * S12 (read-only): the executor's shipped occupancy check (occupancy.ts checkRerun, ADR-0034) on bills this account
+ * already has, with no 暂存 needed: it finds a 费用报销单 whose 收票信息 references a 收票单 with an invoice number, asks
+ * the check about that number (it must answer «held» by that very bill), and about a number one digit off with a mark
+ * nobody wrote (it must answer «clear»). Reports counts and booleans, never a number.
+ */
+export async function s12(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  const main = await signedInMain(ctx);
+  const field = OCCUPANCY_CANDIDATE;
+  const sample = await queryRows(main.session, { formId: FORM, fieldKeys: `FID,FBillNo,FDocumentStatus,${field}`, filter: `${field} <> ''`, limit: 20 });
+  if (!sample.ok) return { status: 'FAIL', reason: `按 ${field} 取样被拒：${sample.reason.slice(0, 160)}` };
+  const rows = sample.rows.map((row) => ({ id: String(row[0] ?? ''), billNo: String(row[1] ?? '').trim(), status: String(row[2] ?? ''), no: String(row[3] ?? '').trim() }));
+  const usable = rows.filter((row) => INVOICE_NO.test(row.no));
+  obs['sample'] = { rows: rows.length, usable: usable.length, statuses: [...new Set(usable.map((row) => row.status))] };
+  const known = usable[0];
+  if (!known) return { status: 'SKIP', reason: `这个账号权限内没有收票信息带发票号码的费用报销单（取样 ${rows.length} 行），没有对照` };
+  const held = await checkRerun(main.session, { invoiceNos: [known.no], marks: [`baox-${randomBytes(5).toString('hex')}`] }, field);
+  const findsKnown = !held.ok && held.code === 'rerun_invoice_held' && held.holders.some((h) => (h.billNo ?? '') === known.billNo);
+  const otherNo = known.no.replace(/\d$/, (d) => String((Number(d) + 5) % 10));
+  const othersHolding = usable.some((row) => row.no === otherNo);
+  const free = await checkRerun(main.session, { invoiceNos: [otherNo], marks: [`baox-${randomBytes(5).toString('hex')}`] }, field);
+  obs['held'] = held.ok ? 'clear' : held.code === 'rerun_invoice_held' ? { code: held.code, holders: held.holders.length, findsKnown } : { code: held.code, reason: 'reason' in held ? held.reason.slice(0, 160) : null };
+  obs['free'] = free.ok ? 'clear' : { code: free.code, ...(free.code === 'rerun_check_failed' ? { reason: free.reason.slice(0, 160) } : {}), othersHolding };
+  obs['knownStatus'] = known.status;
+  if (!findsKnown) return { status: 'FAIL', reason: `执行器的占用检查（${field}）没有把一张已知单据（状态 ${known.status}）占着的发票判为被它占用` };
+  if (!free.ok) return { status: othersHolding ? 'SKIP' : 'FAIL', reason: `没人占的号码没有判为空闲（${free.code}）` };
+  return { status: 'PASS', reason: `执行器的占用检查按 ${field} 找回了已知单据（状态 ${known.status}）占着的发票，没人占的号码判为空闲` };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // S3
 
 /** S3: does our login knock the owner off, and does the executor recognise it when the owner knocks us off? */

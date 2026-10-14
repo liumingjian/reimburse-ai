@@ -125,9 +125,9 @@ describe('自动重新去报销', () => {
     expect(jobs.map((job) => job.trigger)).toEqual(['start']);
   });
 
-  it('stays off by default, until the executor knows how to ask ERP who holds an invoice', async () => {
+  it('stays off when the app is told so', async () => {
     await server.close();
-    server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32) });
+    server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: false });
     alice = await server.signIn('alice');
     await executor([readbackMismatch, drafted]);
     const scene = await scenario(server, alice).at('actions');

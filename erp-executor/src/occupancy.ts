@@ -8,11 +8,12 @@ import { queryRows } from './catalog';
 import { DRAFT_FORM, findDrafts } from './draft';
 import { DRAFT_MARK, INVOICE_NO } from './protocol';
 
-// The field of 费用报销单 that ExecuteBillQuery filters on to find the bill holding an invoice number. None yet: S6
-// (2026-10-13) found 发票号码 only on 电子发票, an entry V-60 read empty on a bill whose 收票信息 held four, so a query
-// on it could answer «none» for an invoice that is held. Until a live run finds the field that finds a known holder,
-// every re-run stops as unanswered: a wrong field would read as «free».
-export const RECEIPT_INVOICE_NO: string | null = null;
+// The field of 费用报销单 that ExecuteBillQuery filters on to find the bill holding an invoice number: the invoice
+// number on the 收票单 a 收票信息 row references. Live: S11 (2026-10-14) found its own 暂存 draft through FRecInv while
+// 发票号码 on 电子发票 (FInvoiceNumber) and 发票序列号 (FIVSerialNo) found nothing; S12 (2026-10-14) put this very check
+// through FRecInv.FIVNUMBER on an audited bill of the test account (held, by that bill) and a number nobody holds
+// (clear). null stops every re-run as unanswered: a wrong field would read as «free».
+export const RECEIPT_INVOICE_NO: string | null = 'FRecInv.FIVNUMBER';
 
 export type Holder = { invoiceNo: string; billNo: string | null; status: string };
 

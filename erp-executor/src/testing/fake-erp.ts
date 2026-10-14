@@ -1099,14 +1099,14 @@ const kendoDate = (raw: string) => {
     mutate('draft', id);
   }
   for (const causa of options.draftsBefore ?? []) drafts.push({ id: String(nextDraftId++), causa, receipts: [], details: [] });
-  // @unverified: ExecuteBillQuery on 费用报销单 filtered by an invoice-number field answers one row per bill holding the number; the field is the test's, live has none confirmed [fake]
+  // @unverified: ExecuteBillQuery on 费用报销单 filtered by FRecInv.FIVNUMBER answers one row per bill holding the number (S12 live, an audited bill; a 暂存 draft only through FRecInv.FBillNo) [unseen]
   function answerOccupancy(filter: string): unknown {
-    if (options.occupancyQueryFails) return [[{ Result: { ResponseStatus: { IsSuccess: false, Errors: [{ Message: '字段FInvoiceNo不存在' }] } } }]];
-    const asked = [...filter.matchAll(/FInvoiceNo = '(\d+)'/g)].map((m) => m[1]!);
+    if (options.occupancyQueryFails) return [[{ Result: { ResponseStatus: { IsSuccess: false, Errors: [{ Message: '元数据中标识为FRecInv的字段上的引用字段FIVNUMBER不存在' }] } } }]];
+    const asked = [...filter.matchAll(/FRecInv\.FIVNUMBER = '(\d+)'/g)].map((m) => m[1]!);
     return asked.filter((no) => no in (options.heldInvoices ?? {})).map((no) => [options.heldInvoices![no] || ' ', options.heldInvoices![no] ? 'C' : 'Z', no]);
   }
   function answerDraftQuery(payload: { FilterString?: string }): unknown {
-    if (String(payload.FilterString ?? '').includes('FInvoiceNo')) return answerOccupancy(String(payload.FilterString));
+    if (String(payload.FilterString ?? '').includes('FRecInv.FIVNUMBER')) return answerOccupancy(String(payload.FilterString));
     const like = /FCausa like '%([^%']*)%'/.exec(String(payload.FilterString ?? ''));
     return drafts.filter((d) => like && d.causa.includes(like[1]!)).map((d) => [d.id, ' ', 'Z', d.causa]);
   }

@@ -12,12 +12,10 @@ const MARK = 'baox-k3m9q2x7v1';
 let server: StubServer;
 beforeEach(() => { server = stubServer({ taskId }); });
 
-// The field the fake answers on; the shipped default is none until a live run finds one (`occupancy.ts`).
-const FIELD = 'FInvoiceNo';
-const rerun = async (options: Partial<FakeErpOptions> = {}, occupancyField: string | null = FIELD) => {
+const rerun = async (options: Partial<FakeErpOptions> = {}, occupancyField?: string | null) => {
   const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, ...options }));
   const plan = { ...fillPlan(taskId), draft: { mark: MARK }, rerun: { invoiceNos: INVOICES.map((invoice) => invoice.invoiceNumber), marks: [EARLIER] } };
-  const result = await runFillJob(plan, { browser: fake.browser, blobs: blobSource(), channel: server.channel, pace: FAST_PACE, probeWaitMs: 0, occupancyField });
+  const result = await runFillJob(plan, { browser: fake.browser, blobs: blobSource(), channel: server.channel, pace: FAST_PACE, probeWaitMs: 0, ...(occupancyField !== undefined ? { occupancyField } : {}) });
   return { fake, result };
 };
 const wrote = (fake: Awaited<ReturnType<typeof createFakeErp>>) => fake.mutations.filter((m) => m.kind === 'import' || m.kind === 'draft' || m.kind === 'save');
@@ -58,10 +56,8 @@ describe('自动重新去报销 on the executor', () => {
     expect(wrote(fake)).toEqual([]);
   });
 
-  it('stops every re-run as unanswered while no live run has found the field to ask about', async () => {
-    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
-    const plan = { ...fillPlan(taskId), draft: { mark: MARK }, rerun: { invoiceNos: [INVOICES[0]!.invoiceNumber], marks: [EARLIER] } };
-    const result = await runFillJob(plan, { browser: fake.browser, blobs: blobSource(), channel: server.channel, pace: FAST_PACE, probeWaitMs: 0 });
+  it('stops every re-run as unanswered when it has no field to ask about', async () => {
+    const { fake, result } = await rerun({}, null);
     expect(result).toMatchObject({ status: 'aborted', code: 'rerun_check_failed' });
     expect(wrote(fake)).toEqual([]);
   });

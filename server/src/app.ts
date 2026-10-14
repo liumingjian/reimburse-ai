@@ -76,7 +76,7 @@ export type AppOptions = {
   // The key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`). null (default) disables them: nothing can
   // be saved, and no 本地执行器 is sent any.
   erpCredentialKey?: Buffer | null;
-  // 自动重新去报销 (ADR-0034). Off until the executor knows how to ask ERP whether a bill holds an invoice
+  // 自动重新去报销 (ADR-0034). On while the executor knows how to ask ERP whether a bill holds an invoice
   // (`erp-executor/src/occupancy.ts`): without that every re-run would sign in again only to stop before uploading.
   autoRerun?: boolean;
 };
