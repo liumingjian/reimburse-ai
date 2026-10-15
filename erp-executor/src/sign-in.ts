@@ -96,7 +96,7 @@ export async function signInWith(ports: SignInPorts, timing: SignInTiming = SIGN
   // 1. The form itself, not readyState.
   let look = first?.form ? first : await poll(ports, (l) => l?.form === true || signedIn(l), timing.formMs, timing.pollMs, now, pause);
   if (signedIn(look)) return { ok: true, submitted: false, ms: now() - started };
-  if (!look?.form) return fail('erp_sign_in_no_form', `${Math.round(timing.formMs / 1000)} 秒内没有出现 ERP 登录表单。`);
+  if (!look?.form) return fail('erp_sign_in_no_form', `${Math.round(timing.formMs / 1000)} 秒内没有出现报销系统登录表单。`);
 
   // 2. Set up: list filled, no 语言未加载, nothing new arriving. One reload if it never is; then submit regardless.
   const settle = async () => {
@@ -134,7 +134,7 @@ export async function signInWith(ports: SignInPorts, timing: SignInTiming = SIGN
     sentAt = now();
     return true;
   };
-  if (!(await submit())) return fail('erp_sign_in_unfillable', 'ERP 登录页上找不到账号框、密码框或「登录」按钮，没有登录。');
+  if (!(await submit())) return fail('erp_sign_in_unfillable', '报销系统登录页上找不到账号框、密码框或「登录」按钮，没有登录。');
 
   let deadline = now() + timing.consoleMs;
   let stuckSince: number | null = null;
@@ -169,13 +169,13 @@ export async function signInWith(ports: SignInPorts, timing: SignInTiming = SIGN
     if (look.form && (fresh.length || look.errors.length || look.languageMissing)) {
       stuckSince ??= now();
       if (now() - stuckSince >= timing.stuckMs) {
-        if (fresh.length) return fail('erp_sign_in_second_factor', `ERP 登录要求第二道校验（${fresh.join('、')}），baox 无法代为完成。`);
-        if (look.errors.length) return fail('erp_sign_in_refused', `ERP 拒绝了这组账号密码：${look.errors.join('；')}。baox 不会再用它重试。`);
-        return fail('erp_sign_in_language', `ERP 一直提示「${look.languageMissing!.text}」，已提交 ${submits} 次。`);
+        if (fresh.length) return fail('erp_sign_in_second_factor', `报销系统登录要求第二道校验（${fresh.join('、')}），baox 无法代为完成。`);
+        if (look.errors.length) return fail('erp_sign_in_refused', `报销系统拒绝了这组账号密码：${look.errors.join('；')}。baox 不会再用它重试。`);
+        return fail('erp_sign_in_language', `报销系统一直提示「${look.languageMissing!.text}」，已提交 ${submits} 次。`);
       }
     } else stuckSince = null;
   }
-  return fail('erp_sign_in_timeout', `提交登录后 ${Math.round(timing.consoleMs / 1000)} 秒没有进入 ERP 主控台。`);
+  return fail('erp_sign_in_timeout', `提交登录后 ${Math.round(timing.consoleMs / 1000)} 秒没有进入报销系统主页。`);
 }
 
 async function poll(ports: SignInPorts, ok: (look: LoginLook | null) => boolean, ms: number, pollMs: number, now: () => number, pause: (ms: number) => Promise<void>) {

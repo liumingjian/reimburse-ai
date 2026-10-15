@@ -6,16 +6,19 @@
 // What differs from the extension is the page's lifetime. Nobody sees this browser, so the job signs in with the
 // employee's ERP 凭据 and, whatever happens, signs out and closes the browser at the end (ADR-0033). An unsaved form
 // therefore never outlives its job: 对账 (reconcile) finds a fresh console, which is the truth about that form.
+//
+// The 凭据 arrive with each request (the app hosts them) and live only as long as it: nothing here writes them down.
+// `erp.trySignIn` is the 试登录 after the employee saves them: sign in, sign out, close, and say how it went.
 
 import type { CdpSession } from '@baox/erp-executor/cdp';
 import { runFillJob, type BrowserPort } from '@baox/erp-executor/job';
-import type { Pace } from '@baox/erp-executor/pace';
+import { waitFor, type Pace } from '@baox/erp-executor/pace';
 import type { ChromiumPage } from '@baox/erp-executor/page';
 import { sameOrigin } from '@baox/erp-executor/probe';
 import { abortedResult, type BlobSource, type ResultEvent } from '@baox/erp-executor/protocol';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { signIn, signOut, type ErpCredentials, type SignInTiming } from '@baox/erp-executor/sign-in';
-import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, type WireRequest } from '@baox/erp-executor/wire';
+import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, TrySignInRequestSchema, type TrySignInAnswer, type WireRequest } from '@baox/erp-executor/wire';
 import { createJobLink, type AttachedPage, type ChannelWatch, type JobLink } from '@baox/extension/job-link';
 import { CHANNEL_CLOSED } from '@baox/extension/messages';
 import type { Headless } from './headless';
@@ -24,8 +27,6 @@ export type LocalRunnerPorts = {
   request: WireRequest;
   connection: ChannelWatch;
   blobs: BlobSource;
-  /** The employee's ERP 凭据, or null when there are none to sign in with. */
-  credentials(): Promise<ErpCredentials | null>;
   /** A headless Chromium showing the ERP entry page. */
   launch(erpOrigin: string): Promise<Headless>;
   /** Parent of each job's invoice staging directory. */
@@ -37,17 +38,16 @@ export type LocalRunnerPorts = {
 
 export const NO_CREDENTIALS = {
   code: 'erp_credentials_missing',
-  message: '这台电脑上的 baox 本地执行器没有 ERP 凭据，没有登录报销系统。报销系统没有被改动。',
+  message: '应用没有随这次任务发来报销系统账号密码，baox 本地执行器没有登录报销系统。报销系统没有被改动。',
 } as const;
 export const BUSY = { code: 'local_executor_busy', message: '这台电脑上的 baox 本地执行器正在运行另一次去报销。' } as const;
 
-export function createLocalRunner(ports: LocalRunnerPorts): (method: string, payload: unknown) => Promise<ResultEvent> {
+export function createLocalRunner(ports: LocalRunnerPorts): (method: string, payload: unknown) => Promise<ResultEvent | TrySignInAnswer> {
   const log = ports.log ?? (() => {});
   let busy = false;
 
   // One job: its browser, its link, and the end that always signs out and closes.
-  async function inBrowser(jobId: string, erpOrigin: string, run: (job: { link: JobLink; headless: Headless; credentials: ErpCredentials; browser: BrowserPort }) => Promise<ResultEvent>): Promise<ResultEvent> {
-    const credentials = await ports.credentials();
+  async function inBrowser(jobId: string, erpOrigin: string, credentials: ErpCredentials | undefined, run: (job: { link: JobLink; headless: Headless; credentials: ErpCredentials; browser: BrowserPort }) => Promise<ResultEvent>): Promise<ResultEvent> {
     if (!credentials) return abortedResult(NO_CREDENTIALS.code, NO_CREDENTIALS.message);
     const headless = await ports.launch(erpOrigin);
     let current: AttachedPage | null = null;
@@ -106,18 +106,46 @@ export function createLocalRunner(ports: LocalRunnerPorts): (method: string, pay
   const signInPort = (erpOrigin: string, credentials: ErpCredentials) => async (session: CdpSession) => {
     const outcome = await signIn(session, { origin: erpOrigin, credentials, ...(ports.signInTiming ? { timing: ports.signInTiming } : {}) });
     log(outcome.ok ? `signed in (${outcome.ms} ms)` : `sign-in failed: ${outcome.code}`);
-    return outcome.ok ? { ok: true as const } : { ok: false as const, code: outcome.code, message: outcome.message };
+    return outcome.ok ? { ok: true as const, submitted: outcome.submitted } : { ok: false as const, code: outcome.code, message: outcome.message };
   };
 
+  // 试登录: a browser of its own, signed in and straight out again. A profile still signed in from before proves
+  // nothing about these 凭据, so it is signed out first and the login is made with them.
+  async function trySignIn(erpOrigin: string, credentials: ErpCredentials): Promise<TrySignInAnswer> {
+    const headless = await ports.launch(erpOrigin);
+    try {
+      const page = await waitFor(async () => (await headless.browser.listPages()).find((p) => sameOrigin(p.url, erpOrigin)) ?? null, Boolean, 30_000, 500);
+      if (!page) return { ok: false, code: 'erp_sign_in_no_form', message: 'baox 本地执行器的浏览器没有打开报销系统的页面。' };
+      const { session } = await headless.browser.attach(page);
+      try {
+        let outcome = await signInPort(erpOrigin, credentials)(session);
+        if (outcome.ok && !outcome.submitted) {
+          await signOut(session, { origin: erpOrigin, verify: true });
+          outcome = await signInPort(erpOrigin, credentials)(session);
+        }
+        return outcome.ok ? { ok: true } : { ok: false, code: outcome.code, message: outcome.message };
+      } finally {
+        session.close();
+      }
+    } finally {
+      await leave(headless, erpOrigin);
+    }
+  }
+
   return async (method, payload) => {
-    if (method !== EXECUTOR_METHODS.fill && method !== EXECUTOR_METHODS.reconcile) throw new Error(`baox 本地执行器不认识 ${method}。`);
-    if (busy) return abortedResult(BUSY.code, BUSY.message);
+    if (method !== EXECUTOR_METHODS.fill && method !== EXECUTOR_METHODS.reconcile && method !== EXECUTOR_METHODS.trySignIn) throw new Error(`baox 本地执行器不认识 ${method}。`);
+    if (busy) return method === EXECUTOR_METHODS.trySignIn ? { ok: false, code: BUSY.code, message: BUSY.message } : abortedResult(BUSY.code, BUSY.message);
     busy = true;
     try {
+      if (method === EXECUTOR_METHODS.trySignIn) {
+        const { erpOrigin, credentials } = TrySignInRequestSchema.parse(payload);
+        log('试登录');
+        return await trySignIn(erpOrigin, credentials);
+      }
       if (method === EXECUTOR_METHODS.fill) {
-        const { plan } = FillRequestSchema.parse(payload);
+        const { plan, credentials } = FillRequestSchema.parse(payload);
         log(`fill ${plan.jobId} for task ${plan.taskId}`);
-        return await inBrowser(plan.jobId, plan.erpOrigin, ({ link, credentials, browser }) =>
+        return await inBrowser(plan.jobId, plan.erpOrigin, credentials, ({ link, credentials, browser }) =>
           runFillJob(plan, {
             browser, blobs: ports.blobs, channel: link.channel, probeWaitMs: 30_000,
             signIn: signInPort(plan.erpOrigin, credentials),
@@ -125,10 +153,10 @@ export function createLocalRunner(ports: LocalRunnerPorts): (method: string, pay
             ...(ports.pace ? { pace: ports.pace } : {}),
           }));
       }
-      const { plan } = ReconcileRequestSchema.parse(payload);
+      const { plan, credentials } = ReconcileRequestSchema.parse(payload);
       log(`reconcile ${plan.jobId} for task ${plan.taskId}`);
       // The form a fill left behind closed with its browser: what is read now is a fresh console after sign-in.
-      return await inBrowser(plan.jobId, plan.erpOrigin, ({ link, credentials, browser }) =>
+      return await inBrowser(plan.jobId, plan.erpOrigin, credentials, ({ link, credentials, browser }) =>
         runReconcileJob(plan, {
           browser, channel: link.channel, signIn: signInPort(plan.erpOrigin, credentials),
           ...(ports.pace ? { pace: ports.pace } : {}),

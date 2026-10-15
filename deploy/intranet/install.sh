@@ -186,6 +186,20 @@ chmod 0640 "$maintenance_token"
 runuser -u baox -- "$DEPLOY/runtime/node/bin/node" -e "require('node:fs').readFileSync(process.argv[1], 'utf8')" "$maintenance_token" ||
   die "baox cannot read the maintenance control credential: $maintenance_token"
 
+# The key the hosted ERP 凭据 are sealed with (ADR-0033, server/src/erp/credential-vault.ts). Kept across releases and
+# never inside the data directory, so a database backup alone holds no usable ERP password. Losing it loses every saved
+# ERP 凭据 (employees save them again); it is never rotated by this script.
+erp_credential_key=$DEPLOY/etc/erp-credential.key
+if [[ ! -e $erp_credential_key ]]; then
+  log "creating the ERP credential key"
+  (umask 0077; "$DEPLOY/runtime/node/bin/node" -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex') + '\\n')" >"$erp_credential_key")
+fi
+[[ -f $erp_credential_key && ! -L $erp_credential_key ]] || die "ERP credential key is not a regular file: $erp_credential_key"
+chown root:baox "$erp_credential_key"
+chmod 0640 "$erp_credential_key"
+runuser -u baox -- "$DEPLOY/runtime/node/bin/node" -e "process.exit(/^[0-9a-f]{64}$/.test(require('node:fs').readFileSync(process.argv[1], 'utf8').trim()) ? 0 : 1)" "$erp_credential_key" ||
+  die "baox cannot read a valid ERP credential key: $erp_credential_key"
+
 # --- Build, as baox ----------------------------------------------------------------------------------------------
 
 # A clean environment: root's (nvm's PATH, npm prefix) must not leak into the build.

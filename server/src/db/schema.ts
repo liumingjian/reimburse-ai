@@ -47,9 +47,25 @@ export interface ExtensionPairingTable {
   browser: string | null;
   // The version the extension last reported (ADR-0021), refreshed on every connect. Null until something pairs.
   version: string | null;
+  // What paired: 'local_executor' (a baox 本地执行器, sent the ERP 凭据 with each job) or 'extension'. Null for an
+  // extension paired before the column existed, and until something pairs; both read as an extension.
+  holder: string | null;
   created_at: string;
   paired_at: string | null;
   last_connected_at: string | null;
+}
+
+// ERP 凭据 (ADR-0033), one row per 应用账号. Mutable: saving replaces the row, a 试登录 updates `status`, `message`
+// and `checked_at`, clearing deletes the row. `password_sealed` is the password encrypted with the server's key
+// (`erp/credential-vault.ts`), bound to the account; null once ERP refused it (`status` 'refused').
+export interface ErpCredentialTable {
+  account_id: string;
+  erp_account: string;
+  password_sealed: string | null;
+  status: 'untested' | 'authorised' | 'refused';
+  message: string | null;
+  saved_at: string;
+  checked_at: string | null;
 }
 
 // Mutable: `lifecycle` and `revision` (the per-task stepToken counter, ADR-0014).
@@ -451,6 +467,7 @@ export interface Schema {
   account_event: AccountEventTable;
   session: SessionTable;
   extension_pairing: ExtensionPairingTable;
+  erp_credential: ErpCredentialTable;
   task: TaskTable;
   upload_batch: UploadBatchTable;
   blob: BlobTable;

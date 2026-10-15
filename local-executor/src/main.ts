@@ -5,8 +5,8 @@
 //   start unpair                                 撤销配对, on the app and here
 //   start run                                    hold the channel and run each 去报销 headless
 //
-// Until the app hands out the employee's ERP 凭据 with each job (line 2, item 1 of erp-headless-v1.md), `run` signs
-// in with BAOX_ERP_ACCOUNT / BAOX_ERP_PASSWORD from its own environment. They are read once and never printed.
+// The ERP 凭据 are the app's to keep (ADR-0033): the employee saves them on the settings page, and each job brings
+// them down with it. This program never asks for them and never writes them anywhere.
 
 import { EXTENSION_VERSION } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
@@ -28,7 +28,7 @@ async function pair(args: string[]) {
   const origin = at >= 0 ? args[at + 1] : undefined;
   const code = args.filter((arg, i) => arg !== '--origin' && args[i - 1] !== '--origin')[0];
   if (!origin || !code) fail('用法：pair --origin http://<应用地址> <配对码>');
-  const outcome = await redeemPairingCode({ origin: origin!.replace(/\/+$/, ''), code: code!, browser: `baox 本地执行器（${process.platform}）`, version: EXTENSION_VERSION });
+  const outcome = await redeemPairingCode({ origin: origin!.replace(/\/+$/, ''), code: code!, browser: `baox 本地执行器（${process.platform}）`, version: EXTENSION_VERSION, holder: 'local_executor' });
   if (!outcome.ok) fail(`配对没有成功：${outcome.message}`);
   if (outcome.ok) {
     store.writePairing({ origin: origin!.replace(/\/+$/, ''), token: outcome.token, accountId: outcome.accountId });
@@ -47,15 +47,12 @@ async function unpair() {
 function run() {
   const pairing = store.readPairing() ?? fail('这台电脑还没有配对：先运行 pair。');
   store.prepare();
-  const account = process.env['BAOX_ERP_ACCOUNT'];
-  const password = process.env['BAOX_ERP_PASSWORD'];
   const connection = channelWatch();
   let client: ReturnType<typeof createChannelClient> | null = null;
   const runner = createLocalRunner({
     request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('channel_closed'))),
     connection,
     blobs: serverBlobs({ origin: pairing.origin, token: async () => pairing.token, fetch: (url, init) => fetch(url, init) }),
-    credentials: async () => (account && password ? { account, password } : null),
     launch: (erpOrigin) => launchHeadless({ profileDir: store.profileDir, erpOrigin }),
     stagingRoot: store.stagingRoot,
     log: say,

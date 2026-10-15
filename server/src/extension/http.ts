@@ -38,7 +38,7 @@ export function mountExtensionPairRoutes(app: Hono<AppEnv>, pairings: PairingSer
     // issuing a second one for no reason.
     const tooOld = extensionVersionRefusal(input.data.version, minimumVersion);
     if (tooOld) throw new AuthRefusal(403, EXTENSION_VERSION_TOO_OLD_CODE, tooOld);
-    return c.json(await pairings.redeem(input.data.code, input.data.browser ?? null, input.data.version ?? null));
+    return c.json(await pairings.redeem(input.data.code, input.data.browser ?? null, input.data.version ?? null, input.data.holder ?? null));
   });
 
   // What the extension asks to find out whether it is still paired, and which 应用账号 it acts for.

@@ -10,6 +10,7 @@ import { AppShell } from '../shell/AppShell';
 import { formatDateTime } from '../format';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
+import { ErpCredentialsSection } from './ErpCredentialsSection';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
 import { awaitsPairing, useAutoPair, useExtensionSetup } from './extension-setup';
 
@@ -446,6 +447,7 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
           </section>
         ) : null}
         <ExtensionPairingSection />
+        <ErpCredentialsSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">
           <summary>高级设置</summary>

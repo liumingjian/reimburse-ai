@@ -128,15 +128,26 @@ export async function standInApp({ port, invoice }: { port: number; invoice: { s
     fresh() { log = []; },
     /** The executor's `request` for a job run in this process: the same answers, the same log. */
     request: async (_method: string, payload: unknown) => record((payload as { event: ExecutorEvent }).event),
-    /** One 去报销, as the remote executor sends it. Resolves with the job's result event. */
-    fill(plan: FillPlan, trigger: 'start' | 'confirm_login' = 'start'): Promise<ResultEvent> {
+    /** One 去报销, as the remote executor sends it (with the ERP 凭据 for a 本地执行器). Resolves with the job's result. */
+    fill(plan: FillPlan, trigger: 'start' | 'confirm_login' = 'start', credentials?: { account: string; password: string }): Promise<ResultEvent> {
       if (!socket) return Promise.reject(new Error('扩展没有连上替身应用'));
       seq += 1;
       const id = `s8-${seq}`;
       const answered = new Promise<ResultEvent>((resolve, reject) => {
         pending.set(id, (message) => (message.ok ? resolve(message.payload as ResultEvent) : reject(new Error(message.error.message))));
       });
-      write(socket, { type: 'request', id, method: EXECUTOR_METHODS.fill, payload: { plan, trigger } });
+      write(socket, { type: 'request', id, method: EXECUTOR_METHODS.fill, payload: { plan, trigger, ...(credentials ? { credentials } : {}) } });
+      return answered;
+    },
+    /** The 试登录 the app asks a 本地执行器 for after the employee saves the ERP 凭据. */
+    trySignIn(erpOrigin: string, credentials: { account: string; password: string }): Promise<unknown> {
+      if (!socket) return Promise.reject(new Error('执行器没有连上替身应用'));
+      seq += 1;
+      const id = `s8-${seq}`;
+      const answered = new Promise<unknown>((resolve, reject) => {
+        pending.set(id, (message) => (message.ok ? resolve(message.payload) : reject(new Error(message.error.message))));
+      });
+      write(socket, { type: 'request', id, method: EXECUTOR_METHODS.trySignIn, payload: { erpOrigin, credentials } });
       return answered;
     },
     close: async () => {

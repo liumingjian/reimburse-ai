@@ -23,6 +23,17 @@ click into a run. Its failures — the 新增单 not opening right after login, 
 giving up early — were executor bugs, not properties of headless. Both are fixed; afterwards headless and the
 extension each passed 8/8 in about 31 s, so what decides is that the employee neither sees nor touches the run.
 
+**Amended 2026-10-12 (owner): the ERP 凭据 stay hosted on the server, and travel to the PC per job.**
+- The server keeps them, the password sealed with AES-256-GCM under a key file outside the data directory
+  (`BAOX_ERP_CREDENTIAL_KEY_FILE`), so a database or backup copy alone holds no usable password. Each sealed value is
+  bound to its 应用账号. This is not ADR-0022's rejected envelope encryption for originals: baox has to use the password
+  as the employee, so the threat that matters is the file read elsewhere, not another account reading through the app.
+- Each `erp.fill` / `erp.reconcile` to a baox 本地执行器 carries them next to the plan, never in it (the plan is
+  stored). The 本地执行器 writes them nowhere. A 浏览器扩展 is never sent them; the pairing records which one paired.
+- The 试登录 runs on the PC through the paired 本地执行器 (`erp.trySignIn`), since `10.250.0.222` never drives ERP.
+  With no 本地执行器 connected the 凭据 stay saved but untested, and 去报销 is refused until a 试登录 succeeds.
+- A refused login, at the 试登录 or inside a job, deletes the password at once.
+
 The extension path works end to end but is not stable enough: runs most often stop for 转人工 on an exception. About
 half of the instability the 2026-10-11 audit found comes from running in the employee's visible browser:
 - the employee switches, minimises or occludes the tab and clicks are silently dropped (V-53);
