@@ -24,6 +24,8 @@ import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createExtensionChannel, EXTENSION_NOT_PAIRED_CODE, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
+import { mountLocalExecutorDownloadRoute, mountLocalExecutorReleaseRoutes } from './local-executor/http';
+import type { LocalExecutorDist } from './local-executor/package';
 import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService, hasPairing } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
@@ -70,6 +72,9 @@ export type AppOptions = {
   // The built extension template (`extension/dist`) the settings page's download is assembled from
   // (`extension/download.ts`). null (default) answers every download with 503.
   extensionTemplate?: string | null;
+  // The built 本地执行器 program and the Node runtimes fetched at deploy (`local-executor/package.ts`, ADR-0035). null
+  // (default) answers its downloads and its executors' update checks with 503.
+  localExecutor?: LocalExecutorDist | null;
   // The extension channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
   // hand.
   schedule?: Schedule;
@@ -90,7 +95,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, schedule = realTimer, erpCredentialKey = null, autoRerun = RECEIPT_INVOICE_NO !== null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, projectCatalog = unavailableCatalog(), legacyHome = null, publicOrigin = null, extensionTemplate = null, localExecutor = null, schedule = realTimer, erpCredentialKey = null, autoRerun = RECEIPT_INVOICE_NO !== null }: AppOptions): App {
   const maintenance = createMaintenanceGate(db);
   // Session lookups usually write a sliding expiry or remove an expired row. Give those narrow housekeeping writes
   // their own admission so a read route cannot cross an admitted maintenance boundary.
@@ -294,6 +299,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   );
   const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
   mountExtensionPairRoutes(app, pairings);
+  mountLocalExecutorReleaseRoutes(app, localExecutor, pairings);
   // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
   // reason: the extension's token is its only credential. Three answers read alike, so nothing can be learnt by
   // probing: no running job, a sha256 its plan does not name, and another account's original. The task service is
@@ -321,6 +327,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   mountPairingRoutes(app, pairings, publicOrigin);
   mountErpCredentialRoutes(app, erpCredentials);
   mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
+  mountLocalExecutorDownloadRoute(app, localExecutor, join(dataDir, 'cache', 'local-executor'), publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));

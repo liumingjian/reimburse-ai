@@ -11,6 +11,7 @@ import { formatDateTime } from '../format';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { ErpCredentialsSection } from './ErpCredentialsSection';
+import { LocalExecutorSection } from './LocalExecutorSection';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
 import { awaitsPairing, useAutoPair, useExtensionSetup } from './extension-setup';
 
@@ -447,6 +448,7 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
           </section>
         ) : null}
         <ExtensionPairingSection />
+        <LocalExecutorSection />
         <ErpCredentialsSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">

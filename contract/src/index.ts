@@ -8,6 +8,7 @@ export * from './auth';
 export * from './project-book';
 export * from './legacy-import';
 export * from './extension';
+export * from './local-executor';
 export * from './erp-credentials';
 export * from './http';
 export * from './adapter';

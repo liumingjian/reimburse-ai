@@ -252,10 +252,20 @@ fi
 # The server serves the settings page's extension download from ../../extension/dist relative to server/dist/main.mjs
 # (server/src/run.ts). If that is not where the template is, every download answers 503.
 main=$release/server/dist/main.mjs
-for built in "$main" "$release/server/dist/baox.mjs" "$release/web/dist/index.html" "$(dirname "$main")/../../extension/dist/manifest.json"; do
+# The same goes for the 本地执行器 program (ADR-0035), served from ../../local-executor/dist.
+for built in "$main" "$release/server/dist/baox.mjs" "$release/web/dist/index.html" "$(dirname "$main")/../../extension/dist/manifest.json" \
+  "$(dirname "$main")/../../local-executor/dist/baox-local-executor.mjs"; do
   [[ -f $built ]] || die "the build left no $built"
 done
 touch "$release/.built"
+
+# The 本地执行器 zips carry Node's own runtime for Windows and both kinds of Mac (ADR-0035). Fetched through the same
+# mirror and proxy as the build, checked against the release's SHASUMS256.txt, kept across releases
+# (BAOX_LOCAL_EXECUTOR_RUNTIMES in baox.service) and fetched again only when .nvmrc moves.
+install -d -o baox -g baox -m 0755 "$DEPLOY/cache/local-executor-runtime"
+log "fetching the local executor's Node runtimes"
+as_baox env NODE_MIRROR="$NODE_MIRROR" node local-executor/scripts/fetch-runtimes.mjs "$DEPLOY/cache/local-executor-runtime" ||
+  die "could not fetch the local executor's Node runtimes from $NODE_MIRROR"
 
 # --- Configuration ------------------------------------------------------------------------------------------------
 
