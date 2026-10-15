@@ -36,6 +36,8 @@ export type Ctx = {
   /** S4's form is open (unsaved) and must be discarded; S4 passed; S4's recognised invoice numbers, in memory only. */
   formOpen: boolean; s4Passed: boolean; s4InvoiceNos: string[];
   draftBillNo: string | null;
+  /** S9: list the 暂存 drafts created at or after this ERP-local time. */
+  draftsSince: string;
   mainMemory: MemoryPeak | null; mainCrashes: string[];
   /** Every browser started, and which of them are signed in, so teardown misses none. */
   sessions: Set<Headless>; signedIn: Set<Headless>;
@@ -395,6 +397,56 @@ export async function s6(ctx: Ctx, obs: Observations): Promise<Verdict> {
   if (!controls) return { status: 'SKIP', reason: `按 ${pick.key} 能查（${results.length} 张发票），但没有已知占用的对照来证明查得准：用 --bill 或 --save 再跑` };
   if (controlHits < controls) return { status: 'FAIL', reason: `按 ${pick.key} 查询，${controls} 个已知占用只命中 ${controlHits} 个` };
   return { status: 'PASS', reason: `按 ${pick.entity}.${pick.key} 用 ExecuteBillQuery 能查到发票被哪张单据占用（${controls} 个已知占用全部命中）` };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// S9
+
+const statusOf = (v: unknown) => (typeof v === 'string' ? v : shape(v));
+const SINCE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/;
+
+/**
+ * S9, read-only: the 暂存 drafts created since `--drafts-since`, found with ExecuteBillQuery and read back with View by
+ * 内码. A draft may carry no 单据编号 (S5 on 2026-10-12: the form turned into 修改 but FBillNo stayed empty), so the
+ * 内码 is what finds it again. Prints 内码, whether a 单据编号 exists, and the creation time — what the owner needs to
+ * delete it — and the 事由's length only.
+ */
+export async function s9(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  if (!SINCE.test(ctx.draftsSince)) return { status: 'FAIL', reason: `--drafts-since 不是「YYYY-MM-DD[ HH:mm[:ss]]」：${ctx.draftsSince}` };
+  const main = await signedInMain(ctx);
+  const filter = `FDocumentStatus = 'Z' AND FCreateDate >= '${ctx.draftsSince}'`;
+  let fields = 'FID,FBillNo,FCreateDate,FCausa';
+  let res = await queryRows(main.session, { formId: FORM, fieldKeys: fields, filter, limit: 20 });
+  if (!res.ok) {
+    obs['firstQuery'] = { fields, reason: res.reason };
+    fields = 'FID,FBillNo,FCreateDate';
+    res = await queryRows(main.session, { formId: FORM, fieldKeys: fields, filter, limit: 20 });
+  }
+  obs['query'] = { fields, filter, ok: res.ok, ...(res.ok ? { rows: res.rows.length } : { reason: res.reason }) };
+  if (!res.ok) return { status: 'FAIL', reason: `ExecuteBillQuery 查暂存单被拒绝：${res.reason}` };
+  const drafts = [];
+  for (const row of res.rows.slice(0, 5)) {
+    const id = String(row[0] ?? '');
+    const view = id ? await viewBill(main.session, id, { byId: true }) : null;
+    const data = view?.data ?? null;
+    drafts.push({
+      fid: id, billNo: String(row[1] ?? '').trim() || null, createdAt: String(row[2] ?? ''), causaLength: row[3] === undefined ? null : String(row[3] ?? '').length,
+      viewById: view ? { httpStatus: view.httpStatus, ms: view.ms, ok: !!data, errors: view.status?.errors ?? [] } : null,
+      model: data ? {
+        documentStatus: statusOf(modelKey(data, 'DocumentStatus', 'FDocumentStatus')),
+        billNo: shape(modelKey(data, 'BillNo', 'FBillNo')),
+        entries: Object.fromEntries(Object.entries(data).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).length])),
+      } : null,
+    });
+  }
+  obs['drafts'] = drafts;
+  for (const d of drafts) console.log(`[spike] S9 暂存单：内码 ${d.fid}，单据编号 ${d.billNo ?? '（空）'}，创建于 ${d.createdAt}，View 按内码${d.viewById?.ok ? '读到了' : '没有读到'}`);
+  if (!drafts.length) return { status: 'FAIL', reason: `${ctx.draftsSince} 之后没有查到暂存单（这个账号权限内）` };
+  const unread = drafts.filter((d) => !d.viewById?.ok).length;
+  return {
+    status: unread ? 'FAIL' : 'PASS',
+    reason: `${ctx.draftsSince} 之后有 ${res.rows.length} 张暂存单，${drafts.filter((d) => !d.billNo).length} 张没有单据编号；View 按内码读到 ${drafts.length - unread}/${drafts.length} 张`,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

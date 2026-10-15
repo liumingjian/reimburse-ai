@@ -7,12 +7,13 @@
 import { ReconcilePlanSchema, type ExecutorChannel, type ResultEvent, type ResultStatus } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import type { ChromiumPage } from './page';
-import type { BrowserPort } from './job';
+import type { BrowserPort, ExecutorPorts } from './job';
 import { DEFAULT_PACE, type Pace } from './pace';
 import { probeIdentity, sameOrigin } from './probe';
 import { protocolReadings, readForm } from './reader';
 
-export type ReconcilePorts = { browser: BrowserPort; channel: ExecutorChannel; pace?: Pace; probeWaitMs?: number };
+/** `signIn`: the headless path's, as for a fill (`ExecutorPorts`). Signing in writes nothing to any bill. */
+export type ReconcilePorts = { browser: BrowserPort; channel: ExecutorChannel; pace?: Pace; probeWaitMs?: number; signIn?: ExecutorPorts['signIn'] };
 
 export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): Promise<ResultEvent> {
   const plan = ReconcilePlanSchema.parse(rawPlan);
@@ -44,11 +45,17 @@ export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): 
     await step('chromium', 'done');
 
     await step('login', 'running');
-    const probe = await probeIdentity({
+    const probeLogin = (tabs: ChromiumPage[]) => probeIdentity({
       origin: plan.erpOrigin, waitMs: ports.probeWaitMs ?? 30_000, pollMs: pace.pollMs, transport: 'chromium-cdp',
-      listTabs: async () => pages,
+      listTabs: async () => tabs,
       evaluate: async (page, expression) => evalIn((await attach(page as ChromiumPage)).session, expression, { timeout: 10_000 }),
     });
+    let probe = await probeLogin(pages);
+    if (probe.status === 'not_logged_in' && probe.page && ports.signIn) {
+      const signedIn = await ports.signIn((await attach(probe.page as ChromiumPage)).session);
+      if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
+      probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
+    }
     if (probe.status === 'not_logged_in' || probe.status === 'no_tab') {
       await step('login', 'done');
       await channel.emit({ type: 'waiting_login', hint: probe.hint ?? '' });
