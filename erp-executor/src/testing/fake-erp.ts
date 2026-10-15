@@ -217,6 +217,8 @@ export type FakeErpOptions = {
   openListDeadClicks?: number;
   /** 暂存 is pressed and nothing lands: the tab stays 新增. */
   draftCommandDead?: boolean;
+  /** 暂存 lands the draft but the tab stays 新增, so the fill cannot tell it landed: what 对账 by the marker is for. */
+  draftTabStays?: boolean;
   /** Another 暂存 draft already carries this 事由, mark and all, so a search by the mark finds two. */
   draftMarkTaken?: boolean;
   /** What ERP stores as 事由 when it is not what was typed (a cut, say), to prove the read-back of the model. */
@@ -1095,7 +1097,7 @@ const kendoDate = (raw: string) => {
     drafts.push({ id, causa: options.draftStoresCausa ?? typed, receipts: gridModel('receipts'), details: gridModel('detail') });
     if (options.draftMarkTaken) drafts.push({ id: String(nextDraftId++), causa: typed, receipts: [], details: [] });
     // Spaced, as live 2026-10-13 read it after 暂存.
-    q('.form-tab').textContent = '费用报销单 - 修改';
+    if (!options.draftTabStays) q('.form-tab').textContent = '费用报销单 - 修改';
     mutate('draft', id);
   }
   for (const causa of options.draftsBefore ?? []) drafts.push({ id: String(nextDraftId++), causa, receipts: [], details: [] });

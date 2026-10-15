@@ -12,7 +12,7 @@ import { queryRows } from './catalog';
 import { HIT_JS, clickReach, type Reach } from './hit';
 import { waitFor } from './pace';
 import { ExecutorError } from './page';
-import { DRAFT_MARK } from './protocol';
+import { DRAFT_MARK, type DraftRow, type ExecutorEvent, type ReconcilePlan } from './protocol';
 
 export const DRAFT_FORM = 'ER_ExpReimbursement';
 const VIEW_SERVICE = 'Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc';
@@ -145,7 +145,7 @@ function found(cell: string, values: Set<string>): boolean {
   return false;
 }
 
-type GridRows = Array<{ values: Record<string, string> }>;
+type GridRows = DraftRow[];
 
 // Columns the page shows as the caption of an enum, a checkbox or a department (正常, 是, 普通发票…) while the model holds
 // the code: live 2026-10-13 (S11) these, and only these, were not found as literals in a draft that was otherwise equal.
@@ -187,4 +187,26 @@ export function compareDraft(data: Record<string, unknown>, expected: { causa: s
 /** After 暂存: the tab turns to 修改. Live it took ~1 s (S5); `timeoutMs` bounds the wait. */
 export async function waitDrafted(read: () => Promise<'new' | 'modify' | null>, { timeoutMs = 60_000, pollMs = 500 } = {}) {
   return (await waitFor(read, (m) => m === 'modify', timeoutMs, pollMs)) === 'modify';
+}
+
+export type DraftLookup = Extract<ExecutorEvent, { type: 'draft_lookup' }>;
+
+/**
+ * 对账 by ownership marker (line 2 item 5): every draft under the job's mark and under each earlier job's, and, when the
+ * job's own is the only one, its View against the read-back the fill verified before 暂存. Read-only: two queries and
+ * a View, no page touched. Judging what was found is the server's.
+ */
+export async function lookupDraft(session: CdpSession, { mark, earlier, expected }: NonNullable<ReconcilePlan['draft']>): Promise<DraftLookup> {
+  const drafts: DraftLookup['drafts'] = [];
+  const lookup = (problems: string[] | null, failure: string | null): DraftLookup => ({ type: 'draft_lookup', drafts, problems, failure });
+  for (const each of [mark, ...earlier]) {
+    const found = await findDrafts(session, each);
+    if (!found.ok) return lookup(null, `按归属标记查暂存单没有成功：${found.reason}`);
+    drafts.push(...found.drafts.map((draft) => ({ mark: each, id: draft.id, billNo: draft.billNo, status: draft.status })));
+  }
+  const own = drafts[0];
+  if (drafts.length !== 1 || own?.mark !== mark || !expected) return lookup(null, null);
+  const model = await viewDraft(session, own.id);
+  if (!model) return lookup(null, `暂存单（内码 ${own.id}）找到了，但按内码读不回它。`);
+  return lookup(compareDraft(model, expected), null);
 }

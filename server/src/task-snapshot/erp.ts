@@ -4,7 +4,7 @@
 import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
-import type { ErpRecord, ReconcileJudgement } from '../erp/fill-state';
+import type { DraftOutcome, ErpRecord, ReconcileJudgement } from '../erp/fill-state';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from '../extension/channel';
 import { erpActionsOf, reconcileActionsOf, reconcileReading } from '../task-policy';
 
@@ -196,7 +196,7 @@ const LINE_REASON = /任务第 (\d+) 行/;
  * rather than echoing the local one back as if it had been read.
  */
 function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lines: readonly Line[]): ReadbackRow[] {
-  if (!judged || judged.verdict.bucket !== '已保存' || lines.length === 0) return [];
+  if (!judged || judged.draft || judged.verdict.bucket !== '已保存' || lines.length === 0) return [];
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const perLine = new Map<number, string[]>();
@@ -241,6 +241,19 @@ const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) =>
   '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里逐行核对后自己点「保存」，或转人工。',
   已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它的合计与这次确认的明细一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
+};
+
+// 对账 after 暂存 (line 2 item 5): what the lookup by the ownership marker found, as the page says it. `drafted` never
+// shows: it promotes to ERP 草稿已交接.
+const DRAFT_UNJUDGED_BANNER = '点了「暂存」之后结果不确定：应用已停止写入，不会重放。点「开始对账」，应用会按这次的归属标记只读查找暂存单；也可以直接转人工。';
+const DRAFT_BANNER: Readonly<Record<DraftOutcome, string>> = {
+  drafted: '找到了这次的暂存单，内容和确认的明细一致。',
+  unread: '这次没有在报销系统里查清暂存单，可以再对账一次，也可以转人工。',
+  none: '按这次的归属标记，报销系统里没有找到暂存单。不知道点了暂存之后单据有没有落下，应用不会再去报一次，请转人工。',
+  several: '报销系统里带这个报销任务归属标记的暂存单不止一张，应当只有一张。请转人工处理。',
+  saved: '这次暂存的单据在报销系统里已经保存过，或者不再是暂存状态，应用不再动它。请转人工确认。',
+  mismatch: '找到了这次的暂存单，但它和暂存前核对过的内容不一致。请转人工处理。',
+  unproved: '找到了这次的暂存单，但没有暂存前核对过的内容可比，证明不了它和确认的明细一致。请转人工处理。',
 };
 
 // 对账 found no 费用报销单 open at all. Said in place of the generic 未知 sentence, which only tells the employee to
@@ -303,7 +316,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       actionCode: null,
       allowedActions,
       humanReview: false,
-      banner: notice ?? RECONCILE_UNJUDGED_BANNER,
+      banner: notice ?? (record.facts.drafting ? DRAFT_UNJUDGED_BANNER : RECONCILE_UNJUDGED_BANNER),
       reasons: fillReasons,
     };
   }
@@ -333,7 +346,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
     actionCode: handOffOnly ? 'hand_off' : 'wait',
     allowedActions,
     humanReview: handOffOnly,
-    banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
+    banner: notice ?? (judged.draft ? DRAFT_BANNER[judged.draft.outcome] : BUCKET_BANNER[judged.verdict.bucket](judged.billNo)),
     reasons: judged.verdict.reasons,
   };
 }

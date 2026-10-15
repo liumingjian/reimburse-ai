@@ -34,6 +34,15 @@ export const INVOICE_NO = /^\d{8,20}$/;
 /** 事由 as a 暂存 fill writes it. */
 export const markedPurpose = (purpose: string, mark: string) => `${purpose} ${mark}`;
 
+/** One filled grid row of a form as a read-back saw it: column label to cell text. */
+export const DraftRowSchema = z.object({ values: z.record(z.string(), z.string()) });
+export type DraftRow = z.infer<typeof DraftRowSchema>;
+/** A read-back grid's filled data rows: what a 暂存 draft's View is compared with, by the fill and by 对账. */
+export const filledRows = (grid: { ok: boolean; rows?: ReadonlyArray<{ kind: string; values?: Record<string, string> }> } | null | undefined): DraftRow[] =>
+  (grid?.ok === true && Array.isArray(grid.rows) ? grid.rows : [])
+    .filter((row) => row.kind === 'data').map((row) => ({ values: { ...(row.values ?? {}) } }))
+    .filter((row) => Object.values(row.values).some((v) => String(v ?? '').trim() !== ''));
+
 const CatalogEntrySchema = z.object({ code: z.string().min(1), name: z.string().min(1) });
 
 export const FillPlanSchema = z.object({
@@ -67,7 +76,8 @@ export type FillPlan = z.infer<typeof FillPlanSchema>;
 
 /**
  * 对账 (reconcile): the second, read-only job kind. The executor probes the login, reads the open form once and
- * sends it as a `readback` at stage `reconcile`; the server classifies it. No attempt, no ERP write, ever.
+ * sends it as a `readback` at stage `reconcile`; the server classifies it. With `draft` it reads no form and looks
+ * the 暂存 draft up by its marker instead (`draft_lookup`). No attempt, no ERP write, ever.
  */
 export const ReconcilePlanSchema = z.object({
   protocolVersion: z.literal(PROTOCOL_VERSION),
@@ -75,6 +85,16 @@ export const ReconcilePlanSchema = z.object({
   jobId: z.string().min(1),
   taskId: z.string().min(1),
   erpOrigin: z.string().url(),
+  // 对账 after 暂存 was pressed (erp-headless-v1.md line 2 item 5): the page is gone with the job's browser, so the
+  // draft is looked up by its ownership marker through WebAPI instead (ExecuteBillQuery, View: read-only) and the
+  // open form is not read. `mark` is the 暂存 job's; `earlier` the task's other jobs', none of which may have a draft.
+  // `expected` is what the strict hand-over read-back saw before 暂存, as the fill compares its own draft; null when
+  // the server holds no such read-back, and then nothing is compared and nothing can be proved.
+  draft: z.object({
+    mark: z.string().regex(DRAFT_MARK),
+    earlier: z.array(z.string().regex(DRAFT_MARK)),
+    expected: z.object({ causa: z.string().min(1), receipts: z.array(DraftRowSchema), details: z.array(DraftRowSchema) }).nullable(),
+  }).optional(),
 });
 export type ReconcilePlan = z.infer<typeof ReconcilePlanSchema>;
 
@@ -157,6 +177,15 @@ export const ExecutorEventSchema = z.discriminatedUnion('type', [
     type: z.literal('readback'), stage: z.enum(READBACK_STAGES), readings: ReadingsSchema,
     // Which form was read (reconcile only): the server compares it with the fill's last attempt.
     form: z.object({ formInstanceId: z.string().nullable(), targetId: z.string().nullable() }).optional(),
+  }),
+  // A 对账 by ownership marker (ReconcilePlan.draft): every draft found under each mark, and for the one draft under
+  // the job's own mark, if it was the only draft found, the problems between its View and the expected read-back
+  // (empty: they agree; null: not compared). `failure`: a query or the View did not answer; nothing is judged on it.
+  z.object({
+    type: z.literal('draft_lookup'),
+    drafts: z.array(z.object({ mark: z.string(), id: z.string(), billNo: z.string().nullable(), status: z.string() })),
+    problems: z.array(z.string()).nullable(),
+    failure: z.string().nullable(),
   }),
   z.object({
     type: z.literal('result'),

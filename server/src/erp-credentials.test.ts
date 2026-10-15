@@ -157,14 +157,14 @@ describe('去报销 through a baox 本地执行器', () => {
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', draftNo: null } });
   });
 
-  it('offers only 转人工 when 暂存 was pressed and its result is unknown: 重新去报销 could make a second draft', async () => {
+  it('offers 对账 by the marker and 转人工, never 重新去报销, when 暂存 was pressed and its result is unknown', async () => {
     await executor({ ok: true }, uncertainDraft);
     await save();
     const scene = await sceneOnFakeErp();
 
     const stopped = await scene.run('start-erp-write');
 
-    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['hand_off'] } });
+    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['wait', 'hand_off'] } });
   });
 
   it('refuses before any job exists without authorised 凭据, and points at the settings page', async () => {

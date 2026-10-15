@@ -80,7 +80,7 @@ export type ErpFacts = {
   // A read-only 对账 (reconcile) job runs on this fill (#192): like a running job, only its own writes pass.
   reconciling: boolean;
   // The job pressed 暂存 (a `save` attempt with an ownership marker is on record, ADR-0029): a bill may have landed with no 单据编号, so
-  // 重新去报销 could make a second one. Only 转人工 is offered until 对账 can find the draft by its marker.
+  // 重新去报销 could make a second one. 对账 looks the draft up by its marker instead of reading a page.
   drafting?: boolean;
 };
 
@@ -292,8 +292,10 @@ export function erpActionsOf(phase: ErpPhase | null | undefined): Erp['allowedAc
 // 再对一次账 stays on offer: the employee may open the bill again and read it properly.
 export function reconcileActionsOf(phase: ErpFacts | null | undefined, erp: ErpVerdict): Reconcile['allowedActions'] {
   if (phase?.phase !== 'unknown' || phase.reconciling) return [];
-  if (phase.drafting) return ['hand_off'];
   const { judged, draftNo, noForm } = reconcileReading(erp);
+  // After 暂存 the draft is looked up by its marker (line 2 item 5): 再对一次账 until a lookup answers, then only
+  // 转人工. Never 重新去报销: a draft may have landed, and a second 去报销 would make a second bill.
+  if (phase.drafting) return !judged || judged.verdict.action === '原地等待' ? ['wait', 'hand_off'] : ['hand_off'];
   if (!judged) return ['wait', 'hand_off'];
   if ((judged.verdict.bucket === '未保存·已导入未写明细' || noForm) && draftNo === null) return noForm ? ['refill', 'wait', 'hand_off'] : ['refill', 'hand_off'];
   return judged.verdict.action === '转人工' ? ['hand_off'] : ['wait', 'hand_off'];
