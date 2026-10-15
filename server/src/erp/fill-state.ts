@@ -27,7 +27,8 @@ export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | n
 // agrees with the read-back the fill verified: ERP 草稿已交接. `unread`: a query or the View did not answer, which
 // says nothing either way: 对账 may run again. Every other outcome is 转人工: `none` (no draft: whether 暂存 landed
 // cannot be told, and a fresh 去报销 could make a second bill), `several`, `saved` (it has a 单据编号 or left 暂存:
-// someone took it on), `mismatch`, `unproved` (no verified read-back to compare with).
+// someone took it on), `mismatch`, `unproved` (no verified read-back to compare with). `several`: any draft but the
+// 暂存 job's own one, under its mark or an earlier job's.
 export type DraftOutcome = 'drafted' | 'unread' | 'none' | 'several' | 'saved' | 'mismatch' | 'unproved';
 export type DraftJudgement = { outcome: DraftOutcome; draftId: string | null; found: number };
 
@@ -100,7 +101,10 @@ export function judgeDraftLookup(events: ExecutorEvent[], mark: string): Reconci
   if (lookup.failure) return judged('unread', '未知', [lookup.failure]);
   const [only] = lookup.drafts;
   if (!only) return judged('none', '未知', ['按这次的归属标记，报销系统里没有找到暂存单。']);
-  if (lookup.drafts.length > 1 || only.mark !== mark) return judged('several', '不自洽', [`按这个报销任务的归属标记找到 ${lookup.drafts.length} 张暂存单（内码 ${lookup.drafts.map((d) => d.id).join('、')}），应当只有这次暂存的一张。`]);
+  if (lookup.drafts.length > 1 || only.mark !== mark) {
+    const own = lookup.drafts.filter((d) => d.mark === mark).length;
+    return judged('several', '不自洽', [`这次暂存的标记下找到 ${own} 张暂存单，此前任务的标记下找到 ${lookup.drafts.length - own} 张（内码 ${lookup.drafts.map((d) => d.id).join('、')}），应当只有这次暂存的一张。`]);
+  }
   if (only.billNo || only.status !== 'Z') return judged('saved', '已保存', [only.billNo ? `这张暂存单已经有了单据编号 ${only.billNo}。` : `这张单据的状态是 ${only.status}，已经不是暂存。`], only);
   if (lookup.problems === null) return judged('unproved', '未知', ['没有暂存前核对过的回读可比，证明不了这张暂存单和确认的明细一致。'], only);
   if (lookup.problems.length) return judged('mismatch', '不自洽', lookup.problems, only);

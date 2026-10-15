@@ -201,7 +201,8 @@ export async function lookupDraft(session: CdpSession, { mark, earlier, expected
   const lookup = (problems: string[] | null, failure: string | null): DraftLookup => ({ type: 'draft_lookup', drafts, problems, failure });
   for (const each of [mark, ...earlier]) {
     const found = await findDrafts(session, each);
-    if (!found.ok) return lookup(null, `按归属标记查暂存单没有成功：${found.reason}`);
+    // ERP's own words stay out: `failure` reaches the employee's page as the reason.
+    if (!found.ok) return lookup(null, '按归属标记查暂存单，报销系统没有给出结果。');
     drafts.push(...found.drafts.map((draft) => ({ mark: each, id: draft.id, billNo: draft.billNo, status: draft.status })));
   }
   const own = drafts[0];

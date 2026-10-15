@@ -33,7 +33,7 @@ const fillExecutor: FillExecutor = async (plan, channel) => {
 const reconcileExecutor: ReconcileExecutor = async (plan, channel) => {
   reconcilePlans.push(plan);
   if (!lookupFails) return runReconcileJob(plan, { browser: fake!.browser, channel, pace: FAST_PACE, probeWaitMs: 0 });
-  await channel.emit({ type: 'draft_lookup', drafts: [], problems: null, failure: '按归属标记查暂存单没有成功：服务器忙' });
+  await channel.emit({ type: 'draft_lookup', drafts: [], problems: null, failure: '按归属标记查暂存单，报销系统没有给出结果。' });
   const event: ResultEvent = { type: 'result', status: 'read', code: null, message: null, billNo: null, capture: null };
   await channel.emit(event);
   return event;
@@ -89,7 +89,7 @@ describe('对账 by the ownership marker after 暂存', () => {
 
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知', action: '转人工', allowedActions: ['hand_off'] } });
     expect(judged.reconcile.banner).toContain('没有找到暂存单');
-    expect(judged.reconcile.banner).not.toMatch(/ERP|重试|[–—]/);
+    expect(judged.reconcile.banner).not.toMatch(/ERP|重试|[\u2013\u2014]/);
   });
 
   it('hands off when the draft is not what the fill verified', async () => {
@@ -110,5 +110,6 @@ describe('对账 by the ownership marker after 暂存', () => {
 
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知', allowedActions: ['wait', 'hand_off'] } });
     expect(judged.reconcile.banner).toContain('再对账一次');
+    expect(judged.reconcile.reasons.join('')).not.toMatch(/ERP|重试|[\u2013\u2014]/);
   });
 });

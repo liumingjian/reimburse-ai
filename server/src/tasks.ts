@@ -124,7 +124,6 @@ export type ErpServiceOptions = {
   unattended?: (accountId: string) => Promise<boolean>;
 };
 
-// 自动重新去报销 (ADR-0034): at most this many in a row, then the task waits for the employee as before.
 // 对账 after 暂存 (line 2 item 5): look the draft up by the 暂存 job's marker, make sure none of the task's other jobs
 // left one, and compare it with what the strict hand-over read-back saw before 暂存, as the fill compared its own.
 async function draftLookupOf(tx: Db, taskId: string, fillJobId: string, mark: string, erp: Pick<ErpRecord, 'events' | 'preview'>): Promise<ReconcilePlan['draft']> {
@@ -136,6 +135,7 @@ async function draftLookupOf(tx: Db, taskId: string, fillJobId: string, mark: st
   return { mark, earlier: others.map((row) => draftMarkOf(row.job_id)), expected };
 }
 
+// 自动重新去报销 (ADR-0034): at most this many in a row, then the task waits for the employee as before.
 export const AUTO_RERUN_LIMIT = 2;
 // Results the server, not the executor, gave the job: the run may still hold the page, so nothing starts over on it.
 const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE, EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE]);

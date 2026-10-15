@@ -24,7 +24,11 @@ describe('judging a 对账 by the ownership marker', () => {
     ['one that differs', judge([draft()], ['事由与写入的不一致']), 'mismatch', '不自洽', '转人工'],
   ])('%s', (_name, judged, outcome, bucket, action) => {
     expect(judged).toMatchObject({ draft: { outcome }, verdict: { bucket, action } });
-    expect(judged!.verdict.reasons.join('')).not.toMatch(/ERP|重试|[–—]/);
+    expect(judged!.verdict.reasons.join('')).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+
+  it('says where the drafts were found, not "more than one", when the only draft is an earlier job\'s', () => {
+    expect(judge([draft({ mark: EARLIER })], null)!.verdict.reasons).toEqual(['这次暂存的标记下找到 0 张暂存单，此前任务的标记下找到 1 张（内码 119946），应当只有这次暂存的一张。']);
   });
 
   it('keeps the draft\'s 内码 and its 单据编号, and is null when the run sent no lookup', () => {
