@@ -115,7 +115,7 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
 
   test('餐饮发票列为招待费，并且缺少餐饮小票只能排除', async () => {
     const { adapter, snapshot } = await inventoryOf(['餐饮_发票.pdf']);
-    expect(snapshot.lines).toEqual([expect.objectContaining({ category: { code: 'hospitality', label: '招待费' }, expenseItemCode: 'FY009001', expenseItemName: '招待费' })]);
+    expect(snapshot.lines).toEqual([expect.objectContaining({ category: { code: 'hospitality', label: '招待费' }, expenseItemCode: 'FY009001', expenseItemName: '招待' })]);
     const item = snapshot.pendingItems[0];
     expect(item).toMatchObject({ itemId: `dining_receipt_missing.${snapshot.materials[0]?.materialId}`, choices: [{ key: 'exclude', label: '排除这份材料' }] });
     if (!item) throw new Error('missing dining receipt item');

@@ -874,7 +874,7 @@ export function duplicateBlockers(materials: Material[], hit: BlockerTask): Bloc
 
 // 虚构的费用项目编码与名称（内核 FY0xxxxx / 名称的写法），按费用分类给出。
 const EXPENSE_ITEMS: Readonly<Record<string, { code: string; name: string }>> = {
-  hospitality: { code: 'FY009001', name: '招待费' },
+  hospitality: { code: 'FY009001', name: '招待' },
   local_city_transport: { code: 'FY010101', name: '市内交通费' },
   remote_city_transport: { code: 'FY020103', name: '外地市内交通费' },
   long_distance: { code: 'FY020101', name: '长途交通费' },
