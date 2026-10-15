@@ -40,14 +40,14 @@ Node、隔离 GCC、构建 Python、pnpm、Caddy、`baox` 服务账号、受控�
 
 目标主机先取得共享的 `/opt/tools/baox/maintenance/deployment.lock`，再写入 `/opt/tools/baox/maintenance/deployment-journal.json`。锁所有者包含随机代次、进程号和进程起始身份；失联的旧进程不能删除新所有者的锁。准备过程在 `/opt/tools/baox/candidates/<提交前缀>-<归档前缀>/` 解包、构建并校验输出。SSH 中断后，后续同一候选会读取 journal：已经完整校验的归档可以继续构建；构建开始后中断则保留候选并返回恢复要求，不会自动重复不确定的构建。
 
-成功的清单记录提交 SHA、归档 SHA、目标重新校验的 SHA、运行时版本、构建环境文件的 SHA 与键名，以及当前发布、Node 运行时引用和 Caddy/systemd 配置的恢复副本与哈希。环境变量值、令牌和其他机密不会写进清单、归档、日志或 journal。准备不会改动 `current`、共享运行时引用、服务、反向代理或数据目录，也不开放访问或切换版本。
+成功的清单记录提交 SHA、归档 SHA、目标重新校验的 SHA、运行时版本、构建环境文件的 SHA 与键名，以及当前发布、Node 运行时引用和 Caddy/systemd 配置的恢复副本与哈希。环境变量值、令牌和其他机密不会写进清单、归档、日志或 journal。准备不会改动 `current`、共享运行时引用、服务、反向代理或数据目录，也不开放访问或切换版本。候选目录之外，它只写下面 `host` 阶段说的两样主机文件。
 
 `host` 阶段只在候选的 `deploy/intranet/baox.service` 写明这些文件时执行，路径必须在 `/opt/tools/baox` 之下，否则准备以 `host-path-outside-deploy-root` 停止：
 
-- `BAOX_ERP_CREDENTIAL_KEY_FILE`：托管 ERP 凭据的加密密钥（ADR-0033）。缺失时生成 32 字节随机数（十六进制），设为 `root:baox 0640`；已经存在就绝不替换，丢了它所有已保存的 ERP 凭据都失效。现有文件不是合法密钥时，准备以 `erp-credential-key-invalid` 停止，文件保持原样。
-- `BAOX_LOCAL_EXECUTOR_RUNTIMES`：本地执行器 zip 里带的 Node 运行时（ADR-0035）。以服务账号身份运行候选里的 `local-executor/scripts/fetch-runtimes.mjs`，经 `build.env` 的镜像和代理下载 Windows 与两种 Mac 的运行时，按 SHASUMS256.txt 核对；同一 Node 版本只下载一次。失败时准备以 `local-executor-runtime-fetch-failed` 停止。
+- `BAOX_ERP_CREDENTIAL_KEY_FILE`：托管 ERP 凭据的加密密钥（ADR-0033）。缺失时生成 32 字节随机数（十六进制），设为 `root:baox 0640`；已经存在就绝不改写内容（丢了它所有已保存的 ERP 凭据都失效），只把属主和权限设回 `root:baox 0640`。新密钥先落盘再取名，断电不会留下空密钥。现有文件不是合法密钥时，准备以 `erp-credential-key-invalid` 停止，内容保持原样。
+- `BAOX_LOCAL_EXECUTOR_RUNTIMES`：本地执行器 zip 里带的 Node 运行时（ADR-0035）。以服务账号身份运行候选里的 `local-executor/scripts/fetch-runtimes.mjs`，经 `build.env` 的镜像和代理下载 Windows 与两种 Mac 的运行时，按 SHASUMS256.txt 核对；同一 Node 版本只下载一次，已经下载过时不联网；所以镜像不可用只会挡住改了 `.nvmrc` 的部署。失败时准备以 `local-executor-runtime-fetch-failed` 停止。
 
-这两样都放在任何发布之外，切换和回滚都保留它们。候选含 `local-executor` 时，构建输出检查还要求 `local-executor/dist/baox-local-executor.mjs`。
+这个目录第一次下载后归服务账号所有，所以 root 只对真实目录改属主，不跟随符号链接；密钥所在目录和运行时目录是符号链接时，准备以 `host-path-not-plain` 停止。这两样都放在任何发布之外，切换和回滚都保留它们，丢弃候选也不会删除它们。候选含 `local-executor` 时，构建输出检查还要求 `local-executor/dist/baox-local-executor.mjs`。
 
 `deploy [Git 引用]` 默认使用 `origin/main` 的已提交归档，先执行同一归档的候选准备，再在一个共享锁和维护窗口中创建新的、已演练的恢复快照并切换候选。`deploy --candidate <候选标识>` 只切换已准备的候选。两种形式都会先检查运行时和开放的维护闸门；只有与同一候选匹配的中断 journal 才能绕过这项新发布预检，以便在服务停止、闸门关闭时进行受限恢复。
 

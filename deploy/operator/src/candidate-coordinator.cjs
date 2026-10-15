@@ -3092,15 +3092,25 @@ async function prepareHost(request, paths, env, lease) {
       await requireLease(paths, lease);
       // Fetched once per Node version through the build's mirror and proxy (build.env), each checked against the
       // release's SHASUMS256.txt; the script skips a version already there.
-      await fs.mkdir(runtimes, { recursive: true, mode: 0o755 });
-      await runLogged('chown', ['baox:baox', runtimes], paths.candidate, {}, paths.log);
+      // The directory is baox's after the first fetch, so a later deploy must not follow whatever baox left there:
+      // root chowns only a plain directory, never through a link.
+      await ensurePlainDirectory(path.dirname(runtimes));
+      await ensurePlainDirectory(runtimes);
+      await runLogged('chown', ['-h', 'baox:baox', runtimes], paths.candidate, {}, paths.log);
       try {
         await runAsBaox(node, [fetcher, runtimes], paths.source, env, paths.log);
       } catch {
         throw new CandidateFailure('local-executor-runtime-fetch-failed');
       }
+      await requireLease(paths, lease);
     }
   });
+}
+
+/** Create `directory` (and its parents) if missing; whatever is there must be a directory, not a link to one. */
+async function ensurePlainDirectory(directory) {
+  await fs.mkdir(directory, { recursive: true, mode: 0o755 });
+  if (!(await fs.lstat(directory)).isDirectory()) throw new CandidateFailure('host-path-not-plain');
 }
 
 /** A host file the unit names: absolute and under the deploy root, or no file at all. */
@@ -3116,14 +3126,21 @@ const ERP_KEY_CHECK = 'const v = require("node:fs").readFileSync(process.argv[1]
 /**
  * The ERP 凭据 key (ADR-0033, server/src/erp/credential-vault.ts): 32 random bytes as hex, root:baox 0640, created
  * when missing and never replaced. Losing it loses every saved ERP 凭据, so an existing file, even a broken one, is
- * left alone and stops the deploy instead.
+ * never rewritten and a broken one stops the deploy instead; only its owner and mode are set back to root:baox 0640.
  */
 async function ensureErpCredentialKey(paths, lease, node, keyFile) {
   await requireLease(paths, lease);
-  await fs.mkdir(path.dirname(keyFile), { recursive: true, mode: 0o755 });
+  await ensurePlainDirectory(path.dirname(keyFile));
   if (!await pathExists(keyFile)) {
     const temporary = keyFile + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
-    await fs.writeFile(temporary, randomBytes(32).toString('hex') + '\n', { mode: 0o600, flag: 'wx' });
+    const handle = await fs.open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(randomBytes(32).toString('hex') + '\n');
+      // On disk before it gets its name: a power cut must not leave an empty key that every later deploy refuses.
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     try {
       // A link, not a rename: it fails rather than replace a key that appeared meanwhile.
       await fs.link(temporary, keyFile);
@@ -3135,7 +3152,7 @@ async function ensureErpCredentialKey(paths, lease, node, keyFile) {
     await fsyncDirectory(path.dirname(keyFile));
   }
   if (!(await fs.lstat(keyFile)).isFile()) throw new CandidateFailure('erp-credential-key-invalid');
-  await runLogged('chown', ['root:baox', keyFile], paths.candidate, {}, paths.log);
+  await runLogged('chown', ['-h', 'root:baox', keyFile], paths.candidate, {}, paths.log);
   await fs.chmod(keyFile, 0o640);
   try {
     await runAsBaox(node, ['-e', ERP_KEY_CHECK, keyFile], paths.source, { PATH: '/usr/bin:/bin' }, paths.log);

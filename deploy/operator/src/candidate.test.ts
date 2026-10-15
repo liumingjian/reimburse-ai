@@ -8,6 +8,7 @@ import { SshCandidateTransport } from './candidate.js';
 import { runOperatorCli } from './cli.js';
 import { LINUX_MAX_ARG_STRLEN } from './coordinator-transport.js';
 import { SshHostTransport } from './host.js';
+import { NATIVE_PROFILE } from './profile.js';
 import { createSourceRepository } from './source.js';
 import { createIsolatedTarget, type IsolatedTarget } from './testing/isolated-target.js';
 
@@ -401,8 +402,8 @@ it('creates the ERP 凭据 key once, never replaces it, and fetches the 本地�
   expect(statSync(keyFile).mode & 0o777).toBe(0o640);
   expect(readFileSync(join(runtimes, 'VERSION'), 'utf8')).toBe(`${process.versions.node}\n`);
   const chowned = readFileSync(join(target.barrier, 'chown.log'), 'utf8');
-  expect(chowned).toContain(`root:baox ${keyFile}`);
-  expect(chowned).toContain(`baox:baox ${runtimes}`);
+  expect(chowned).toContain(`-h root:baox ${keyFile}`);
+  expect(chowned).toContain(`-h baox:baox ${runtimes}`);
   expect(readFileSync(join(prepared.source, 'local-executor', 'dist', 'baox-local-executor.mjs'), 'utf8')).toBe('program');
 
   writeFileSync(join(source.repository, 'version.txt'), 'third\n');
@@ -439,6 +440,34 @@ it('refuses a unit that names a host file outside the deploy root', async () => 
   expect(prepared.code).not.toBe(0);
   expect(prepared.out + prepared.err).toContain('host-path-outside-deploy-root');
 }, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('never chowns through a link the service account left where the runtimes go', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const { runtimes } = writeHostNeeds(source.repository, target.profile.deployRoot);
+  const commit = commitAll(source.repository, 'line 2 host needs');
+  const elsewhere = mkdtempSync(join(tmpdir(), 'baox-elsewhere-'));
+  cleanup.push(() => rmSync(elsewhere, { recursive: true, force: true }));
+  mkdirSync(join(runtimes, '..'), { recursive: true });
+  symlinkSync(elsewhere, runtimes);
+
+  const prepared = await cli(source.repository, target, 'prepare', commit, '--json');
+  expect(prepared.code).not.toBe(0);
+  expect(prepared.out + prepared.err).toContain('host-path-not-plain');
+  const chowned = existsSync(join(target.barrier, 'chown.log')) ? readFileSync(join(target.barrier, 'chown.log'), 'utf8') : '';
+  expect(chowned).not.toContain(runtimes);
+  expect(readdirSync(elsewhere)).toEqual([]);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('ships a unit whose host files sit under the production deploy root', () => {
+  const unit = readFileSync(new URL('../../intranet/baox.service', import.meta.url), 'utf8');
+  for (const name of ['BAOX_ERP_CREDENTIAL_KEY_FILE', 'BAOX_LOCAL_EXECUTOR_RUNTIMES']) {
+    const value = new RegExp(`^Environment=${name}=(.+)$`, 'mu').exec(unit)?.[1];
+    expect(value, name).toBeDefined();
+    expect(value!.startsWith(`${NATIVE_PROFILE.deployRoot}/`), name).toBe(true);
+    expect(value, name).not.toContain('..');
+  }
+});
 
 function writeWorkspaceSource(repository: string): void {
   writeCandidateSource(repository, 'workspace');
