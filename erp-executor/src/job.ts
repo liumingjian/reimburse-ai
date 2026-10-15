@@ -10,7 +10,7 @@
 // them as `readback` and acts on the server's verdict.
 
 import {
-  FillPlanSchema, markedPurpose, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
+  FillPlanSchema, filledRows, markedPurpose, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
   type ExecutorChannel, type Mutation, type Preconditions, type ReadbackStage, type ResultEvent, type ResultStatus, type FreshGate,
 } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
@@ -30,11 +30,6 @@ import {
 import type { InvoiceStaging, StagedInvoices } from './invoice-files';
 import { stageInvoices } from './staging';
 import { prepareErpWrite } from './write-context';
-
-/** A grid's filled data rows, as the 暂存 read-back compares them with ERP's model. */
-const filledRows = (grid: CurrentReadings['receiptsGrid']) => (grid?.ok === true && Array.isArray(grid.rows) ? grid.rows : [])
-  .filter((row) => row.kind === 'data').map((row) => ({ values: row.values ?? {} }))
-  .filter((row) => Object.values(row.values).some((v) => String(v ?? '').trim() !== ''));
 
 /** How the executor reaches Chromium. v1: the dedicated profile over CDP; tests: the fake ERP. */
 export type BrowserPort = {

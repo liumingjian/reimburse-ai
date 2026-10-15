@@ -112,7 +112,7 @@ describe('自动重新去报销', () => {
     const { snapshot, jobs } = await after(scene, 2, 500);
 
     expect(jobs.map((job) => job.trigger)).toEqual(['start']);
-    expect(snapshot).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['hand_off'] } });
+    expect(snapshot).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['wait', 'hand_off'] } });
   });
 
   it('never starts over on the 浏览器扩展: the employee\'s own tab is theirs', async () => {

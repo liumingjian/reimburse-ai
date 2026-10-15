@@ -51,9 +51,9 @@ import { buildFillJob, type FrozenJob } from './erp/fill-plan';
 import { JOB_DEADLINE_CODE, newJobId, NO_RESULT_CODE, type FillRun, type FillTrigger } from './erp/fill-jobs';
 import { draftMarkOf, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
-import { INVOICE_NO, PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
+import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
-import { loadErp } from './erp/fill-state';
+import { loadErp, type ErpRecord } from './erp/fill-state';
 import { printFileShas } from './print/facts';
 import * as printActions from './print/service';
 import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
@@ -123,6 +123,17 @@ export type ErpServiceOptions = {
   // (ADR-0034): the 浏览器扩展 drives the employee's own tab, and the employee's own 重新去报销 stays theirs there.
   unattended?: (accountId: string) => Promise<boolean>;
 };
+
+// 对账 after 暂存 (line 2 item 5): look the draft up by the 暂存 job's marker, make sure none of the task's other jobs
+// left one, and compare it with what the strict hand-over read-back saw before 暂存, as the fill compared its own.
+async function draftLookupOf(tx: Db, taskId: string, fillJobId: string, mark: string, erp: Pick<ErpRecord, 'events' | 'preview'>): Promise<ReconcilePlan['draft']> {
+  const others = await tx.selectFrom('erp_job').select('job_id').where('task_id', '=', taskId).where('kind', '=', 'fill').where('job_id', '!=', fillJobId).orderBy('revision').execute();
+  const verified = [...erp.events].reverse().find((event): event is ReadbackEvent => event.type === 'readback' && event.stage === 'before_hand_over');
+  const expected = verified && erp.preview
+    ? { causa: markedPurpose(erp.preview.purpose, mark), receipts: filledRows(verified.readings.receiptsGrid), details: filledRows(verified.readings.detailGrid) }
+    : null;
+  return { mark, earlier: others.map((row) => draftMarkOf(row.job_id)), expected };
+}
 
 // 自动重新去报销 (ADR-0034): at most this many in a row, then the task waits for the employee as before.
 export const AUTO_RERUN_LIMIT = 2;
@@ -724,7 +735,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
               maintenance.release();
               return ERP_IN_USE;
             }
-            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erpService.config.origin }, maintenance };
+            const draft = loaded.erp.draftMark === null ? undefined : await draftLookupOf(tx, taskId, fill.job_id, loaded.erp.draftMark, loaded.erp);
+            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erpService.config.origin, ...(draft ? { draft } : {}) }, maintenance };
             await tx.insertInto('erp_reconcile_job').values({ job_id: jobId, fill_job_id: fill.job_id, task_id: taskId, account_id: accountId, revision, started_at: at }).execute();
           },
         );

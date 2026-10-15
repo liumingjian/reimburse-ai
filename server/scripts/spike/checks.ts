@@ -8,7 +8,7 @@ import { connect as tcpConnect } from 'node:net';
 import type { Interface } from 'node:readline/promises';
 import { evalIn, type CdpSession } from '@baox/erp-executor/cdp';
 import { EXPENSE_ITEM_FORM, isSafeKey, queryRows } from '@baox/erp-executor/catalog';
-import { compareDraft, findDrafts, pressDraft as pressDraftGateway, viewDraft, waitDrafted } from '@baox/erp-executor/draft';
+import { compareDraft, findDrafts, lookupDraft, pressDraft as pressDraftGateway, viewDraft, waitDrafted } from '@baox/erp-executor/draft';
 import { writeHeader, type Grid } from '@baox/erp-executor/erpform';
 import { readPane } from '@baox/erp-executor/invoice-grid';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
@@ -591,6 +591,18 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
     };
     console.log(`[spike] S11 执行器占用检查（${OCCUPANCY_CANDIDATE}）：占着的票 ${heldOk ? '判为被占用' : '没有判为被占用'}；没人占的号码 ${free.ok ? '判为空闲' : '没有判为空闲'}`);
   }
+  // 对账 by the marker (line 2 item 5), as shipped (draft.ts lookupDraft): it must find this draft alone and read it back
+  // equal; a mark nobody wrote must find nothing.
+  const own = await lookupDraft(main.session, { mark, earlier: [`baox-${randomBytes(5).toString('hex')}`], expected });
+  const stranger = await lookupDraft(main.session, { mark: `baox-${randomBytes(5).toString('hex')}`, earlier: [], expected: null });
+  const ownOk = own.failure === null && own.drafts.length === 1 && own.drafts[0]!.id === draft.id && own.problems?.length === 0;
+  const strangerOk = stranger.failure === null && stranger.drafts.length === 0;
+  obs['shippedLookup'] = {
+    own: { drafts: own.drafts.length, problems: own.problems, failure: own.failure },
+    stranger: { drafts: stranger.drafts.length, failure: stranger.failure },
+    verdict: ownOk && strangerOk ? 'PASS' : 'FAIL',
+  };
+  console.log(`[spike] S11 执行器按标记对账：这次的标记 ${ownOk ? '找到唯一一张且一致' : '没有找到唯一一张一致的'}；没人写过的标记 ${strangerOk ? '什么也没找到' : '找到了东西或查询失败'}`);
   // Cleanup: only this run's own draft, and only while it is still a 暂存 draft with no 单据编号.
   let cleaned = '没有删除';
   if (draft.status === 'Z' && !draft.billNo) {
@@ -601,7 +613,8 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
   obs['cleanup'] = cleaned;
   console.log(`[spike] S11 测试草稿 ${draft.id}：${cleaned}`);
   if (problems.length) return { status: 'FAIL', reason: `暂存成功并按标记找到（内码 ${draft.id}，${cleaned}），但 View 与页面不一致：${problems.join('；')}` };
-  return { status: 'PASS', reason: `${secs(Number(obs['draftedMs']))} 变成修改；按归属标记找到唯一一张暂存单，View 与页面一致（收票 ${expected.receipts.length} 行、明细 ${expected.details.length} 行）；测试草稿${cleaned}` };
+  if (!ownOk || !strangerOk) return { status: 'FAIL', reason: `暂存并核对通过（内码 ${draft.id}，${cleaned}），但执行器按标记对账没有得出该有的结果：${JSON.stringify(obs['shippedLookup'])}` };
+  return { status: 'PASS', reason: `${secs(Number(obs['draftedMs']))} 变成修改；按归属标记找到唯一一张暂存单，View 与页面一致（收票 ${expected.receipts.length} 行、明细 ${expected.details.length} 行）；执行器按标记对账找到它且一致；测试草稿${cleaned}` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
