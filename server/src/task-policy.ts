@@ -66,7 +66,8 @@ export type TaskFacts = {
 // `saved`: a 对账 (reconcile) proved the employee's own save, or a legacy import recorded one — also terminal.
 // `unknown`: ERP 写入结果未知 after an attempt, reconcile. `aborted` / `catalog_mismatch` / `cancelled`: nothing
 // was written.
-export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'handed_over' | 'saved' | 'unknown';
+// `drafted` is ERP 草稿已交接 (ADR-0029): the 本地执行器 暂存'd the bill and found it again; terminal, like `handed_over`.
+export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'handed_over' | 'drafted' | 'saved' | 'unknown';
 
 export type ErpFacts = {
   jobId: string;
@@ -78,6 +79,9 @@ export type ErpFacts = {
   reassign: boolean;
   // A read-only 对账 (reconcile) job runs on this fill (#192): like a running job, only its own writes pass.
   reconciling: boolean;
+  // The job pressed 暂存 (a `save` attempt with an ownership marker is on record, ADR-0029): a bill may have landed with no 单据编号, so
+  // 重新去报销 could make a second one. Only 转人工 is offered until 对账 can find the draft by its marker.
+  drafting?: boolean;
 };
 
 export const ACTION_COPY = {
@@ -253,6 +257,7 @@ export function erpActionsOf(phase: ErpPhase | null | undefined): Erp['allowedAc
     case 'aborted':
     case 'unknown':
     case 'handed_over':
+    case 'drafted':
     case 'saved':
       return ['refresh'];
     default:
@@ -280,6 +285,7 @@ export function erpActionsOf(phase: ErpPhase | null | undefined): Erp['allowedAc
 // 再对一次账 stays on offer: the employee may open the bill again and read it properly.
 export function reconcileActionsOf(phase: ErpFacts | null | undefined, erp: ErpVerdict): Reconcile['allowedActions'] {
   if (phase?.phase !== 'unknown' || phase.reconciling) return [];
+  if (phase.drafting) return ['hand_off'];
   const { judged, draftNo, noForm } = reconcileReading(erp);
   if (!judged) return ['wait', 'hand_off'];
   if ((judged.verdict.bucket === '未保存·已导入未写明细' || noForm) && draftNo === null) return noForm ? ['refill', 'wait', 'hand_off'] : ['refill', 'hand_off'];
@@ -319,7 +325,7 @@ function admit(facts: TaskFacts, erp: ErpVerdict | null, step: Step['kind'], act
     if (jobInFlight(facts, loginPause)) return 'stale';
     if (!printOnly && !voids) {
       const phase = facts.erp?.phase;
-      if (phase === 'handed_over' || phase === 'saved') return TASK_CLOSED;
+      if (phase === 'handed_over' || phase === 'drafted' || phase === 'saved') return TASK_CLOSED;
       if (phase === 'unknown' && !erpAction) return ERP_STARTED;
       // ADR-0014: a task's materials freeze at its first ERP action attempt. The phase checks above catch the shapes
       // that freeze normally takes, but the rule is about the attempt existing at all, so it is stated once here
@@ -351,6 +357,7 @@ function project(facts: TaskFacts): Projection {
   // login pause is the erp stage. Everything else about the job leaves the task where its other facts put it.
   switch (facts.erp?.phase) {
     case 'handed_over':
+    case 'drafted':
     case 'saved':
       return at('done', 'none');
     case 'unknown':
@@ -385,5 +392,5 @@ function project(facts: TaskFacts): Projection {
 // At most one non-terminal task per account (ADR-0018). Terminal: voided, handed off (转人工, a lifecycle), and the
 // derived ERP 单据已交接 (a saved fill job). A write result unknown is not terminal: reconcile still owns it.
 export function isNonTerminal(lifecycle: TaskLifecycle, erpPhase: ErpPhase | null = null): boolean {
-  return lifecycle === 'open' && erpPhase !== 'handed_over' && erpPhase !== 'saved';
+  return lifecycle === 'open' && erpPhase !== 'handed_over' && erpPhase !== 'drafted' && erpPhase !== 'saved';
 }

@@ -4,7 +4,8 @@ import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { uncertainSave } from './erp/testing/fake-executor';
+import { drafted, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
+import { draftMarkOf } from './erp/remote-executor';
 import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
@@ -138,6 +139,32 @@ describe('去报销 through a baox 本地执行器', () => {
     await scene.run('start-erp-write');
 
     expect(extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!.payload).not.toHaveProperty('credentials');
+    expect(extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!.payload).not.toHaveProperty(['plan', 'draft']);
+  });
+
+  // ADR-0029: the 本地执行器 runs unattended, so it 暂存s the bill under the job's ownership marker.
+  it('asks the 本地执行器 to 暂存 under the job\'s marker, and ends at ERP 草稿已交接', async () => {
+    const extension = await executor({ ok: true }, drafted);
+    await save();
+    const scene = await sceneOnFakeErp();
+
+    const done = await scene.run('start-erp-write');
+
+    const fill = extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!;
+    const jobId = (fill.payload as { plan: { jobId: string } }).plan.jobId;
+    expect(fill.payload).toMatchObject({ plan: { draft: { mark: draftMarkOf(jobId) } } });
+    expect(draftMarkOf(jobId)).toMatch(/^baox-[a-z0-9]{10}$/);
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', draftNo: null } });
+  });
+
+  it('offers only 转人工 when 暂存 was pressed and its result is unknown: 重新去报销 could make a second draft', async () => {
+    await executor({ ok: true }, uncertainDraft);
+    await save();
+    const scene = await sceneOnFakeErp();
+
+    const stopped = await scene.run('start-erp-write');
+
+    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['hand_off'] } });
   });
 
   it('refuses before any job exists without authorised 凭据, and points at the settings page', async () => {

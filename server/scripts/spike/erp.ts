@@ -445,6 +445,18 @@ export async function viewBill(session: CdpSession, billNo: string, { byId = fal
   return { httpStatus: view.httpStatus, ms: view.ms, status: responseStatus(view.parsed), data: data && typeof data === 'object' ? data as Record<string, unknown> : null };
 }
 
+/**
+ * Delete ONE 暂存 test draft by its 内码, the only write the spike makes outside S5's 暂存. It is not reachable through
+ * `call` (read-only by construction): the caller (S10) has already proved, by query, that the 内码 is a 暂存 draft with
+ * no 单据编号 created since a given time, and the owner named that 内码 on the command line.
+ */
+export async function deleteDraft(session: CdpSession, fid: string): Promise<Call> {
+  if (!/^\d+$/.test(fid)) throw new Error(`内码只能是数字：${fid}`);
+  const params = [FORM, JSON.stringify({ CreateOrgId: 0, Numbers: [], Ids: fid, NetworkCtrl: '' })];
+  try { return await evalIn<Call>(session, callSnippet(stub('DynamicFormService.Delete'), params), { timeout: 120_000 }); }
+  catch (error) { return { httpStatus: null, ms: null, parsed: null, raw: error instanceof Error ? error.message : String(error) }; }
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Sign-out
 

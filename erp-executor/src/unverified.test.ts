@@ -21,7 +21,9 @@ const WHY_NO_RECORDING = {
   fake: "it is the fake's own mechanics, not a page shape",
 } as const;
 
-const UNVERIFIED_CEILING = 48;
+// Raised 48 → 51 for 暂存 (ADR-0029): the 保存 split button's group, what 暂存 does to the form, and View / the query by
+// 事由. Each was measured once live (S5, S9, 2026-10-12); recording them means leaving a draft per recording run.
+const UNVERIFIED_CEILING = 51;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

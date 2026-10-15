@@ -275,13 +275,15 @@ export type FillResult =
  * identities, no unlocated detail row. A missing addRow adapter is a visible blocker, never a guessed click.
  */
 export async function fillApprovedPreview<P>(page: P, {
-  approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {},
+  approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {}, causa = null,
   witnessReads = 8, witnessDelayMs = 900, settleReads = 12, settleDelayMs = 250,
 }: {
   approvedPreview: ApprovedPreview; approval: Approval | null | undefined; freshGate: FreshGate | null | undefined;
   readCurrent: (expected: ApprovedPreview | null) => Promise<CurrentReadings>;
   addRow?: ((page: P, detail: { line: ApprovedPreview['lines'][number]; current: CurrentReadings }) => Promise<ActionResult>) | null;
   writeDeps?: unknown; ops?: FormOps<P>;
+  /** 事由 as written, when it is not the approved purpose verbatim: the 暂存 path appends baox's ownership marker. */
+  causa?: string | null;
   /** How many times the computed column is re-read while ERP is still recalculating, and how long between reads. */
   witnessReads?: number; witnessDelayMs?: number;
   /** The same two knobs for the gate BETWEEN the two money writes of one row; ERP was measured settling in ~260ms. */
@@ -305,7 +307,7 @@ export async function fillApprovedPreview<P>(page: P, {
   if (!writeHeader || !writeCell || !selectOption || !leaveEdit) {
     return fail('preflight', [adapterMissing(['writeHeader', 'writeCell', 'selectOption', 'leaveEdit'].filter((name) => !ops[name as keyof FormOps<P>]).join('、'))], { readings });
   }
-  const header = await writeHeader(page, 'FCAUSA', approvedPreview.purpose, {}, writeDeps);
+  const header = await writeHeader(page, 'FCAUSA', causa ?? approvedPreview.purpose, {}, writeDeps);
   if (!header || !header.ok) return fail('fill', [{ code: 'header_write_failed', message: (header && header.reason) || '事由回读失败' }], { readings });
 
   const rowByMaterial = new Map(detail.rowByMaterial);

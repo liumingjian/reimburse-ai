@@ -84,6 +84,8 @@ export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhas
       return 'catalog_mismatch';
     case 'handed_over':
       return 'handed_over';
+    case 'drafted':
+      return 'drafted';
     case 'saved':
       return 'saved';
     case 'unknown':
@@ -92,6 +94,13 @@ export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhas
       // `aborted`, and `read` which a fill job never sends: nothing was written.
       return 'aborted';
   }
+}
+
+/** The ownership marker of a 暂存 attempt (ADR-0029), or null: a 保存 attempt from before ADR-0028 carries none. */
+export function attemptDraftMark(attempt: { action: string; expected_postconditions: string } | undefined): string | null {
+  if (attempt?.action !== 'save') return null;
+  const mark = (JSON.parse(attempt.expected_postconditions) as { draftMark?: unknown }).draftMark;
+  return typeof mark === 'string' ? mark : null;
 }
 
 export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
@@ -112,7 +121,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   if (phase === 'aborted' && attempt !== undefined) phase = 'unknown';
   const approved = await tx.selectFrom('erp_approved_preview').select('preview').where('job_id', '=', job.job_id).executeTakeFirst();
   const preview = approved ? (JSON.parse(approved.preview) as ApprovedPreview) : null;
-  const lastAttempt = await tx.selectFrom('erp_attempt').select('preconditions').where('job_id', '=', job.job_id).orderBy(sql`rowid`, 'desc').executeTakeFirst();
+  const lastAttempt = await tx.selectFrom('erp_attempt').select(['preconditions', 'action', 'expected_postconditions']).where('job_id', '=', job.job_id).orderBy(sql`rowid`, 'desc').executeTakeFirst();
   const attemptPre = lastAttempt ? (JSON.parse(lastAttempt.preconditions) as Preconditions) : null;
   // The newest reconcile run decides running / its notice; the newest run that read the form decides the bucket.
   let reconcile: ReconcileState | null = null;
@@ -146,7 +155,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   }
   const reconciling = phase === 'unknown' && reconcile !== null && reconcile.result === null;
   return {
-    facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign, reconciling },
+    facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign, reconciling, drafting: attemptDraftMark(lastAttempt) !== null },
     attempted: attempt !== undefined,
     job,
     frozen: JSON.parse(job.plan) as FrozenJob,

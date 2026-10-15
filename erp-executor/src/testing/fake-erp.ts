@@ -215,6 +215,12 @@ export type FakeErpOptions = {
    */
   newFormDeadClicks?: number;
   openListDeadClicks?: number;
+  /** 暂存 is pressed and nothing lands: the tab stays 新增. */
+  draftCommandDead?: boolean;
+  /** Another 暂存 draft already carries this 事由, mark and all, so a search by the mark finds two. */
+  draftMarkTaken?: boolean;
+  /** What ERP stores as 事由 when it is not what was typed (a cut, say), to prove the read-back of the model. */
+  draftStoresCausa?: string;
   /**
    * Raise ERP's own idle-timeout prompt (金蝶提示「系统闲置时间过长」) before the run starts, covering the element
    * this selector names — the state an unattended run inherits when the session was left sitting. Measured live
@@ -318,7 +324,7 @@ export type FakeErpOptions = {
    */
   optionItemCoverTicks?: number;
 };
-export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
+export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save' | 'draft'; detail: string };
 
 const SLOT = 10;
 const COLS = 100;
@@ -645,8 +651,10 @@ export async function createFakeErp(options: FakeErpOptions) {
     // from a browser context with no history, so it cannot show this.
     // @unverified: k3cloudloginInfo survives logout onto the login page [unseen]
     doc.window.localStorage.setItem('k3cloudloginInfo', JSON.stringify({ user: account.account, acc: account.tenant }));
-    doc.window.fetch = async (_input: string, init: { body: string }) => {
-      const body = answerBillQuery(init.body, options);
+    doc.window.fetch = async (input: string, init: { body: string }) => {
+      const payload = String(input).includes('ExecuteBillQuery') ? JSON.parse(JSON.parse(init.body).parameters[0]) : null;
+      const body = String(input).includes('DynamicFormService.View') ? answerView(init.body)
+        : payload?.FormId === formId ? answerDraftQuery(payload) : answerBillQuery(init.body, options);
       return { status: 200, text: async () => JSON.stringify(body) };
     };
     await doc.ready();
@@ -1060,6 +1068,41 @@ const kendoDate = (raw: string) => {
     mutate('save', billNo);
   }
 
+  // 暂存 drafts this ERP holds: what WebAPI View returns by 内码, and what ExecuteBillQuery finds by 事由.
+  // @unverified: 暂存 turns the tab to 费用报销单-修改, leaves 单据编号 empty and lands a draft with status Z (S5 live) [unseen]
+  // @unverified: View by 内码 answers Result.Result with DocumentStatus, BillNo, FCausa and the RecInvInfo / ER_ExpenseReimbEntry rows; a query by FCausa finds the draft [unseen]
+  const drafts: Array<{ id: string; causa: string; receipts: string[][]; details: string[][] }> = [];
+  let nextDraftId = 119946;
+  // A model row as the page shows it, its cells as plain values; a page date (2026/9/4) is stored the way the model
+  // holds dates (2026-09-04T00:00:00).
+  const gridModel = (grid: string) => [...main.document.querySelectorAll(`.kd-grid-panel[data-grid="${grid}"] tbody tr:not(.k-footer-template)`)]
+    .map((tr: any) => [...tr.querySelectorAll('td')].map((td: any) => String(td.textContent ?? '').trim())
+      .map((cell) => { const d = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(cell); return d ? `${d[1]}-${d[2]!.padStart(2, '0')}-${d[3]!.padStart(2, '0')}T00:00:00` : cell; }))
+    .filter((cells) => cells.some((cell) => cell !== '' && cell !== '普通发票'));
+  function saveDraft() {
+    commitEditor();
+    closeDropdown();
+    show(q('#save-group'), false);
+    if (options.draftCommandDead) return;
+    const typed = String(q(`[id$="-FCAUSA-EDITOR"]`).value).trim();
+    const id = String(nextDraftId++);
+    drafts.push({ id, causa: options.draftStoresCausa ?? typed, receipts: gridModel('receipts'), details: gridModel('detail') });
+    if (options.draftMarkTaken) drafts.push({ id: String(nextDraftId++), causa: typed, receipts: [], details: [] });
+    // Spaced, as live 2026-10-13 read it after 暂存.
+    q('.form-tab').textContent = '费用报销单 - 修改';
+    mutate('draft', id);
+  }
+  function answerDraftQuery(payload: { FilterString?: string }): unknown {
+    const like = /FCausa like '%([^%']*)%'/.exec(String(payload.FilterString ?? ''));
+    return drafts.filter((d) => like && d.causa.includes(like[1]!)).map((d) => [d.id, ' ', 'Z', d.causa]);
+  }
+  function answerView(requestBody: string): unknown {
+    const id = JSON.parse(JSON.parse(requestBody).parameters[1]).Id;
+    const draft = drafts.find((d) => d.id === String(id));
+    if (!draft) return { Result: { ResponseStatus: { IsSuccess: false, Errors: [{ Message: '单据不存在' }] }, Result: null } };
+    return { Result: { ResponseStatus: null, Result: { Id: Number(draft.id), BillNo: ' ', DocumentStatus: 'Z', FCausa: draft.causa, RecInvInfo: draft.receipts, ER_ExpenseReimbEntry: draft.details } } };
+  }
+
   let deadNewFormClicks = 0;
   let deadOpenListClicks = 0;
   async function clickMain(el: any) {
@@ -1128,6 +1171,7 @@ const kendoDate = (raw: string) => {
         return insertDetailRow();
       }
       case 'save': return save();
+      case 'save-temp': return saveDraft();
       case 'close-window': {
         const win = el.closest('.k-window');
         // A 处理结果 whose 退出 does nothing: the click lands, the window stays, and everything under it is
@@ -1397,6 +1441,10 @@ const kendoDate = (raw: string) => {
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':
+          // Kendo opens the 保存 split button's group on mouse-over of its arrow.
+          if (params.type === 'mouseMoved' && doc === main && !recorded) {
+            if (doc.elementAt(Number(params.x), Number(params.y))?.closest('[data-action="save-arrow"]')) show(q('#save-group'), true);
+          }
           if (params.type === 'mousePressed') {
             const el = doc.elementAt(Number(params.x), Number(params.y));
             if (el) { if (recorded) await replayClick(doc, el); else if (doc === main) await clickMain(el); else clickAssistant(el); }

@@ -22,8 +22,11 @@
 //   Nothing is re-sent in either direction: the plan is never asked for again, and the resumed extension is told how
 //   many of its events are on record so it sends none of them twice.
 // - ERP 凭据 (ADR-0033). A job bound for a baox 本地执行器 carries the account's authorised 凭据 next to the plan (never
-//   in it: the plan is stored). A login ERP refuses in that job deletes them (`hosted-sign-in.ts`).
+//   in it: the plan is stored). A login ERP refuses in that job deletes them (`hosted-sign-in.ts`). Its fill plan also
+//   carries `draft` (ADR-0029): the 本地执行器 ends unattended, so it 暂存s the bill under baox's ownership marker, which
+//   is derived from the job id and lands on record with the `save` attempt before 暂存 is pressed.
 
+import { createHash } from 'node:crypto';
 import type { Db } from '../db/database';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE, ExtensionChannelError, realTimer, type ChannelRequestHandler, type ExtensionChannel, type Schedule } from '../extension/channel';
 import type { FillExecutor } from './fill-jobs';
@@ -113,6 +116,17 @@ export type JobCredentials = {
   forJob(accountId: string): Promise<ErpCredentials | null>;
   refusedInJob(accountId: string, used: ErpCredentials, message: string): Promise<void>;
 };
+/** baox's ownership marker for a job (ADR-0029): one per job, the same on every send, unguessable as its job id is. */
+export const draftMarkOf = (jobId: string) => `baox-${createHash('sha256').update(`baox-draft:${jobId}`).digest('hex').slice(0, 10)}`;
+
+/** What goes to the executor: a job bound for a 本地执行器 (it is sent 凭据) also 暂存s its bill under the job's marker. */
+function payloadFor(method: string, payload: FillRequest | ReconcileRequest, credentials: ErpCredentials | null) {
+  if (!credentials) return payload;
+  if (method !== EXECUTOR_METHODS.fill) return { ...payload, credentials };
+  const fill = payload as FillRequest;
+  return { ...fill, plan: { ...fill.plan, draft: { mark: draftMarkOf(fill.plan.jobId) } }, credentials };
+}
+
 const NO_CREDENTIALS: JobCredentials = { forJob: async () => null, refusedInJob: async () => undefined };
 
 export function createRemoteExecutor({ db, extension, schedule = realTimer, credentials: hosted = NO_CREDENTIALS }: { db: Db; extension: Pick<ExtensionChannel, 'request'>; schedule?: Schedule; credentials?: JobCredentials }): RemoteExecutor {
@@ -162,7 +176,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer, cred
       job.state = 'ended';
       job.fail(new Error('这次任务已经被应用结束了。'));
     }, { once: true });
-    extension.request(accountId, method, credentials ? { ...payload, credentials } : payload).then(
+    extension.request(accountId, method, payloadFor(method, payload, credentials)).then(
       // The executor's own answer counts only while the job is live: an interrupted job's late answer describes a page
       // nobody watched.
       (answer) => {

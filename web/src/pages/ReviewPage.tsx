@@ -176,7 +176,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const catalogMismatch = catalog.status === 'mismatch';
   const preparationBlocked = preparation.status === 'blocked';
   const erpStarted = erp.status !== 'idle';
-  const erpDone = erp.outcome === 'filled' || erp.outcome === 'saved';
+  const erpDone = erp.outcome === 'filled' || erp.outcome === 'drafted' || erp.outcome === 'saved';
   const purpose = snapshot.projectAssignment.purpose;
   const hostedSignIn = useHostedSignIn(confirmed && !erpStarted);
   const packageFiles = preparation.packageFiles;

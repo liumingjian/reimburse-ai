@@ -54,8 +54,19 @@
       <!-- @unverified: the form's blocking overlay kd-ui-blockingExtention-item over the section anchors [transient] -->
       <div id="form-blocker" class="kd-ui-blockingExtention-item" style="display:none"></div>
     </div>
-    <!-- The form toolbar with 保存 (on recordings/new-form; only the employee presses it, ADR-0028). -->
-    <div class="form-toolbar"><span class="kd-btn" data-action="save">保存</span></div>
+    <!-- The form toolbar with 保存 (on recordings/new-form; on the attended path only the employee presses it, ADR-0028).
+         Live (S5, 2026-10-12) 保存 is a split button whose arrow, hovered, opens a group with 暂存 (tbSaveTemp) and 保存
+         (tbSave); the unattended path presses 暂存 there (ADR-0029). -->
+    <!-- @unverified: the 保存 split button's group opens on hovering its arrow and holds tbSaveTemp「暂存」 and tbSave「保存」 (S5 live) [unseen] -->
+    <ul class="form-toolbar k-menu" id="{{UUID}}-BILLMENU_TOOLBAR">
+      <li class="kdmenuitem-splitbutton">
+        <span class="kd-btn" id="{{UUID}}-BILLMENU_TOOLBAR-tbSplitSave" data-action="save">保存</span><span class="k-icon k-i-arrow-s" data-action="save-arrow">&#9662;</span>
+        <ul class="k-menu-group" id="save-group" style="display:none">
+          <li id="{{UUID}}-BILLMENU_TOOLBAR-tbSaveTemp"><span data-action="save-temp">暂存</span></li>
+          <li id="{{UUID}}-BILLMENU_TOOLBAR-tbSave"><span data-action="save">保存</span></li>
+        </ul>
+      </li>
+    </ul>
     <!-- Header fields as <uuid>-<key> wrapper plus <uuid>-<key>-EDITOR input, read by the same rule on recordings/new-form. -->
     <div class="header-fields">
       <!-- One header field is TWO nodes carrying the form prefix: the field wrapper `<uuid>-<key>` and the

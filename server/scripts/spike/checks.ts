@@ -2,20 +2,23 @@
 // steps are the executor's own (`steps.ts`, `reader.ts`, `tabs.ts`, `catalog.ts`); what is new here is only the
 // measuring around them. Read-only except S4's import into an unsaved form (discarded afterwards) and S5's 暂存,
 // which runs only with --save.
+import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { connect as tcpConnect } from 'node:net';
 import type { Interface } from 'node:readline/promises';
 import { evalIn } from '@baox/erp-executor/cdp';
 import { EXPENSE_ITEM_FORM, isSafeKey, queryRows } from '@baox/erp-executor/catalog';
-import type { Grid } from '@baox/erp-executor/erpform';
+import { compareDraft, findDrafts, pressDraft as pressDraftGateway, viewDraft, waitDrafted } from '@baox/erp-executor/draft';
+import { writeHeader, type Grid } from '@baox/erp-executor/erpform';
 import { readPane } from '@baox/erp-executor/invoice-grid';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { COMPATIBILITY_SNIPPET } from '@baox/erp-executor/probe';
-import { readForm, readHeaderField } from '@baox/erp-executor/reader';
+import { markedPurpose } from '@baox/erp-executor/protocol';
+import { protocolReadings, readForm, readHeaderField } from '@baox/erp-executor/reader';
 import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
 import { launchHeadless, loadInTab, memAvailableMb, type Headless, type MemoryPeak } from './browser';
-import { caption, dialogs, FORM, formFields, knownNotices, login, logout, observe, pressDraft, shape, viewBill, type LoginOutcome } from './erp';
+import { caption, deleteDraft, dialogs, FORM, formFields, knownNotices, login, logout, observe, pressDraft, responseStatus, shape, viewBill, type LoginOutcome } from './erp';
 import type { Observations, Report, Verdict } from './report';
 
 // Where the invoice assistant lives. The executor only ever matches `piaozone` in a frame URL (steps.ts); these are
@@ -36,8 +39,10 @@ export type Ctx = {
   /** S4's form is open (unsaved) and must be discarded; S4 passed; S4's recognised invoice numbers, in memory only. */
   formOpen: boolean; s4Passed: boolean; s4InvoiceNos: string[];
   draftBillNo: string | null;
-  /** S9: list the 暂存 drafts created at or after this ERP-local time. */
+  /** S9: list the 暂存 drafts created at or after this ERP-local time. S10: the draft to delete must be this recent. */
   draftsSince: string;
+  /** S10: the 内码 of the one test draft to delete (--delete-draft), or null. */
+  deleteDraft: string | null;
   mainMemory: MemoryPeak | null; mainCrashes: string[];
   /** Every browser started, and which of them are signed in, so teardown misses none. */
   sessions: Set<Headless>; signedIn: Set<Headless>;
@@ -447,6 +452,92 @@ export async function s9(ctx: Ctx, obs: Observations): Promise<Verdict> {
     status: unread ? 'FAIL' : 'PASS',
     reason: `${ctx.draftsSince} 之后有 ${res.rows.length} 张暂存单，${drafts.filter((d) => !d.billNo).length} 张没有单据编号；View 按内码读到 ${drafts.length - unread}/${drafts.length} 张`,
   };
+}
+
+/**
+ * S10, the owner's go-ahead per run: delete ONE test draft, named by its 内码 (--delete-draft). Only a 暂存 draft with
+ * no 单据编号 created since --drafts-since qualifies; anything else is refused before the delete. Then the same query
+ * must find nothing.
+ */
+export async function s10(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  const fid = ctx.deleteDraft;
+  if (!fid || !/^\d+$/.test(fid)) return { status: 'FAIL', reason: `--delete-draft 要一个数字内码：${fid ?? '（没给）'}` };
+  if (!SINCE.test(ctx.draftsSince)) return { status: 'FAIL', reason: `--drafts-since 不是「YYYY-MM-DD[ HH:mm[:ss]]」：${ctx.draftsSince}` };
+  const main = await signedInMain(ctx);
+  const find = () => queryRows(main.session, { formId: FORM, fieldKeys: 'FID,FBillNo,FDocumentStatus,FCreateDate', filter: `FID = ${fid}`, limit: 2 });
+  const before = await find();
+  if (!before.ok) return { status: 'FAIL', reason: `按内码查询被拒绝，没有删除：${before.reason}` };
+  const row = before.rows[0];
+  obs['before'] = row ? { fid: String(row[0]), billNo: String(row[1] ?? '').trim() || null, status: String(row[2] ?? ''), createdAt: String(row[3] ?? '') } : null;
+  if (!row) return { status: 'FAIL', reason: `内码 ${fid} 查不到（已删除，或不在这个账号权限内），没有删除` };
+  const billNo = String(row[1] ?? '').trim();
+  const status = String(row[2] ?? '');
+  const createdAt = String(row[3] ?? '').replace('T', ' ');
+  if (status !== 'Z') return { status: 'FAIL', reason: `内码 ${fid} 的单据状态是 ${status}，不是暂存，没有删除` };
+  if (billNo) return { status: 'FAIL', reason: `内码 ${fid} 有单据编号 ${billNo}，不是测试暂存单，没有删除` };
+  if (createdAt < ctx.draftsSince) return { status: 'FAIL', reason: `内码 ${fid} 创建于 ${createdAt}，早于 ${ctx.draftsSince}，没有删除` };
+
+  const deleted = await deleteDraft(main.session, fid);
+  const answer = responseStatus(deleted.parsed);
+  obs['delete'] = { httpStatus: deleted.httpStatus, ms: deleted.ms, ok: answer?.ok ?? null, errors: answer?.errors ?? [] };
+  const after = await find();
+  obs['after'] = after.ok ? { rows: after.rows.length } : { reason: after.reason };
+  console.log(`[spike] S10 内码 ${fid}（暂存，无单据编号，创建于 ${createdAt}）：删除${answer?.ok ? '成功' : '没有成功'}，之后查询${after.ok ? `${after.rows.length} 行` : '失败'}`);
+  if (!answer?.ok) return { status: 'FAIL', reason: `报销系统拒绝删除：${answer?.errors.join('；') || deleted.raw || '没有回答'}` };
+  if (!after.ok || after.rows.length) return { status: 'FAIL', reason: '删除回答成功，但之后按内码还查得到（或查不了）' };
+  return { status: 'PASS', reason: `内码 ${fid}（暂存，无单据编号，创建于 ${createdAt}）已删除，按内码再查为空` };
+}
+
+/**
+ * S11 (with --save only): 暂存 through the executor's own gateway on S4's form, the way a 本地执行器 job ends (ADR-0029):
+ * 事由 with a fresh ownership marker, 暂存, the tab turning to 修改, the draft found by the marker, read back by its 内码
+ * and compared with the page. Then the draft it made is deleted through S10's checks, so the run leaves nothing behind.
+ * Reports column names, counts and the model's own field names, never values.
+ */
+export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  if (!ctx.save) return { status: 'SKIP', reason: '没有 --save，不暂存' };
+  if (!ctx.s4Passed || !ctx.formOpen) return { status: 'SKIP', reason: '需要 S4 先通过：暂存的是 S4 导入了测试发票、尚未保存的那张单' };
+  const main = await signedInMain(ctx);
+  const mark = `baox-${randomBytes(5).toString('hex')}`;
+  const causa = markedPurpose('baox 暂存实测', mark);
+  ctx.report.say(`S11 将用执行器的暂存入口暂存一张测试草稿（归属标记 ${mark}），核对后删除它。只点暂存，不点保存、提交、审核。`);
+  const header = await writeHeader(main.session, 'FCAUSA', causa);
+  obs['header'] = { ok: header.ok };
+  if (!header.ok) return { status: 'FAIL', reason: `事由写不进去，没有暂存：${'reason' in header ? header.reason : ''}` };
+  const page = protocolReadings(await readForm(main.session));
+  const filled = (grid: typeof page.receiptsGrid) => (grid.ok ? grid.rows : []).filter((row) => row.kind === 'data' && Object.values(row.values).some((v) => String(v ?? '').trim()));
+  const expected = { causa, receipts: filled(page.receiptsGrid), details: filled(page.detailGrid) };
+  obs['page'] = { receipts: expected.receipts.length, details: expected.details.length };
+  await ctx.report.shot(main.session, 's11-before-draft');
+  const started = Date.now();
+  try { await pressDraftGateway(main.session); } catch (error) { return { status: 'FAIL', reason: `没有点「暂存」：${(error as Error).message}` }; }
+  const drafted = await waitDrafted(async () => (await readForm(main.session)).formMode.value, { timeoutMs: 60_000, pollMs: 1000 });
+  obs['draftedMs'] = Date.now() - started;
+  await ctx.report.shot(main.session, 's11-after-draft');
+  if (!drafted) return { status: 'FAIL', reason: `点了「暂存」，60 秒内页签没有变成「修改」；可能留下了一张草稿，请用 S9 查（标记 ${mark}）` };
+  const found = await findDrafts(main.session, mark);
+  obs['found'] = found.ok ? { count: found.drafts.length } : { reason: found.reason };
+  if (!found.ok || found.drafts.length !== 1) return { status: 'FAIL', reason: `按归属标记查暂存单：${found.ok ? `${found.drafts.length} 张` : found.reason}（标记 ${mark}，请用 S9 查）` };
+  const draft = found.drafts[0]!;
+  console.log(`[spike] S11 暂存单：内码 ${draft.id}，单据编号 ${draft.billNo ?? '（空）'}，状态 ${draft.status}`);
+  const model = await viewDraft(main.session, draft.id);
+  const problems = model ? compareDraft(model, expected) : ['按内码 View 读不回这张单'];
+  obs['compare'] = {
+    problems,
+    modelKeys: model ? Object.keys(model).filter((k) => !Array.isArray(model[k])).slice(0, 120) : [],
+    entries: model ? Object.fromEntries(Object.entries(model).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).length])) : {},
+  };
+  // Cleanup: only this run's own draft, and only while it is still a 暂存 draft with no 单据编号.
+  let cleaned = '没有删除';
+  if (draft.status === 'Z' && !draft.billNo) {
+    const deleted = await deleteDraft(main.session, draft.id);
+    const after = await findDrafts(main.session, mark);
+    cleaned = responseStatus(deleted.parsed)?.ok && after.ok && after.drafts.length === 0 ? '已删除' : '删除没有确认';
+  }
+  obs['cleanup'] = cleaned;
+  console.log(`[spike] S11 测试草稿 ${draft.id}：${cleaned}`);
+  if (problems.length) return { status: 'FAIL', reason: `暂存成功并按标记找到（内码 ${draft.id}，${cleaned}），但 View 与页面不一致：${problems.join('；')}` };
+  return { status: 'PASS', reason: `${secs(Number(obs['draftedMs']))} 变成修改；按归属标记找到唯一一张暂存单，View 与页面一致（收票 ${expected.receipts.length} 行、明细 ${expected.details.length} 行）；测试草稿${cleaned}` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
