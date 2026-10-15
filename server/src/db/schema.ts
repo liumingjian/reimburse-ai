@@ -329,7 +329,7 @@ export interface ErpJobTable {
   account_id: string;
   kind: 'fill';
   // 去报销 / 我已登录，继续 / 重新去报销 (ADR-0027). See `erp/fill-jobs.ts` FillTrigger.
-  trigger: 'start' | 'confirm_login' | 'refill';
+  trigger: 'start' | 'confirm_login' | 'refill' | 'rerun';
   confirmation_digest: string;
   plan: string;
   revision: number;

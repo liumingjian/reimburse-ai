@@ -29,6 +29,8 @@ export type Compatibility = z.infer<typeof CompatibilitySchema>;
  * escaping.
  */
 export const DRAFT_MARK = /^baox-[a-z0-9]{10}$/;
+// An invoice number as it goes into a query filter: digits only (全电发票 20, 增值税发票 8 to 12).
+export const INVOICE_NO = /^\d{8,20}$/;
 /** 事由 as a 暂存 fill writes it. */
 export const markedPurpose = (purpose: string, mark: string) => `${purpose} ${mark}`;
 
@@ -53,6 +55,13 @@ export const FillPlanSchema = z.object({
   // nothing else; the 浏览器扩展 hands the form over unsaved (ADR-0028). The fill writes 事由 as the purpose followed
   // by a space and `mark`, presses 暂存, and finds the draft again by that mark: a 暂存 draft has no 单据编号.
   draft: z.object({ mark: z.string().regex(DRAFT_MARK) }).optional(),
+  // 自动重新去报销 (ADR-0034): set by the server on a re-run it starts by itself, and on nothing else. Before anything
+  // is uploaded the executor asks ERP, read-only, whether a 费用报销单 already holds one of these invoices and whether a
+  // draft carries one of the earlier jobs' marks; either, or no answer, ends the run with nothing written.
+  rerun: z.object({
+    invoiceNos: z.array(z.string().regex(INVOICE_NO)).min(1),
+    marks: z.array(z.string().regex(DRAFT_MARK)).min(1),
+  }).optional(),
 });
 export type FillPlan = z.infer<typeof FillPlanSchema>;
 

@@ -21,6 +21,9 @@ safety.
   - A read-only WebAPI query must show that no saved bill of this ERP account holds any of the task's invoices.
   - It must also show no draft carrying the task's ownership marker.
   - If either check fails or cannot be answered, there is no re-run, only 对账.
+  - Amended 2026-10-13: "saved" reads as any 费用报销单, 暂存 drafts included. The bill that held two invoices in V-63
+    was a 暂存 draft. The query asks `FRecInv.FIVNUMBER`, the invoice number on the 收票单 a 收票信息 row references; it
+    passed live on 2026-10-14 against a known holder and a free number (S12, erp-headless-v1.md item 4).
 - **Limit.** At most two automatic re-runs per 去报销, each recorded with its cause. When they are used up, the
   disposition is 原地等待, with 重新去报销 left to the user as today.
 - **After the 暂存 attempt has started**, nothing is re-run. The result is reconciled through WebAPI by the ownership

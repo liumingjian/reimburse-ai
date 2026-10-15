@@ -71,7 +71,7 @@ export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mism
 
 export type ErpFacts = {
   jobId: string;
-  trigger: 'start' | 'confirm_login' | 'refill';
+  trigger: 'start' | 'confirm_login' | 'refill' | 'rerun';
   // The revision the job was accepted at.
   revision: number;
   phase: ErpPhase;
@@ -103,8 +103,9 @@ export type ErpVerdict = Pick<ErpRecord, 'attempted' | 'reconcile' | 'result'>;
 
 // Every write the task service accepts, by name: the contract's task actions (the ones a page can ask for, listed in
 // the snapshot's `allowedActions`), plus the jobs' own writes. `job` is the ERP job's write and the book-change
-// revision bump; `record_parse` is the parser job's.
-export type ActionName = TaskAction | 'job' | 'record_parse';
+// revision bump; `record_parse` is the parser job's; `auto_rerun` is the 自动重新去报销 a fill job's end may start
+// (ADR-0034), never a page's.
+export type ActionName = TaskAction | 'job' | 'record_parse' | 'auto_rerun';
 
 // 'stale' is the HTTP 409 of ADR-0014 (a stale stepToken, or any foreign write while a job runs); a Refusal is a 400.
 export type Admission = 'ok' | 'stale' | Refusal;
@@ -158,6 +159,8 @@ const NOT_ALLOWED: Refusal = { code: 'action_not_allowed', message: ERP_ACTION_E
 export const ERP_IN_USE: Refusal = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 export const STALE_JOB: Refusal = { code: 'stale_job', message: 'the inventory run changed under the parser job' };
+// The server's own refusal of an 自动重新去报销 whose moment passed (a later job, a 对账, a hand-off); never shown.
+export const NO_RERUN: Refusal = { code: 'no_rerun', message: 'the write result is no longer unknown before 暂存' };
 
 const atStep =
   (steps: readonly Step['kind'][], refusal: Refusal) =>
@@ -219,6 +222,10 @@ const ACTIONS: Record<ActionName, Traits> = {
   print: { printOnly: true },
   void_task: { voids: true },
   job: { job: true },
+  // 自动重新去报销 (ADR-0034): taken by the server, with no stepToken, from a write result that is unknown before 暂存.
+  // An ERP action like 重新去报销, and it waits for the account's ERP like one; what else it needs (the job went to a
+  // 本地执行器, its last attempt was the import or the fill, re-runs left) is `tasks.ts`'s to read from the record.
+  auto_rerun: { erpAction: true, takesLease: 'before_ready', ready: (facts) => (facts.erp?.phase === 'unknown' && !facts.erp.drafting ? null : NO_RERUN) },
   record_parse: { job: true, ready: (facts) => (parseRunning(facts) ? null : STALE_JOB) },
 };
 

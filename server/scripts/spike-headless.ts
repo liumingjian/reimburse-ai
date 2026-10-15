@@ -23,7 +23,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import { erpConfigFromEnv } from '../src/erp/config';
-import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, s10, s11, type Ctx } from './spike/checks';
+import { discardForms, endSession, s1, s2, s3, s4, s5, s6, s7, s9, s10, s11, s12, type Ctx } from './spike/checks';
 import { memAvailableMb } from './spike/browser';
 import { Report } from './spike/report';
 
@@ -54,7 +54,7 @@ const refuse = (message: string): never => { console.error(`spike refused: ${mes
 
 // pnpm runs this from server/, so relative paths are taken from where the owner typed the command.
 const here = process.env['INIT_CWD'] || process.cwd();
-const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9', 'S10', 'S11'];
+const ALL = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S9', 'S10', 'S11', 'S12'];
 // S10 deletes and S11 暂存s, so neither runs by default: S10 needs --only S10 and --delete-draft, S11 --only and --save.
 const only = new Set((args.only ?? ALL.filter((id) => id !== 'S10' && id !== 'S11').join(',')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 for (const id of only) if (!ALL.includes(id)) refuse(`未知的检查 ${id}`);
@@ -124,6 +124,7 @@ try {
   await run('S11', '执行器暂存入口：归属标记、暂存、按标记找回、View 核对（之后删除）', (obs) => s11(ctx, obs));
   await run('S6', '用 ExecuteBillQuery 查发票占用', (obs) => s6(ctx, obs));
   await run('S9', '找回暂存草稿（只读：查询与按内码 View）', (obs) => s9(ctx, obs));
+  await run('S12', '执行器的发票占用检查（只读，用账号里已有的单据对照）', (obs) => s12(ctx, obs));
   await run('S10', '删除一张测试暂存单（按内码）', (obs) => s10(ctx, obs));
 
   // S4's form is discarded, and the main session's memory read, before anything else starts a browser.

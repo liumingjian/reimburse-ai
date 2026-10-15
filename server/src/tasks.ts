@@ -36,7 +36,7 @@ import type { ParseInput } from './parse/material';
 import { mediumOf } from './parse/media';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
 import { EDIT_COPY, EDIT_PREFIX, editAddress, judgeEdit } from './pending/edits';
-import { ACTION_COPY, ERP_IN_USE, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
+import { ACTION_COPY, ERP_IN_USE, NO_RERUN, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
 import { loadFacts, materialRows, uploadHistory, type LoadedTask } from './task-facts';
 import { projectListItem, projectSnapshot } from './task-snapshot';
 import { relativeSourcePath, rejectByShape, rejectReason, sourceFileName, storedMime } from './upload-rules';
@@ -48,8 +48,10 @@ import type { ErpLease } from './erp-lease';
 import type { MaintenanceLease } from './maintenance';
 import type { ErpConfig } from './erp/config';
 import { buildFillJob, type FrozenJob } from './erp/fill-plan';
-import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
-import { PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
+import { JOB_DEADLINE_CODE, newJobId, NO_RESULT_CODE, type FillRun, type FillTrigger } from './erp/fill-jobs';
+import { draftMarkOf, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
+import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
+import { INVOICE_NO, PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
 import { loadErp } from './erp/fill-state';
 import { printFileShas } from './print/facts';
@@ -117,7 +119,15 @@ export type ErpServiceOptions = {
   // Acquired beside the durable job row, before the runner can start. This closes the admission race with a new job.
   acquireErp?: () => MaintenanceLease | null;
   acquireBackground?: () => MaintenanceLease | null;
+  // The account's jobs go to a baox 本地执行器 (it is sent ERP 凭据, ADR-0033), the only executor 自动重新去报销 runs on
+  // (ADR-0034): the 浏览器扩展 drives the employee's own tab, and the employee's own 重新去报销 stays theirs there.
+  unattended?: (accountId: string) => Promise<boolean>;
 };
+
+// 自动重新去报销 (ADR-0034): at most this many in a row, then the task waits for the employee as before.
+export const AUTO_RERUN_LIMIT = 2;
+// Results the server, not the executor, gave the job: the run may still hold the page, so nothing starts over on it.
+const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE, EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE]);
 
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 
@@ -231,7 +241,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   //
   // Where each trigger may be taken from (choose_action; the login pause; the 对账 verdict offering 重新去报销, ADR-0027)
   // is the task policy's to say, like any other admission: by the time `apply` runs, the trigger was admitted.
-  async function startFillJob(taskId: string, token: string, trigger: FillTrigger): Promise<TaskSnapshot> {
+  async function startFillJob(taskId: string, token: string, trigger: Exclude<FillTrigger, 'rerun'>): Promise<TaskSnapshot> {
     const recovery = trigger === 'refill';
     const started: { run: FillRun | null } = { run: null };
     try {
@@ -627,6 +637,62 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // trigger `refill`, so the audit trail tells the recovery from the original 去报销 without reading row order.
     refill(taskId: string, token: string): Promise<TaskSnapshot> {
       return startFillJob(taskId, token, 'refill');
+    },
+
+    // 自动重新去报销 (ADR-0034), asked by the fill job runner when a job settles. It starts a fresh run of the same
+    // frozen plan on a fresh 新增单 when, and only when, the ended job is still the task's latest, its write result is
+    // unknown, its last attempt was the import or the fill (never 暂存), the executor itself said so, the job went to a
+    // 本地执行器, and fewer than AUTO_RERUN_LIMIT re-runs came before it in a row. The new plan asks ERP first whether
+    // the bill already landed (`rerun`); the executor stops before uploading if it did. Anything else: nothing, and
+    // the task stays in 对账 as before. Never throws.
+    async autoRerun(taskId: string, endedJobId: string, { serverEnded }: { serverEnded: boolean }): Promise<boolean> {
+      const erpService = erp;
+      if (!erpService?.unattended || serverEnded || !(await erpService.unattended(accountId))) return false;
+      const started: { run: FillRun | null } = { run: null };
+      try {
+        await mutate(taskId, null, 'auto_rerun', async ({ tx, loaded, at, revision }) => {
+          const ended = loaded.erp.job;
+          if (!ended || ended.job_id !== endedJobId || ended.kind !== 'fill') return NO_RERUN;
+          const code = loaded.erp.result?.code ?? null;
+          if (code !== null && EXECUTOR_MAY_STILL_RUN.has(code)) return NO_RERUN;
+          const last = await tx.selectFrom('erp_attempt').select('action').where('job_id', '=', endedJobId).orderBy(sql`rowid`, 'desc').executeTakeFirst();
+          if (last?.action !== 'import' && last?.action !== 'fill') return NO_RERUN;
+          const jobs = await tx.selectFrom('erp_job').select(['job_id', 'trigger']).where('task_id', '=', taskId).orderBy('revision', 'desc').execute();
+          const inRow = jobs.findIndex((job) => job.trigger !== 'rerun');
+          const before = inRow === -1 ? jobs.length : inRow;
+          if (before >= AUTO_RERUN_LIMIT) return NO_RERUN;
+          const frozen = JSON.parse(ended.plan) as FrozenJob;
+          const invoiceNos = [...new Set(frozen.judge.invoices.flatMap((invoice) => (invoice.identity?.number ? [invoice.identity.number] : [])))];
+          // Without a number to ask about, ERP cannot be asked, and the re-run's precondition cannot be met.
+          if (!invoiceNos.length || invoiceNos.length !== frozen.judge.invoices.length || !invoiceNos.every((no) => INVOICE_NO.test(no))) return NO_RERUN;
+          const unreachable = await erpService.executorReady?.(tx, accountId);
+          if (unreachable) return unreachable;
+          const jobId = newJobId();
+          const job: FrozenJob = {
+            plan: { ...frozen.plan, jobId, replaceAbandonedForm: true, rerun: { invoiceNos, marks: jobs.map((row) => draftMarkOf(row.job_id)) } },
+            judge: frozen.judge,
+            rerunOf: { jobId: endedJobId, code, no: before + 1 },
+          };
+          const maintenance = erpService.acquireErp ? erpService.acquireErp() : { release: () => undefined };
+          if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护。' };
+          if (!erpService.lease.acquire({ accountId, taskId, jobId })) {
+            maintenance.release();
+            return ERP_IN_USE;
+          }
+          started.run = { jobId, accountId, taskId, trigger: 'rerun', frozen: job, maintenance };
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger: 'rerun', confirmation_digest: ended.confirmation_digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
+        });
+      } catch (error) {
+        if (started.run) {
+          erpService.lease.release(started.run.jobId);
+          started.run.maintenance?.release();
+        }
+        if (!(error instanceof ActionRefusedError || error instanceof StaleStepError)) console.error(`自动重新去报销 of task ${taskId} failed`, error);
+        return false;
+      }
+      if (!started.run) return false;
+      erpService.run(started.run);
+      return true;
     },
 
     // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).

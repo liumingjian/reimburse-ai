@@ -63,6 +63,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
             title="写入结果不确定"
             {...(erp.abortReason ? { subtitle: erp.abortReason } : {})}
           />
+          {erp.rerunNotice ? <p className="app-caption" data-testid="erp-rerun-notice">{erp.rerunNotice}</p> : null}
         </section>
       ) : null}
 

@@ -6,14 +6,18 @@ import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { connect as tcpConnect } from 'node:net';
 import type { Interface } from 'node:readline/promises';
-import { evalIn } from '@baox/erp-executor/cdp';
+import { evalIn, type CdpSession } from '@baox/erp-executor/cdp';
 import { EXPENSE_ITEM_FORM, isSafeKey, queryRows } from '@baox/erp-executor/catalog';
 import { compareDraft, findDrafts, pressDraft as pressDraftGateway, viewDraft, waitDrafted } from '@baox/erp-executor/draft';
 import { writeHeader, type Grid } from '@baox/erp-executor/erpform';
 import { readPane } from '@baox/erp-executor/invoice-grid';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { COMPATIBILITY_SNIPPET } from '@baox/erp-executor/probe';
-import { markedPurpose } from '@baox/erp-executor/protocol';
+import { checkRerun } from '@baox/erp-executor/occupancy';
+import { INVOICE_NO, markedPurpose } from '@baox/erp-executor/protocol';
+
+// The field S11 puts through the executor's shipped occupancy check (ADR-0034), until one passes live.
+const OCCUPANCY_CANDIDATE = 'FRecInv.FIVNUMBER';
 import { protocolReadings, readForm, readHeaderField } from '@baox/erp-executor/reader';
 import { importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type WritePage } from '@baox/erp-executor/steps';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
@@ -489,6 +493,47 @@ export async function s10(ctx: Ctx, obs: Observations): Promise<Verdict> {
 }
 
 /**
+ * Which query finds the bill holding an invoice (ADR-0034's precondition), asked while S11's own draft holds S4's test
+ * invoice: the positive control S6 never had. S6 (2026-10-13) found 发票号码 only on 电子发票 (FEInvoiceEntity), which
+ * V-60 read empty on a bill whose 收票信息 had 4 rows; 收票信息 itself has only 收票单, 从源单携带 and 发票序列号. So each
+ * candidate is asked for FID and scored on whether it finds this draft. Read-only. Reports field names and hits, never
+ * values.
+ */
+async function occupancyProbe(session: CdpSession, fid: string, invoiceNos: string[], receipts: Array<{ values: Record<string, string> }>, model: Record<string, unknown> | null): Promise<Observations> {
+  const receiptNos = receipts.map((row) => String(row.values['收票单'] ?? '').trim()).filter((no) => isSafeKey(no));
+  const invoices = invoiceNos.filter((no) => isSafeKey(no));
+  const rowKeys = (entry: string) => {
+    const rows = model?.[entry];
+    const first = Array.isArray(rows) ? rows[0] as Record<string, unknown> | undefined : undefined;
+    if (!first) return null;
+    return Object.fromEntries(Object.entries(first).map(([k, v]) => [k, v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v as object).slice(0, 40) : typeof v]));
+  };
+  const candidates = [
+    ...invoices.flatMap((no) => [
+      { field: 'FIVSerialNo', by: '发票号码', value: no },
+      { field: 'FInvoiceNumber', by: '发票号码', value: no },
+      { field: 'FRecInv.FInvoiceNo', by: '发票号码', value: no },
+      { field: 'FRecInv.FInvoiceNumber', by: '发票号码', value: no },
+      // 2026-10-13 live: the 收票单 a 收票信息 row references carries the number as FIVNUMBER (View of S11's draft).
+      { field: 'FRecInv.FIVNUMBER', by: '发票号码', value: no },
+    ]),
+    ...receiptNos.flatMap((no) => [
+      { field: 'FRecInv.FBillNo', by: '收票单号', value: no },
+      { field: 'FRecInv.FNumber', by: '收票单号', value: no },
+      { field: 'FRecInvBillNo', by: '收票单号', value: no },
+    ]),
+  ];
+  const results = [];
+  for (const c of candidates) {
+    const res = await queryRows(session, { formId: FORM, fieldKeys: 'FID', filter: `${c.field} = '${c.value}'`, limit: 20 });
+    results.push(res.ok
+      ? { field: c.field, by: c.by, ok: true, rows: res.rows.length, findsThisDraft: res.rows.some((row) => String(row[0]) === fid) }
+      : { field: c.field, by: c.by, ok: false, reason: res.reason.slice(0, 160) });
+  }
+  return { invoices: invoices.length, receiptNos: receiptNos.length, results, recInvInfoRow: rowKeys('RecInvInfo'), eInvoiceRow: rowKeys('FEInvoiceEntity') ?? rowKeys('EInvoiceEntity') };
+}
+
+/**
  * S11 (with --save only): 暂存 through the executor's own gateway on S4's form, the way a 本地执行器 job ends (ADR-0029):
  * 事由 with a fresh ownership marker, 暂存, the tab turning to 修改, the draft found by the marker, read back by its 内码
  * and compared with the page. Then the draft it made is deleted through S10's checks, so the run leaves nothing behind.
@@ -527,6 +572,25 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
     modelKeys: model ? Object.keys(model).filter((k) => !Array.isArray(model[k])).slice(0, 120) : [],
     entries: model ? Object.fromEntries(Object.entries(model).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).length])) : {},
   };
+  const occupancy = await occupancyProbe(main.session, draft.id, ctx.s4InvoiceNos, expected.receipts, model);
+  obs['occupancy'] = occupancy;
+  const scored = (occupancy['results'] as Array<{ field: string; ok: boolean; findsThisDraft?: boolean }>).map((r) => `${r.field}：${r.ok ? (r.findsThisDraft ? '找到' : '没找到') : '查询被拒'}`);
+  console.log(`[spike] S11 发票占用查法（发票 ${String(occupancy['invoices'])} 张、收票单 ${String(occupancy['receiptNos'])} 张）：${scored.join('；') || '没有可试的号码'}`);
+  // The executor's own precondition (occupancy.ts checkRerun), as shipped, on the candidate field: this draft holds the
+  // test invoice, so it must answer «held»; a number nobody holds, with a mark nobody wrote, must answer «clear».
+  const invoices = ctx.s4InvoiceNos.filter((no) => INVOICE_NO.test(no));
+  if (invoices.length) {
+    const held = await checkRerun(main.session, { invoiceNos: invoices, marks: [mark] }, OCCUPANCY_CANDIDATE);
+    const free = await checkRerun(main.session, { invoiceNos: [invoices[0]!.replace(/\d$/, (d) => String((Number(d) + 5) % 10))], marks: [`baox-${randomBytes(5).toString('hex')}`] }, OCCUPANCY_CANDIDATE);
+    const heldOk = !held.ok && held.code === 'rerun_invoice_held' && held.holders.length > 0;
+    obs['shippedCheck'] = {
+      field: OCCUPANCY_CANDIDATE,
+      held: held.ok ? 'clear' : held.code === 'rerun_invoice_held' ? { code: held.code, holders: held.holders.length, statuses: held.holders.map((h) => h.status), billNoEmpty: held.holders.every((h) => !h.billNo) } : { code: held.code, reason: 'reason' in held ? held.reason.slice(0, 160) : null },
+      free: free.ok ? 'clear' : { code: free.code, reason: 'reason' in free ? free.reason.slice(0, 160) : null },
+      verdict: heldOk && free.ok ? 'PASS' : 'FAIL',
+    };
+    console.log(`[spike] S11 执行器占用检查（${OCCUPANCY_CANDIDATE}）：占着的票 ${heldOk ? '判为被占用' : '没有判为被占用'}；没人占的号码 ${free.ok ? '判为空闲' : '没有判为空闲'}`);
+  }
   // Cleanup: only this run's own draft, and only while it is still a 暂存 draft with no 单据编号.
   let cleaned = '没有删除';
   if (draft.status === 'Z' && !draft.billNo) {
@@ -538,6 +602,38 @@ export async function s11(ctx: Ctx, obs: Observations): Promise<Verdict> {
   console.log(`[spike] S11 测试草稿 ${draft.id}：${cleaned}`);
   if (problems.length) return { status: 'FAIL', reason: `暂存成功并按标记找到（内码 ${draft.id}，${cleaned}），但 View 与页面不一致：${problems.join('；')}` };
   return { status: 'PASS', reason: `${secs(Number(obs['draftedMs']))} 变成修改；按归属标记找到唯一一张暂存单，View 与页面一致（收票 ${expected.receipts.length} 行、明细 ${expected.details.length} 行）；测试草稿${cleaned}` };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// S12
+
+/**
+ * S12 (read-only): the executor's shipped occupancy check (occupancy.ts checkRerun, ADR-0034) on bills this account
+ * already has, with no 暂存 needed: it finds a 费用报销单 whose 收票信息 references a 收票单 with an invoice number, asks
+ * the check about that number (it must answer «held» by that very bill), and about a number one digit off with a mark
+ * nobody wrote (it must answer «clear»). Reports counts and booleans, never a number.
+ */
+export async function s12(ctx: Ctx, obs: Observations): Promise<Verdict> {
+  const main = await signedInMain(ctx);
+  const field = OCCUPANCY_CANDIDATE;
+  const sample = await queryRows(main.session, { formId: FORM, fieldKeys: `FID,FBillNo,FDocumentStatus,${field}`, filter: `${field} <> ''`, limit: 20 });
+  if (!sample.ok) return { status: 'FAIL', reason: `按 ${field} 取样被拒：${sample.reason.slice(0, 160)}` };
+  const rows = sample.rows.map((row) => ({ id: String(row[0] ?? ''), billNo: String(row[1] ?? '').trim(), status: String(row[2] ?? ''), no: String(row[3] ?? '').trim() }));
+  const usable = rows.filter((row) => INVOICE_NO.test(row.no));
+  obs['sample'] = { rows: rows.length, usable: usable.length, statuses: [...new Set(usable.map((row) => row.status))] };
+  const known = usable[0];
+  if (!known) return { status: 'SKIP', reason: `这个账号权限内没有收票信息带发票号码的费用报销单（取样 ${rows.length} 行），没有对照` };
+  const held = await checkRerun(main.session, { invoiceNos: [known.no], marks: [`baox-${randomBytes(5).toString('hex')}`] }, field);
+  const findsKnown = !held.ok && held.code === 'rerun_invoice_held' && held.holders.some((h) => (h.billNo ?? '') === known.billNo);
+  const otherNo = known.no.replace(/\d$/, (d) => String((Number(d) + 5) % 10));
+  const othersHolding = usable.some((row) => row.no === otherNo);
+  const free = await checkRerun(main.session, { invoiceNos: [otherNo], marks: [`baox-${randomBytes(5).toString('hex')}`] }, field);
+  obs['held'] = held.ok ? 'clear' : held.code === 'rerun_invoice_held' ? { code: held.code, holders: held.holders.length, findsKnown } : { code: held.code, reason: 'reason' in held ? held.reason.slice(0, 160) : null };
+  obs['free'] = free.ok ? 'clear' : { code: free.code, ...(free.code === 'rerun_check_failed' ? { reason: free.reason.slice(0, 160) } : {}), othersHolding };
+  obs['knownStatus'] = known.status;
+  if (!findsKnown) return { status: 'FAIL', reason: `执行器的占用检查（${field}）没有把一张已知单据（状态 ${known.status}）占着的发票判为被它占用` };
+  if (!free.ok) return { status: othersHolding ? 'SKIP' : 'FAIL', reason: `没人占的号码没有判为空闲（${free.code}）` };
+  return { status: 'PASS', reason: `执行器的占用检查按 ${field} 找回了已知单据（状态 ${known.status}）占着的发票，没人占的号码判为空闲` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

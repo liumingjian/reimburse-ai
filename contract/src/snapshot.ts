@@ -895,6 +895,8 @@ export const ErpSchema = z.object({
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
   loginNotice: z.string().nullable(),
+  // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row.
+  rerunNotice: z.string().nullable(),
   erpAccount: ErpAccountViewSchema.nullable(),
 });
 export type Erp = z.infer<typeof ErpSchema>;

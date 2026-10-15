@@ -19,6 +19,7 @@ import { ExecutorError, type ChromiumPage } from './page';
 import { compareDraft, findDrafts, pressDraft, viewDraft, waitDrafted } from './draft';
 import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
+import { checkRerun, RECEIPT_INVOICE_NO, rerunRefusal } from './occupancy';
 import { DEFAULT_PACE, waitFor, type Pace } from './pace';
 import { COMPATIBILITY_SNIPPET, probeIdentity, sameOrigin } from './probe';
 import { pageUrl, protocolReadings, readForm, type FormReadings } from './reader';
@@ -61,6 +62,8 @@ export type ExecutorPorts = {
    * it — the extension, where the employee logs in themselves — a login page pauses the job at `waiting_login`.
    */
   signIn?: (session: CdpSession) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+  /** The 费用报销单 field an 自动重新去报销 asks ERP about (`occupancy.ts`); null stops every re-run as unanswered. */
+  occupancyField?: string | null;
   newId?: () => string;
 };
 
@@ -145,6 +148,12 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     if (catalog.problems.length) {
       await channel.emit({ type: 'catalog_mismatch', problems: catalog.problems });
       return await finish('catalog_mismatch', 'catalog_mismatch', catalog.problems.map((p) => `${p.kind} ${p.code}: ${p.verdict}`).join('；'));
+    }
+    // An 自动重新去报销 (ADR-0034) goes on only while ERP shows the task's bill never landed; otherwise it stops here,
+    // with no attempt, and the task goes to 对账.
+    if (plan.rerun) {
+      const clear = await checkRerun(session, plan.rerun, ports.occupancyField === undefined ? RECEIPT_INVOICE_NO : ports.occupancyField);
+      if (!clear.ok) return await finish('aborted', clear.code, rerunRefusal(clear));
     }
     await step('catalog', 'done');
 

@@ -40,6 +40,7 @@ describe('去报销 on a fake executor', () => {
         outcome: 'none',
         allowedActions: ['refresh', 'confirm_login', 'cancel'],
         loginNotice: null,
+        rerunNotice: null,
       },
     });
     expect(waiting.erp.steps.find((step) => step.key === 'login')?.status).toBe('waiting');
