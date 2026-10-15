@@ -1,5 +1,5 @@
 // The key the ERP 凭据 are sealed with (ADR-0033): AES-256-GCM, the key in a file only the server reads
-// (BAOX_ERP_CREDENTIAL_KEY_FILE, written by deploy/intranet/install.sh next to the maintenance token), never in the
+// (BAOX_ERP_CREDENTIAL_KEY_FILE, created by the operator's candidate prepare), never in the
 // database or its backups. A copy of the database alone therefore holds no usable ERP password.
 //
 // This differs from ADR-0022, which refused application-level encryption for invoice originals: an original is read by

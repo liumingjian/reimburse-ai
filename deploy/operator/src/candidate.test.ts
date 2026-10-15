@@ -352,6 +352,8 @@ it('retains the installed origin when new candidate templates default to port 88
   for (const file of ['render-config.mjs', 'Caddyfile', 'baox.service']) {
     writeFileSync(join(templates, file), readFileSync(new URL('../../intranet/' + file, import.meta.url)));
   }
+  // The host files the unit names must sit under the deploy root, here the isolated target's.
+  writeFileSync(join(templates, 'baox.service'), readFileSync(join(templates, 'baox.service'), 'utf8').replaceAll('/opt/tools/baox/', target.profile.deployRoot + '/'));
   mkdirSync(join(source.repository, 'server', 'src'), { recursive: true });
   writeFileSync(join(source.repository, 'server', 'src', 'public-origin.ts'), readFileSync(new URL('../../../server/src/public-origin.ts', import.meta.url)));
   const service = join(target.profile.systemdDir, 'baox.service');
@@ -365,6 +367,77 @@ it('retains the installed origin when new candidate templates default to port 88
   expect(readFileSync(join(built, 'baox.service'), 'utf8')).toContain('Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222\n');
   expect(readFileSync(join(built, 'Caddyfile'), 'utf8')).toContain('http://10.250.0.222 {');
   expect(readFileSync(service, 'utf8')).toContain('Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222\n');
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+// A release from line 2 on (erp-headless-v1.md): its unit names the ERP 凭据 key and the 本地执行器 runtimes, and it
+// has a 本地执行器 whose runtime fetch is stood in for by a script that records where it was asked to put them.
+function writeHostNeeds(repository: string, deployRoot: string): { keyFile: string; runtimes: string } {
+  const keyFile = join(deployRoot, 'etc', 'erp-credential.key');
+  const runtimes = join(deployRoot, 'cache', 'local-executor-runtime');
+  writeFileSync(join(repository, 'deploy', 'intranet', 'baox.service'), [
+    '[Service]',
+    'Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222',
+    `Environment=BAOX_ERP_CREDENTIAL_KEY_FILE=${keyFile}`,
+    `Environment=BAOX_LOCAL_EXECUTOR_RUNTIMES=${runtimes}`,
+    '',
+  ].join('\n'));
+  mkdirSync(join(repository, 'local-executor', 'scripts'), { recursive: true });
+  writeFileSync(join(repository, 'local-executor', 'package.json'), JSON.stringify({ name: '@baox/local-executor' }) + '\n');
+  writeFileSync(join(repository, 'local-executor', 'scripts', 'fetch-runtimes.mjs'),
+    "import { writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nwriteFileSync(join(process.argv[2], 'VERSION'), process.versions.node + '\\n');\n");
+  return { keyFile, runtimes };
+}
+
+it('creates the ERP 凭据 key once, never replaces it, and fetches the 本地执行器 runtimes outside the release', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const { keyFile, runtimes } = writeHostNeeds(source.repository, target.profile.deployRoot);
+  const first = commitAll(source.repository, 'line 2 host needs');
+
+  const prepared = await prepareCandidate(source.repository, target, first);
+  expect(prepared.manifest.phaseTimings.map((timing) => timing.phase)).toEqual(['upload', 'extract', 'install', 'build', 'native', 'host', 'config']);
+  const key = readFileSync(keyFile, 'utf8');
+  expect(key).toMatch(/^[0-9a-f]{64}\n$/u);
+  expect(statSync(keyFile).mode & 0o777).toBe(0o640);
+  expect(readFileSync(join(runtimes, 'VERSION'), 'utf8')).toBe(`${process.versions.node}\n`);
+  const chowned = readFileSync(join(target.barrier, 'chown.log'), 'utf8');
+  expect(chowned).toContain(`root:baox ${keyFile}`);
+  expect(chowned).toContain(`baox:baox ${runtimes}`);
+  expect(readFileSync(join(prepared.source, 'local-executor', 'dist', 'baox-local-executor.mjs'), 'utf8')).toBe('program');
+
+  writeFileSync(join(source.repository, 'version.txt'), 'third\n');
+  const next = commitAll(source.repository, 'another release');
+  await prepareCandidate(source.repository, target, next);
+  expect(readFileSync(keyFile, 'utf8')).toBe(key);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('stops before the configuration when the ERP 凭据 key on the host is not a key, and leaves it as it was', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  const { keyFile } = writeHostNeeds(source.repository, target.profile.deployRoot);
+  const commit = commitAll(source.repository, 'line 2 host needs');
+  mkdirSync(join(keyFile, '..'), { recursive: true });
+  writeFileSync(keyFile, 'not a key\n', { mode: 0o600 });
+  const currentBefore = readlinkSync(target.current);
+
+  const prepared = await cli(source.repository, target, 'prepare', commit, '--json');
+  expect(prepared.code).not.toBe(0);
+  expect(prepared.out + prepared.err).toContain('erp-credential-key-invalid');
+  expect(readFileSync(keyFile, 'utf8')).toBe('not a key\n');
+  expect(readlinkSync(target.current)).toBe(currentBefore);
+}, REAL_SUBPROCESS_TIMEOUT_MS);
+
+it('refuses a unit that names a host file outside the deploy root', async () => {
+  const target = await createTarget();
+  const source = createRepository();
+  writeHostNeeds(source.repository, target.profile.deployRoot);
+  const service = join(source.repository, 'deploy', 'intranet', 'baox.service');
+  writeFileSync(service, readFileSync(service, 'utf8').replace(/BAOX_ERP_CREDENTIAL_KEY_FILE=.*$/mu, 'BAOX_ERP_CREDENTIAL_KEY_FILE=/etc/erp-credential.key'));
+  const commit = commitAll(source.repository, 'key outside the deploy root');
+
+  const prepared = await cli(source.repository, target, 'prepare', commit, '--json');
+  expect(prepared.code).not.toBe(0);
+  expect(prepared.out + prepared.err).toContain('host-path-outside-deploy-root');
 }, REAL_SUBPROCESS_TIMEOUT_MS);
 
 function writeWorkspaceSource(repository: string): void {

@@ -237,8 +237,8 @@ Chrome 或 Edge；自动替换升级。
   单个可执行文件要改 Node 的二进制，签名就没了，Apple 芯片上不签名跑不起来，而发布是在 222（Linux）上构建的，
   要在那里重新签名得另装第三方签名工具，而且只能是临时签名。Mac 上 Node 的 Developer ID 签名已核实；
   浏览器下载后 Gatekeeper 是否直接放行（公证）、Windows 上的 Authenticode 签名都还没核实。
-- **运行时：** 部署时 `install.sh` 从 Node 镜像下载三个平台的运行时，按 SHASUMS256.txt 核对，放在 `cache/local-executor-runtime`，
-  跨版本保留，`.nvmrc` 变了才重新下载。
+- **运行时：** 部署时 operator 准备候选版本（`host` 阶段）从 Node 镜像下载三个平台的运行时，按 SHASUMS256.txt 核对，
+  放在 `cache/local-executor-runtime`，跨版本保留，`.nvmrc` 变了才重新下载。
 - **安装：** 员工解压后双击 `start-baox.cmd`（Windows）或 `start-baox.command`（Mac），输入设置页上的配对码。程序把自己复制到
   `~/.baox/local-executor/app`，登记随登录启动（Windows 的「启动」文件夹、Mac 的 LaunchAgent），随即在后台启动。不需要管理员权限。
   首次运行要过一次 SmartScreen 或 Gatekeeper，设置页写了怎么点。
@@ -261,7 +261,7 @@ Chrome 或 Edge；自动替换升级。
   - 保存前提示挤号。
 - **服务端：**
   - `erp_credential` 表每个应用账号一行，密码用 AES-256-GCM 加密，并绑定应用账号；
-  - 密钥文件由 `install.sh` 生成，放在 `etc/` 下，不在数据目录里；
+  - 密钥文件由 operator 准备候选版本时生成（`host` 阶段，已有就不动），放在 `etc/` 下，不在数据目录里；
   - 状态有四种：未保存、未试登录、试登录成功、被 ERP 拒绝（密码已删除）。
 - **配对记下是谁：** 本地执行器配对时自报 `local_executor`，旧扩展一律算浏览器扩展。
 - **去报销前：** 配对的是本地执行器而凭据未试登录成功时，在建任务之前拒绝，提示去设置页。

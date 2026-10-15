@@ -21,7 +21,7 @@ import { startServer } from './server';
 // control socket; `BAOX_MAINTENANCE_SOCKET_PATH` is reserved for an isolated recovery rehearsal. Production uses the
 // data-directory default, while development and existing releases may leave the credential unset.
 // `BAOX_ERP_CREDENTIAL_KEY_FILE` holds the key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`); unset
-// or not created yet (a release started before install.sh wrote it), nobody can save ERP 凭据 and no 本地执行器 is
+// or not created yet (a release started before the operator's prepare created it), nobody can save ERP 凭据 and no 本地执行器 is
 // sent any. A file that exists but is not a key stops the server: that is a broken host, not a missing feature.
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
 // `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean

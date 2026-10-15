@@ -3038,12 +3038,19 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
     if (dependenciesReused && native === 'ready') note.reused = true;
   });
   await requireLease(paths, lease);
-  for (const file of [
+  await prepareHost(request, paths, env, lease);
+  await requireLease(paths, lease);
+  const builtOutputs = [
     path.join(paths.source, 'server', 'dist', 'main.mjs'),
     path.join(paths.source, 'server', 'dist', 'baox.mjs'),
     path.join(paths.source, 'web', 'dist', 'index.html'),
     path.join(paths.source, 'extension', 'dist', 'manifest.json'),
-  ]) {
+  ];
+  // The 本地执行器 program the settings page's zips carry (ADR-0035): without it every download answers 503.
+  if (await isRegularFile(path.join(paths.source, 'local-executor', 'package.json'))) {
+    builtOutputs.push(path.join(paths.source, 'local-executor', 'dist', 'baox-local-executor.mjs'));
+  }
+  for (const file of builtOutputs) {
     if (!await isRegularFile(file)) throw new CandidateFailure('candidate-build-output-missing');
   }
   const candidateCaddyfile = path.join(paths.source, 'deploy', 'intranet', 'Caddyfile');
@@ -3063,6 +3070,78 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
     await runAsBaox(path.join(request.deployRoot, 'bin', 'caddy'), ['validate', '--config', candidateCaddyfile, '--adapter', 'caddyfile'], paths.source, { HOME: env.HOME }, paths.log);
   });
   await requireLease(paths, lease);
+}
+
+/**
+ * What a release needs on the host outside itself, as its own baox.service names it (docs/design/erp-headless-v1.md,
+ * line 2): the key the hosted ERP 凭据 are sealed with, and the Node runtimes the 本地执行器 zips carry. Both live
+ * under the deploy root and outside every release, so a cutover or a rollback keeps them. A unit that names neither
+ * (a release from before line 2) records no phase.
+ */
+async function prepareHost(request, paths, env, lease) {
+  const unit = parseServiceEnvironment(await fs.readFile(path.join(paths.source, 'deploy', 'intranet', 'baox.service'), 'utf8'));
+  const keyFile = hostPath(request, unit.BAOX_ERP_CREDENTIAL_KEY_FILE);
+  const runtimes = hostPath(request, unit.BAOX_LOCAL_EXECUTOR_RUNTIMES);
+  const fetcher = path.join(paths.source, 'local-executor', 'scripts', 'fetch-runtimes.mjs');
+  const fetchRuntimes = runtimes !== null && await isRegularFile(fetcher);
+  if (keyFile === null && !fetchRuntimes) return;
+  const node = path.join(request.deployRoot, 'runtime', 'node', 'bin', 'node');
+  await timePhase(request, paths, lease, 'host', async () => {
+    if (keyFile !== null) await ensureErpCredentialKey(paths, lease, node, keyFile);
+    if (fetchRuntimes) {
+      await requireLease(paths, lease);
+      // Fetched once per Node version through the build's mirror and proxy (build.env), each checked against the
+      // release's SHASUMS256.txt; the script skips a version already there.
+      await fs.mkdir(runtimes, { recursive: true, mode: 0o755 });
+      await runLogged('chown', ['baox:baox', runtimes], paths.candidate, {}, paths.log);
+      try {
+        await runAsBaox(node, [fetcher, runtimes], paths.source, env, paths.log);
+      } catch {
+        throw new CandidateFailure('local-executor-runtime-fetch-failed');
+      }
+    }
+  });
+}
+
+/** A host file the unit names: absolute and under the deploy root, or no file at all. */
+function hostPath(request, value) {
+  if (!value) return null;
+  const relative = path.relative(request.deployRoot, value);
+  if (!path.isAbsolute(value) || !relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new CandidateFailure('host-path-outside-deploy-root');
+  return value;
+}
+
+const ERP_KEY_CHECK = 'const v = require("node:fs").readFileSync(process.argv[1], "utf8").trim(); process.exit(/^[0-9a-fA-F]{64}$/.test(v) || /^[A-Za-z0-9+/_-]{43}=?$/.test(v) ? 0 : 1);';
+
+/**
+ * The ERP 凭据 key (ADR-0033, server/src/erp/credential-vault.ts): 32 random bytes as hex, root:baox 0640, created
+ * when missing and never replaced. Losing it loses every saved ERP 凭据, so an existing file, even a broken one, is
+ * left alone and stops the deploy instead.
+ */
+async function ensureErpCredentialKey(paths, lease, node, keyFile) {
+  await requireLease(paths, lease);
+  await fs.mkdir(path.dirname(keyFile), { recursive: true, mode: 0o755 });
+  if (!await pathExists(keyFile)) {
+    const temporary = keyFile + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
+    await fs.writeFile(temporary, randomBytes(32).toString('hex') + '\n', { mode: 0o600, flag: 'wx' });
+    try {
+      // A link, not a rename: it fails rather than replace a key that appeared meanwhile.
+      await fs.link(temporary, keyFile);
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
+    await fsyncDirectory(path.dirname(keyFile));
+  }
+  if (!(await fs.lstat(keyFile)).isFile()) throw new CandidateFailure('erp-credential-key-invalid');
+  await runLogged('chown', ['root:baox', keyFile], paths.candidate, {}, paths.log);
+  await fs.chmod(keyFile, 0o640);
+  try {
+    await runAsBaox(node, ['-e', ERP_KEY_CHECK, keyFile], paths.source, { PATH: '/usr/bin:/bin' }, paths.log);
+  } catch {
+    throw new CandidateFailure('erp-credential-key-invalid');
+  }
 }
 
 /**

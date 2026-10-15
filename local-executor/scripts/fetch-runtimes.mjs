@@ -13,7 +13,7 @@ import { createGunzip, createInflateRaw } from 'node:zlib';
 // taken out of it, and only the node binary is kept: Node signs it (Authenticode on Windows, Developer ID and
 // notarisation on macOS), and baox ships it untouched, so neither system has to be told to trust a binary of ours.
 //
-// Run by deploy/intranet/install.sh on each deploy, through curl so the deployment's proxy settings apply. A platform
+// Run by the operator's candidate prepare on each deploy (deploy/operator, phase `host`), through curl so the deployment's proxy settings apply. A platform
 // already present at this version is skipped. Everything streams: the host this runs on has little memory to spare.
 
 const here = dirname(fileURLToPath(import.meta.url));

@@ -710,6 +710,7 @@ if [ "$1" = --filter ]; then
       server) printf 'main rebuilt' > server/dist/main.mjs; printf 'cli rebuilt' > server/dist/baox.mjs ;;
       web) printf '<html>rebuilt</html>' > web/dist/index.html ;;
       extension) printf '{"manifest_version":3,"rebuilt":true}' > extension/dist/manifest.json ;;
+      local-executor) printf 'program rebuilt' > local-executor/dist/baox-local-executor.mjs ;;
     esac
     shift 2
   done
@@ -735,6 +736,7 @@ if [ "$1" = build ]; then
   printf 'cli' > server/dist/baox.mjs
   printf '<html></html>' > web/dist/index.html
   printf '{"manifest_version":3}' > extension/dist/manifest.json
+  if [ -d local-executor ]; then mkdir -p local-executor/dist; printf 'program' > local-executor/dist/baox-local-executor.mjs; fi
   exit 0
 fi
 exit 2
