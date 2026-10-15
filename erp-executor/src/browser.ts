@@ -21,9 +21,18 @@ const CANDIDATES: Readonly<Record<string, readonly string[]>> = {
 
 type Env = Record<string, string | undefined>;
 
-export function findChrome(env: Env = process.env, platform: string = process.platform): string | null {
+// Per user on Windows: Chrome installed without administrator rights lives under %LOCALAPPDATA%, and Edge, which every
+// Windows 10 and 11 has, is the last resort (ADR-0035: the 本地执行器 uses the browser the PC already has).
+const windowsPerUser = (env: Env): string[] => [
+  ...(env['LOCALAPPDATA'] ? [`${env['LOCALAPPDATA']}\\Google\\Chrome\\Application\\chrome.exe`] : []),
+  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+];
+
+export function findChrome(env: Env = process.env, platform: string = process.platform, exists: (path: string) => boolean = existsSync): string | null {
   if (env['BAOX_CHROME']) return env['BAOX_CHROME'];
-  return (CANDIDATES[platform] ?? []).find((path) => existsSync(path)) ?? null;
+  const candidates = [...(CANDIDATES[platform] ?? []), ...(platform === 'win32' ? windowsPerUser(env) : [])];
+  return candidates.find((path) => exists(path)) ?? null;
 }
 
 async function reachable(port: number): Promise<boolean> {

@@ -48,7 +48,10 @@ const NAVIGATION_STOPS = new Set(['CHROMIUM_TARGET_NOT_FOUND', 'CHROMIUM_TARGET_
 
 export const BUSY = { code: 'local_executor_busy', message: '这台电脑上的 baox 本地执行器正在运行另一次去报销。' } as const;
 
-export function createLocalRunner(ports: LocalRunnerPorts): (method: string, payload: unknown) => Promise<ResultEvent | TrySignInAnswer> {
+/** One request at a time; `busy` says whether one is running, so the program is never replaced under a job. */
+export type LocalRunner = ((method: string, payload: unknown) => Promise<ResultEvent | TrySignInAnswer>) & { busy(): boolean };
+
+export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
   const log = ports.log ?? (() => {});
   let busy = false;
 
@@ -152,7 +155,7 @@ export function createLocalRunner(ports: LocalRunnerPorts): (method: string, pay
     }
   }
 
-  return async (method, payload) => {
+  const handle = async (method: string, payload: unknown): Promise<ResultEvent | TrySignInAnswer> => {
     if (method !== EXECUTOR_METHODS.fill && method !== EXECUTOR_METHODS.reconcile && method !== EXECUTOR_METHODS.trySignIn) throw new Error(`baox 本地执行器不认识 ${method}。`);
     if (busy) return method === EXECUTOR_METHODS.trySignIn ? { ok: false, code: BUSY.code, message: BUSY.message } : abortedResult(BUSY.code, BUSY.message);
     busy = true;
@@ -185,4 +188,5 @@ export function createLocalRunner(ports: LocalRunnerPorts): (method: string, pay
       busy = false;
     }
   };
+  return Object.assign(handle, { busy: () => busy });
 }

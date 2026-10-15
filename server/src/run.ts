@@ -21,7 +21,7 @@ import { startServer } from './server';
 // control socket; `BAOX_MAINTENANCE_SOCKET_PATH` is reserved for an isolated recovery rehearsal. Production uses the
 // data-directory default, while development and existing releases may leave the credential unset.
 // `BAOX_ERP_CREDENTIAL_KEY_FILE` holds the key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`); unset
-// or not created yet (a release started before install.sh wrote it), nobody can save ERP 凭据 and no 本地执行器 is
+// or not created yet (a release started before the operator's prepare created it), nobody can save ERP 凭据 and no 本地执行器 is
 // sent any. A file that exists but is not a key stops the server: that is a broken host, not a missing feature.
 // ERP: `BAOX_ERP_ORIGIN`, `BAOX_ERP_BUILD`, `BAOX_ERP_FORM_ID` (`erp/config.ts`); `BAOX_CHROMIUM_CDP_PORT`,
 // `BAOX_CHROME` and `BAOX_ERP_CHROMIUM=off` are read by the CDP executor only (`erp/cdp-executor.ts`), so they mean
@@ -33,6 +33,12 @@ const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
 // The extension template `pnpm build` leaves beside it; the download is assembled from it per request, so a template
 // built after the server started is picked up without a restart.
 const EXTENSION_TEMPLATE = fileURLToPath(new URL('../../extension/dist', import.meta.url));
+// The 本地执行器 (ADR-0035): the program `pnpm build` leaves beside the server, and the Node runtimes the deploy fetched
+// (`BAOX_LOCAL_EXECUTOR_RUNTIMES`, kept outside the release so a deploy does not download them again).
+const LOCAL_EXECUTOR = {
+  program: fileURLToPath(new URL('../../local-executor/dist/baox-local-executor.mjs', import.meta.url)),
+  runtimes: process.env['BAOX_LOCAL_EXECUTOR_RUNTIMES'] ?? fileURLToPath(new URL('../../local-executor/runtime', import.meta.url)),
+};
 
 // Where ERP jobs run. Absent, they run in each task owner's paired 浏览器扩展 (`erp/remote-executor.ts`), which is the
 // only choice the production entry has: the CDP executor is passed in by the development and e2e entries alone, so it
@@ -58,6 +64,7 @@ export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrid
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
       extensionTemplate: EXTENSION_TEMPLATE,
+      localExecutor: LOCAL_EXECUTOR,
       erpCredentialKey: credentialKeyFile && existsSync(credentialKeyFile) ? readCredentialKey(credentialKeyFile) : null,
       ...(maintenanceTokenFile ? {
         maintenanceToken: readMaintenanceToken(maintenanceTokenFile),

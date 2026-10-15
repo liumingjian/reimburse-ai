@@ -1,7 +1,7 @@
 /**
  * One measured deploy phase, as the host coordinator records it in the
  * deployment journal (`phaseTimings`). Candidate phases: upload, extract,
- * install, build, native, config. Cutover phases: snapshot, cutover, verify, reopen.
+ * install, build, native, host, config. Cutover phases: snapshot, cutover, verify, reopen.
  * `reused` marks a phase that carried the running release's output over
  * (node_modules, the native module, or every package build); `rebuilt` lists
  * the only packages an incremental build ran.
@@ -21,6 +21,7 @@ const PHASE_LABELS: Readonly<Record<string, string>> = {
   install: '安装依赖',
   build: '构建软件包',
   native: '原生模块检查',
+  host: '主机准备',
   config: '渲染配置',
   snapshot: '恢复快照',
   cutover: '切换发布',

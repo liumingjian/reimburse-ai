@@ -12,6 +12,9 @@ export type StoredPairing = z.infer<typeof StoredPairingSchema>;
 
 export type Store = {
   home: string;
+  /** The installed runtime, program and config (ADR-0035), started with the login. */
+  appDir: string;
+  logsDir: string;
   profileDir: string;
   stagingRoot: string;
   readPairing(): StoredPairing | null;
@@ -27,6 +30,8 @@ export function openStore(env: Record<string, string | undefined> = process.env)
   const ensure = () => mkdirSync(home, { recursive: true, mode: 0o700 });
   return {
     home,
+    appDir: join(home, 'app'),
+    logsDir: join(home, 'logs'),
     profileDir: join(home, 'profile'),
     stagingRoot: join(home, 'staging'),
     readPairing() {
@@ -43,7 +48,7 @@ export function openStore(env: Record<string, string | undefined> = process.env)
       rmSync(pairingFile, { force: true });
     },
     prepare() {
-      for (const dir of [home, join(home, 'profile'), join(home, 'staging')]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+      for (const dir of [home, join(home, 'profile'), join(home, 'staging'), join(home, 'logs')]) mkdirSync(dir, { recursive: true, mode: 0o700 });
     },
   };
 }

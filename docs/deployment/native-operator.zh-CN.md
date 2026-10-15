@@ -40,13 +40,20 @@ Node、隔离 GCC、构建 Python、pnpm、Caddy、`baox` 服务账号、受控�
 
 目标主机先取得共享的 `/opt/tools/baox/maintenance/deployment.lock`，再写入 `/opt/tools/baox/maintenance/deployment-journal.json`。锁所有者包含随机代次、进程号和进程起始身份；失联的旧进程不能删除新所有者的锁。准备过程在 `/opt/tools/baox/candidates/<提交前缀>-<归档前缀>/` 解包、构建并校验输出。SSH 中断后，后续同一候选会读取 journal：已经完整校验的归档可以继续构建；构建开始后中断则保留候选并返回恢复要求，不会自动重复不确定的构建。
 
-成功的清单记录提交 SHA、归档 SHA、目标重新校验的 SHA、运行时版本、构建环境文件的 SHA 与键名，以及当前发布、Node 运行时引用和 Caddy/systemd 配置的恢复副本与哈希。环境变量值、令牌和其他机密不会写进清单、归档、日志或 journal。准备不会改动 `current`、共享运行时引用、服务、反向代理或数据目录，也不开放访问或切换版本。
+成功的清单记录提交 SHA、归档 SHA、目标重新校验的 SHA、运行时版本、构建环境文件的 SHA 与键名，以及当前发布、Node 运行时引用和 Caddy/systemd 配置的恢复副本与哈希。环境变量值、令牌和其他机密不会写进清单、归档、日志或 journal。准备不会改动 `current`、共享运行时引用、服务、反向代理或数据目录，也不开放访问或切换版本。候选目录之外，它只写下面 `host` 阶段说的两样主机文件。
+
+`host` 阶段只在候选的 `deploy/intranet/baox.service` 写明这些文件时执行，路径必须在 `/opt/tools/baox` 之下，否则准备以 `host-path-outside-deploy-root` 停止：
+
+- `BAOX_ERP_CREDENTIAL_KEY_FILE`：托管 ERP 凭据的加密密钥（ADR-0033）。缺失时生成 32 字节随机数（十六进制），设为 `root:baox 0640`；已经存在就绝不改写内容（丢了它所有已保存的 ERP 凭据都失效），只把属主和权限设回 `root:baox 0640`。新密钥先落盘再取名，断电不会留下空密钥。现有文件不是合法密钥时，准备以 `erp-credential-key-invalid` 停止，内容保持原样。
+- `BAOX_LOCAL_EXECUTOR_RUNTIMES`：本地执行器 zip 里带的 Node 运行时（ADR-0035）。以服务账号身份运行候选里的 `local-executor/scripts/fetch-runtimes.mjs`，经 `build.env` 的镜像和代理下载 Windows 与两种 Mac 的运行时，按 SHASUMS256.txt 核对；同一 Node 版本只下载一次，已经下载过时不联网；所以镜像不可用只会挡住改了 `.nvmrc` 的部署。失败时准备以 `local-executor-runtime-fetch-failed` 停止。
+
+这个目录第一次下载后归服务账号所有，所以 root 只对真实目录改属主，不跟随符号链接；密钥所在目录和运行时目录是符号链接时，准备以 `host-path-not-plain` 停止。这两样都放在任何发布之外，切换和回滚都保留它们，丢弃候选也不会删除它们。候选含 `local-executor` 时，构建输出检查还要求 `local-executor/dist/baox-local-executor.mjs`。
 
 `deploy [Git 引用]` 默认使用 `origin/main` 的已提交归档，先执行同一归档的候选准备，再在一个共享锁和维护窗口中创建新的、已演练的恢复快照并切换候选。`deploy --candidate <候选标识>` 只切换已准备的候选。两种形式都会先检查运行时和开放的维护闸门；只有与同一候选匹配的中断 journal 才能绕过这项新发布预检，以便在服务停止、闸门关闭时进行受限恢复。
 
 切换先保留原发布、完整数据目录、Node 运行时引用和三份配置的私有恢复副本，再关闭准入、停止公网代理和原服务。候选发布先验证配置、启动服务、验证 loopback，并在维护闸门仍关闭时通过仅绑定 loopback 的临时 Caddy 实例验证代理的 `/api/session` 响应；它不会启动公网 Caddy。只有这些检查完成后才持久记录开放访问意图并重新开放闸门。开放访问意图之前的失败会恢复原发布、数据、运行时、配置及原始所有者和模式；恢复无法验证时保持屏障关闭。开放访问意图之后，即使 SSH 或闸门响应丢失，命令也不会自动覆盖数据或回滚发布，只报告需要运维人员核对的交接状态。
 
-每次部署都在 journal 的 `phaseTimings` 中记录各阶段耗时（`phase`、`startedAt`、`durationMs`，失败阶段带 `failed: true`）。候选准备记录 `upload`（接收并校验归档）、`extract`、`install`、`build`、`native`（better-sqlite3 检查与必要的重建）和 `config`（渲染并校验配置），并把这些条目写进候选清单；切换把它们带入自己的 journal，再追加 `snapshot`、`cutover`、`verify` 和 `reopen`。`deploy` 与 `prepare` 在输出末尾打印阶段耗时表，`--json` 输出中的 `phaseTimings` 与 journal 一致。这些记录只用于测量，恢复逻辑不读取它们。
+每次部署都在 journal 的 `phaseTimings` 中记录各阶段耗时（`phase`、`startedAt`、`durationMs`，失败阶段带 `failed: true`）。候选准备记录 `upload`（接收并校验归档）、`extract`、`install`、`build`、`native`（better-sqlite3 检查与必要的重建）、`host`（发布在主机上需要的文件，见下）和 `config`（渲染并校验配置），并把这些条目写进候选清单；切换把它们带入自己的 journal，再追加 `snapshot`、`cutover`、`verify` 和 `reopen`。`deploy` 与 `prepare` 在输出末尾打印阶段耗时表，`--json` 输出中的 `phaseTimings` 与 journal 一致。这些记录只用于测量，恢复逻辑不读取它们。
 
 候选准备是增量的。解包后，协调器在候选清单的 `buildInputs` 中记录依赖键（`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`.npmrc` 以及 Node、pnpm、GCC、构建 Python 版本的哈希）和每个带 `build` 脚本的工作区包的构建键（依赖键、仓库根目录文件，以及该包和它的工作区依赖的源码树）。`current` 指向的托管发布若有这份记录：依赖键相同时，以服务账号身份把该发布的全部 `node_modules`（含已编译的 better-sqlite3）硬链接进候选，不再运行 `pnpm install`，`native` 仍执行冒烟检查；构建键相同的包直接复制该发布的 `dist`，只用 `pnpm --filter <包> run build` 构建有变化的包。锁文件等依赖输入一变就全新安装并完整构建；根 `build` 脚本不是 `pnpm -r build`、工作区文件不是简单列表、或任何复用步骤失败时，同样退回完整安装和构建。运行中的发布只被读取，回滚和恢复快照不受影响。阶段条目用 `reused: true` 标出沿用的阶段，用 `rebuilt` 列出增量构建实际构建的包，阶段耗时表在对应行后注明。
 
