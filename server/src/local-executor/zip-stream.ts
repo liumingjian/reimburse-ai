@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream, statSync } from 'node:fs';
 import { once } from 'node:events';
+import { finished } from 'node:stream/promises';
 import { crc32 } from 'node:zlib';
 
 // A zip written to disk without holding its members in memory: the 本地执行器's zips carry a Node runtime of ~100 MB,
@@ -20,17 +21,24 @@ const STORED = 0;
 const DOS_DATE_1980_01_01 = (1 << 5) | 1;
 const REGULAR_FILE = 0o100000;
 
+// The size is taken once and both passes read exactly that many bytes, so the header and the data always agree.
 async function measure(entry: StreamEntry): Promise<{ crc: number; size: number }> {
   if ('data' in entry) return { crc: crc32(entry.data), size: entry.data.length };
+  const size = statSync(entry.file).size;
   let crc = 0;
-  for await (const chunk of createReadStream(entry.file)) crc = crc32(chunk as Buffer, crc);
-  return { crc, size: statSync(entry.file).size };
+  if (size > 0) for await (const chunk of createReadStream(entry.file, { end: size - 1 })) crc = crc32(chunk as Buffer, crc);
+  return { crc, size };
 }
 
 export async function writeStoredZip(target: string, entries: readonly StreamEntry[]): Promise<void> {
   const out = createWriteStream(target);
+  // A write that fails (a full disk) rejects here instead of surfacing as an unhandled 'error' that ends the server.
+  let failure: Error | null = null;
+  out.on('error', (error) => { failure = error; });
   const write = async (bytes: Buffer) => {
-    if (!out.write(bytes)) await once(out, 'drain');
+    if (failure) throw failure;
+    if (!out.write(bytes)) await Promise.race([once(out, 'drain'), once(out, 'close')]);
+    if (failure) throw failure;
   };
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -50,7 +58,7 @@ export async function writeStoredZip(target: string, entries: readonly StreamEnt
     await write(local);
     await write(name);
     if ('data' in entry) await write(entry.data);
-    else for await (const chunk of createReadStream(entry.file)) await write(chunk as Buffer);
+    else if (size > 0) for await (const chunk of createReadStream(entry.file, { end: size - 1 })) await write(chunk as Buffer);
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(CENTRAL_HEADER, 0);
@@ -78,5 +86,5 @@ export async function writeStoredZip(target: string, entries: readonly StreamEnt
   await write(directory);
   await write(end);
   out.end();
-  await once(out, 'finish');
+  await finished(out);
 }

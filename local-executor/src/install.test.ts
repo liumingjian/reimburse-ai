@@ -43,6 +43,9 @@ describe('starting with the login on Windows', () => {
     expect(runner).toContain(`"%~dp0runtime\\node.exe" "%~dp0${PROGRAM_FILE}" run >> "%USERPROFILE%\\.baox\\local-executor\\logs\\executor.log" 2>&1`);
     expect(runner).toContain('if %errorlevel%==0 exit /b 0');
     expect(runner).toContain('goto loop');
+    // A hidden window has no console for `timeout` to wait on.
+    expect(runner).toContain('ping -n 11 127.0.0.1 >nul');
+    expect(runner).not.toContain('timeout');
   });
 });
 
@@ -75,19 +78,17 @@ describe('installApp', () => {
   });
 });
 
-describe('one executor per login', () => {
-  it('lets the first claim the slot, turns a second away while the first lives, and frees it on release', () => {
-    const home = scratch();
-    const first = claimInstance(home);
-    expect(first).not.toBeNull();
-    expect(claimInstance(home, process.pid + 1_000_000)).toBeNull();
-    first!.release();
-    expect(claimInstance(home, process.pid + 1_000_000)).not.toBeNull();
-  });
+describe('one executor per PC', () => {
+  const port = 47_000 + Math.floor(Math.random() * 900);
 
-  it('takes over from a holder that is gone', () => {
-    const home = scratch();
-    writeFileSync(join(home, 'executor.pid'), '999999999');
-    expect(claimInstance(home)).not.toBeNull();
+  it('lets the first claim the slot, turns a second away while the first lives, and frees it on release', async () => {
+    const first = await claimInstance(port);
+    expect(first).not.toBeNull();
+    expect(await claimInstance(port)).toBeNull();
+    first!.release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const again = await claimInstance(port);
+    expect(again).not.toBeNull();
+    again!.release();
   });
 });

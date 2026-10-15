@@ -8,6 +8,7 @@
 //   pair --origin http://<app> <配对码>          pair with the 应用账号 that issued the code
 //   unpair                                       撤销配对, on the app and here
 //   uninstall                                    stop starting with the login, and 撤销配对
+//   self-check                                   load and answer: what an update asks of a new program first
 //
 // The ERP 凭据 are the app's to keep (ADR-0033): the employee saves them on the settings page, and each job brings
 // them down with it. This program never asks for them and never writes them anywhere.
@@ -18,7 +19,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LocalExecutorConfigSchema } from '@baox/contract';
+import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LocalExecutorConfigSchema } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
 import { serverBlobs } from '@baox/extension/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
@@ -27,7 +28,7 @@ import { claimInstance } from './instance';
 import { autostartFiles, installApp, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, writeInstallFiles, type InstallFile } from './install';
 import { createLocalRunner } from './runner';
 import { openStore } from './store';
-import { checkForUpdate, sha256 } from './update';
+import { checkForUpdate, SELF_CHECK_ANSWER, sha256 } from './update';
 
 const store = openStore();
 const say = (line: string) => process.stdout.write(`[baox] ${line}\n`);
@@ -42,6 +43,10 @@ const programDir = dirname(programPath);
 const configFile = join(programDir, LOCAL_EXECUTOR_CONFIG_FILE);
 const config = existsSync(configFile) ? LocalExecutorConfigSchema.parse(JSON.parse(readFileSync(configFile, 'utf8')) as unknown) : null;
 const UPDATE_EVERY_MS = 30 * 60_000;
+// After a refusal that a new program did not fix: wait before the launcher starts it again, so a server that keeps
+// refusing is asked every few minutes, not every ten seconds.
+const REFUSED_BACKOFF_MS = 5 * 60_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LOG_LIMIT_BYTES = 5 * 1024 * 1024;
 
 async function redeem(origin: string, code: string) {
@@ -75,14 +80,34 @@ const installFiles = (): InstallFile[] => autostartFiles({
 });
 
 /** Start the installed copy now, as the login would: no window, and the launcher's restart rule. */
-function startInBackground(files: readonly InstallFile[]) {
+function startInBackground(files: readonly InstallFile[]): boolean {
   if (process.platform === 'darwin') {
     const target = `gui/${process.getuid?.() ?? 0}`;
     try { execFileSync('launchctl', ['bootout', `${target}/${LAUNCH_AGENT}`], { stdio: 'ignore' }); } catch { /* was not loaded */ }
-    execFileSync('launchctl', ['bootstrap', target, files[0]!.path], { stdio: 'ignore' });
+    // bootout returns before launchd has let go of the label; bootstrap right after it can fail for a moment.
+    for (let tries = 0; ; tries += 1) {
+      try {
+        execFileSync('launchctl', ['bootstrap', target, files[0]!.path], { stdio: 'ignore' });
+        return true;
+      } catch {
+        if (tries >= 5) return false;
+        execFileSync('sleep', ['1']);
+      }
+    }
   } else if (process.platform === 'win32') {
     const runner = files[0]!.path.replace(/'/g, "''");
     spawn('powershell', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', `Start-Process -WindowStyle Hidden -FilePath '${runner}'`], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  }
+  return true;
+}
+
+/** Is this stored pairing still one the app knows? Unknown (the app not answering) counts as yes. */
+async function stillPaired(pairing: { origin: string; token: string }): Promise<boolean> {
+  try {
+    const answer = await fetch(`${pairing.origin}${EXTENSION_PAIR_PATH}`, { headers: { authorization: `Bearer ${pairing.token}` } });
+    return answer.status !== 401;
+  } catch {
+    return true;
   }
 }
 
@@ -91,7 +116,10 @@ async function setup() {
   const prompt = createInterface({ input: process.stdin, output: process.stdout });
   try {
     let pairing = store.readPairing();
-    if (pairing && pairing.origin !== config.origin) pairing = null;
+    if (pairing && (pairing.origin !== config.origin || !(await stillPaired(pairing)))) {
+      store.clearPairing();
+      pairing = null;
+    }
     for (let tries = 0; !pairing && tries < 3; tries += 1) {
       const code = (await prompt.question('请输入应用设置页上显示的配对码：')).trim();
       if (!code) continue;
@@ -110,8 +138,8 @@ async function setup() {
     if (process.platform === 'darwin') { try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', store.appDir], { stdio: 'ignore' }); } catch { /* not set */ } }
     const files = installFiles();
     writeInstallFiles(files);
-    startInBackground(files);
-    say('已安装：本地执行器正在后台运行，以后每次登录电脑都会自动运行。现在可以关掉这个窗口，回到应用去报销。');
+    if (startInBackground(files)) say('已安装：本地执行器正在后台运行，以后每次登录电脑都会自动运行。现在可以关掉这个窗口，回到应用去报销。');
+    else say('已安装，但这次没能马上在后台启动。请退出登录再登录一次电脑，它会自动运行。');
     if (process.stdin.isTTY) await prompt.question('按回车键关闭这个窗口。');
   } finally {
     prompt.close();
@@ -135,7 +163,7 @@ async function run() {
     return fail('这台电脑还没有配对：先运行 pair。');
   }
   store.prepare();
-  const instance = claimInstance(store.home);
+  const instance = await claimInstance();
   if (!instance) {
     say('本地执行器已经在运行。');
     process.exit(0);
@@ -157,16 +185,19 @@ async function run() {
     if (!config) return;
     const check = await checkForUpdate({ origin: pairing.origin, token: pairing.token, programPath, running });
     if (check.kind === 'restart') {
+      // Never under a job: a restart there would cut it off mid-write. The new program waits on disk until it is done.
+      while (runner?.busy()) await sleep(5_000);
       say(`换成应用发布的新版本（${why}）`);
       leave(RESTART_EXIT_CODE);
     }
     if (check.kind === 'runtime') say(`应用发布的版本要用新的运行环境（Node ${check.wants}），请到应用的设置页重新下载本地执行器安装包。`);
     if (check.kind === 'failed') say(`检查新版本没有成功：${check.reason}`);
   };
+  let runner: ReturnType<typeof createLocalRunner> | null = null;
   await update('启动时');
 
   const connection = channelWatch();
-  const runner = createLocalRunner({
+  runner = createLocalRunner({
     request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('channel_closed'))),
     connection,
     blobs: serverBlobs({ origin: pairing.origin, token: async () => pairing.token, fetch: (url, init) => fetch(url, init) }),
@@ -175,7 +206,7 @@ async function run() {
     log: say,
   });
   // Never under a job: a restart there would cut it off mid-write.
-  timer = setInterval(() => { if (!runner.busy()) void update('定期检查'); }, UPDATE_EVERY_MS);
+  timer = setInterval(() => { if (!runner?.busy()) void update('定期检查'); }, UPDATE_EVERY_MS);
   client = createChannelClient({
     origin: pairing.origin,
     token: pairing.token,
@@ -185,8 +216,17 @@ async function run() {
     onStatus: (status) => {
       connection.status(status);
       say(status.state === 'ready' ? `已连上应用（账号 ${status.accountId}）` : status.state === 'refused' ? `应用拒绝了连接：${status.message}` : status.state);
-      // A version the app no longer talks to is what a new program fixes; a pairing that is gone is not.
-      if (status.state === 'refused') void update('应用拒绝了连接').then(() => leave(0));
+      // A pairing that is gone stops it until the employee pairs again (exit 0: the launcher leaves it stopped).
+      // Anything else, a version the app no longer talks to above all, is what a new program fixes; failing that,
+      // it waits and lets the launcher start it again.
+      if (status.state === 'refused') {
+        void (async () => {
+          await update('应用拒绝了连接');
+          if (status.code === 'not_paired') leave(0);
+          await sleep(REFUSED_BACKOFF_MS);
+          leave(1);
+        })();
+      }
     },
   });
   process.once('SIGINT', () => leave(0));
@@ -194,7 +234,8 @@ async function run() {
 }
 
 const [command, ...rest] = process.argv.slice(2);
-if (command === 'setup' || (command === undefined && config)) await setup();
+if (command === 'self-check') process.stdout.write(`${SELF_CHECK_ANSWER}\n`);
+else if (command === 'setup' || (command === undefined && config)) await setup();
 else if (command === 'pair') await pair(rest);
 else if (command === 'unpair') await unpair();
 else if (command === 'uninstall') await uninstall();

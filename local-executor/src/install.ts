@@ -47,7 +47,8 @@ export function autostartFiles({ platform, appDir, logsDir, userHome, appData }:
           ':loop',
           `"%~dp0runtime\\node.exe" "%~dp0${PROGRAM_FILE}" run >> "${log}" 2>&1`,
           'if %errorlevel%==0 exit /b 0',
-          'timeout /t 10 /nobreak >nul',
+          // Not `timeout`: with no console (started hidden) it returns at once and the loop would spin.
+          'ping -n 11 127.0.0.1 >nul',
           'goto loop',
           '',
         ].join('\r\n'),
@@ -57,7 +58,7 @@ export function autostartFiles({ platform, appDir, logsDir, userHome, appData }:
         content: [
           '@echo off',
           'rem baox local executor: started with the login, with no window.',
-          `powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '${windowsPath(runner, userHome)}'"`,
+          `powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '${windowsPath(runner, userHome).replace(/'/g, "''")}'"`,
           '',
         ].join('\r\n'),
       },

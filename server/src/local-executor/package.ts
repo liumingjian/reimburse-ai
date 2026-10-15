@@ -15,7 +15,7 @@ import { writeStoredZip, type StreamEntry } from './zip-stream';
 export type LocalExecutorDist = {
   /** `local-executor/dist/baox-local-executor.mjs`. */
   program: string;
-  /** `local-executor/runtime`: `<platform>/node[.exe]` and `VERSION`. */
+  /** `local-executor/runtime`: `<version>/<platform>/node[.exe]`, and `VERSION` naming the version served. */
   runtimes: string;
 };
 
@@ -60,12 +60,17 @@ export function releaseOf(dist: LocalExecutorDist | null): LocalExecutorRelease 
 /** The zip for `platform` and `origin`, assembled on first ask; its path. */
 export async function packageLocalExecutor(dist: LocalExecutorDist | null, platform: LocalExecutorPlatform, origin: string, cacheDir: string): Promise<string> {
   const release = releaseOf(dist);
-  const runtime = join(dist!.runtimes, platform, binaryOf(platform));
+  const runtime = join(dist!.runtimes, release.runtime, platform, binaryOf(platform));
   if (!existsSync(runtime)) throw new LocalExecutorUnavailable(`no ${platform} runtime at ${runtime}`);
   const key = createHash('sha256').update(JSON.stringify([release, platform, origin])).digest('hex').slice(0, 24);
   const target = join(cacheDir, `${platform}-${key}.zip`);
   if (existsSync(target)) return target;
   mkdirSync(cacheDir, { recursive: true });
+  // A build a crash cut off leaves its .partial behind; nothing else could still be writing one an hour old.
+  for (const old of readdirSync(cacheDir)) {
+    const path = join(cacheDir, old);
+    if (old.endsWith('.partial') && Date.now() - statSync(path).mtimeMs > 3_600_000) rmSync(path, { force: true });
+  }
   const launcher = LAUNCHERS[platform];
   const entries: StreamEntry[] = [
     { name: `${ROOT}/${launcher.name}`, mode: 0o755, data: Buffer.from(launcher.content, 'utf8') },

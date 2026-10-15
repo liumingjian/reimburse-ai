@@ -24,8 +24,8 @@ beforeEach(async () => {
   mkdirSync(join(workDir, 'dist'), { recursive: true });
   writeFileSync(dist.program, 'console.log("baox");\n');
   for (const [platform, binary] of [['win-x64', 'node.exe'], ['darwin-arm64', 'node'], ['darwin-x64', 'node']] as const) {
-    mkdirSync(join(dist.runtimes, platform), { recursive: true });
-    writeFileSync(join(dist.runtimes, platform, binary), `runtime for ${platform}`);
+    mkdirSync(join(dist.runtimes, '24.21.0', platform), { recursive: true });
+    writeFileSync(join(dist.runtimes, '24.21.0', platform, binary), `runtime for ${platform}`);
   }
   writeFileSync(join(dist.runtimes, 'VERSION'), '24.21.0\n');
   server = await createTestServer({ localExecutor: dist });
@@ -118,7 +118,7 @@ describe('the 本地执行器 download', () => {
   });
 
   it('says so, rather than serve half a package, when the runtime was never fetched', async () => {
-    rmSync(join(dist.runtimes, 'win-x64'), { recursive: true });
+    rmSync(join(dist.runtimes, '24.21.0', 'win-x64'), { recursive: true });
     const answer = await download('win-x64');
     expect(answer.status).toBe(503);
     expect(await answer.json()).toMatchObject({ error: { message: LOCAL_EXECUTOR_DOWNLOAD_ERRORS.unavailable } });

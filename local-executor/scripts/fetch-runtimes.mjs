@@ -1,14 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, closeSync, createReadStream, createWriteStream, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, createReadStream, createWriteStream, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { createGunzip, createInflateRaw } from 'node:zlib';
 
-// Fetches Node's own runtime for every platform the 本地执行器 ships to (ADR-0035) into `runtime/<platform>/` (or the
-// directory given as the first argument), next to a VERSION file. The version is the repo's (.nvmrc), the one the
+// Fetches Node's own runtime for every platform the 本地执行器 ships to (ADR-0035) into `runtime/<version>/<platform>/`
+// (or under the directory given as the first argument), and names the version served in `runtime/VERSION`. The version is the repo's (.nvmrc), the one the
 // program is built and tested on. Each archive is checked against the release's SHASUMS256.txt before anything is
 // taken out of it, and only the node binary is kept: Node signs it (Authenticode on Windows, Developer ID and
 // notarisation on macOS), and baox ships it untouched, so neither system has to be told to trust a binary of ours.
@@ -127,15 +127,15 @@ mkdirSync(out, { recursive: true });
 const scratch = join(tmpdir(), `baox-runtimes-${process.pid}`);
 mkdirSync(scratch, { recursive: true });
 try {
+  // Each version in its own directory; VERSION names the one served, and moves only once that one is complete. A
+  // fetch that fails half-way leaves the server on the version it had.
   const versionFile = join(out, 'VERSION');
   const current = existsSync(versionFile) ? readFileSync(versionFile, 'utf8').trim() : null;
-  const todo = Object.entries(PLATFORMS).filter(([platform, p]) => current !== version || !existsSync(join(out, platform, p.binary)));
-  if (todo.length === 0) {
-    console.log(`[runtimes] Node ${version} already present for every platform`);
-  } else {
+  const home = join(out, version);
+  const todo = Object.entries(PLATFORMS).filter(([platform, p]) => !existsSync(join(home, platform, p.binary)));
+  if (todo.length > 0) {
     curl(`${mirror}/v${version}/SHASUMS256.txt`, join(scratch, 'SHASUMS256.txt'));
     const sums = new Map(readFileSync(join(scratch, 'SHASUMS256.txt'), 'utf8').split('\n').map((line) => line.trim().split(/\s+/)).filter((p) => p.length === 2).map(([sum, file]) => [file, sum]));
-    if (current !== version) writeFileSync(versionFile, '');
     for (const [platform, p] of todo) {
       const archive = join(scratch, p.archive);
       console.log(`[runtimes] ${platform}: ${p.archive}`);
@@ -143,7 +143,7 @@ try {
       const expected = sums.get(p.archive);
       const actual = await sha256Of(archive);
       if (!expected || expected !== actual) throw new Error(`${p.archive}: sha256 ${actual} does not match SHASUMS256.txt (${expected ?? 'not listed'})`);
-      const dir = join(out, platform);
+      const dir = join(home, platform);
       mkdirSync(dir, { recursive: true });
       const partial = join(dir, `${p.binary}.partial`);
       if (p.archive.endsWith('.zip')) await fromZip(archive, p.member, partial);
@@ -152,9 +152,14 @@ try {
       renameSync(partial, join(dir, p.binary));
       rmSync(archive, { force: true });
     }
-    writeFileSync(versionFile, `${version}\n`);
-    console.log(`[runtimes] Node ${version} ready in ${out}`);
   }
+  if (current !== version) {
+    writeFileSync(`${versionFile}.partial`, `${version}\n`);
+    renameSync(`${versionFile}.partial`, versionFile);
+  }
+  // Only the version served is kept.
+  for (const entry of readdirSync(out)) if (/^\d+\.\d+\.\d+$/.test(entry) && entry !== version) rmSync(join(out, entry), { recursive: true, force: true });
+  console.log(todo.length ? `[runtimes] Node ${version} ready in ${out}` : `[runtimes] Node ${version} already present for every platform`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

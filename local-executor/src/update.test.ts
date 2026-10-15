@@ -30,7 +30,7 @@ const server = (release: unknown, program: Uint8Array<ArrayBuffer> = NEW): typeo
   return new Response(null, { status: 404 });
 }) as typeof fetch;
 
-const check = (get: typeof fetch) => checkForUpdate({ origin: ORIGIN, token: 'tok', programPath, running: sha256(OLD), runtime: '24.21.0', fetch: get });
+const check = (get: typeof fetch, starts = true) => checkForUpdate({ origin: ORIGIN, token: 'tok', programPath, running: sha256(OLD), runtime: '24.21.0', fetch: get, selfCheck: () => starts });
 
 describe('checkForUpdate', () => {
   it('does nothing when it already runs the program the app ships', async () => {
@@ -41,6 +41,17 @@ describe('checkForUpdate', () => {
   it('replaces the program with the one the app ships, checked by its sha256, and asks for a restart', async () => {
     expect(await check(server({ program: sha256(NEW), runtime: '24.21.0' }))).toEqual({ kind: 'restart' });
     expect(readFileSync(programPath)).toEqual(NEW);
+  });
+
+  it('keeps the program, and the old one beside it, when the new one does not start here', async () => {
+    const result = await check(server({ program: sha256(NEW), runtime: '24.21.0' }), false);
+    expect(result).toMatchObject({ kind: 'failed' });
+    expect(readFileSync(programPath)).toEqual(OLD);
+  });
+
+  it('keeps the previous program beside the new one', async () => {
+    await check(server({ program: sha256(NEW), runtime: '24.21.0' }));
+    expect(readFileSync(`${programPath}.prev`)).toEqual(OLD);
   });
 
   it('keeps the program when the bytes it got are not the ones announced', async () => {
