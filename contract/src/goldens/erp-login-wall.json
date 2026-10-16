@@ -610,7 +610,8 @@
     "abortReason": null,
     "loginNotice": null,
     "rerunNotice": null,
-    "erpAccount": null
+    "erpAccount": null,
+    "review": null
   },
   "readback": {
     "status": "none",

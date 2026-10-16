@@ -265,6 +265,7 @@ export function t2Snapshot(): TaskSnapshot {
     loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
   snapshot.readback = readbackOf(T2_ROWS);
   // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
@@ -317,6 +318,7 @@ export function t3Snapshot(): TaskSnapshot {
     loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
   return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));

@@ -47,6 +47,7 @@ export function idleErp(): Erp {
     loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
 }
 
