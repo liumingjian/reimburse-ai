@@ -24,7 +24,7 @@ default, and a worktree's `.git` file points at a path that exists only on the s
 Playwright's own `--only-changed` fail there.
 
 ```bash
-rexec "set -o pipefail; pnpm test:changed $(git diff --name-only HEAD; git ls-files -o --exclude-standard) 2>&1 | tail -40"
+rexec "set -o pipefail; P='npx --yes pnpm@10.17.1'; \$P install --frozen-lockfile --prefer-offline --reporter=silent && \$P test:changed $(git diff --name-only HEAD; git ls-files -o --exclude-standard) 2>&1 | tail -40"
 ```
 
 The `$(...)` expands on the server before rexec sends the command. Flags: `--e2e`, `--no-e2e`, `--no-build` (reuse the
@@ -40,8 +40,8 @@ Once, when the change is done, run the gate `docs/agents/merge-conditions.md` pi
 and collect the result later; the whole e2e suite (full gate only) takes over 20 minutes.
 
 ```bash
-rexec --background 'set -o pipefail; pnpm typecheck && pnpm test 2>&1 | tail -40'
-rexec --background --timeout 3600 'set -o pipefail; pnpm test:e2e 2>&1 | tail -40'   # full gate only
+rexec --background 'set -o pipefail; P="npx --yes pnpm@10.17.1"; $P install --frozen-lockfile --prefer-offline --reporter=silent && $P typecheck && $P test 2>&1 | tail -40'
+rexec --background --timeout 3600 'set -o pipefail; P="npx --yes pnpm@10.17.1"; $P install --frozen-lockfile --prefer-offline --reporter=silent && $P test:e2e 2>&1 | tail -40'   # full gate only
 ```
 
 The Mac is shared with the maintainer's desktop apps, and the web, extension and e2e suites have timing-sensitive
@@ -55,17 +55,11 @@ web suite and Playwright cap their own parallelism (`maxWorkers` in `web/vite.co
 `server-ocr` vitest project (`server/vitest.config.ts`), one file at a time, so they cannot starve the web suite's
 timing tests; a new server test that parses an image for real goes on its `OCR_TESTS` list.
 
-rexec's sync refuses configuration files, so a rexec workspace has no `.npmrc`. Without its `use-node-version`, pnpm
-runs the Mac's bare Node 22 instead of Node 24, and under load the ERP and OCR server tests then fail spuriously. Put
-the file back at the start of every rexec command that runs pnpm (keep it in step with `/.npmrc`):
-
-```bash
-rexec --background "printf 'save-exact=true\nuse-node-version=24.21.0\nnode-mirror:release=https://npmmirror.com/mirrors/node/\n' > .npmrc; export TMPDIR=/tmp; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm typecheck && pnpm test 2>&1 | tail -40"
-```
-
-Every rexec job also starts from a fresh workspace with no `node_modules`, so install first as above. rexec's own
-`TMPDIR` is a long per-job path, and a test's maintenance socket under it passes the 104-byte Unix socket limit
-(`listen EINVAL … maintenance-gate.sock`), so point `TMPDIR` at `/tmp` as above.
+Every rexec job runs in a workspace of its own. rexec syncs `/.npmrc`, so pnpm runs Node 24 through its
+`use-node-version`; it gives each job a short `TMPDIR`, so the maintenance socket stays within the 104-byte Unix socket
+limit; and it starts the job with the `node_modules` of the last successful job from the same worktree, so the install
+only reconciles against the lockfile. Install first, through `npx --yes pnpm@10.17.1` as above: the Mac's own pnpm
+switches to 10.17.1 without `node-gyp`, and `better-sqlite3` then fails to build.
 
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
 in a rexec workspace synced from a worktree.
