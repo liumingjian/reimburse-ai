@@ -1030,6 +1030,10 @@ export const HANDOVER_COMPLETED_NOTICE =
 // shows this next to the 去报销系统查看 button and the 内码 (`Erp.review`), so it stays one short line (spec #406).
 export const DRAFT_HANDOVER_NOTICE = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
 
+// 写入结果不确定 after a 暂存 whose 内码 is known (a draft 回读 mismatch, say): shown next to the existing reason with
+// the 去报销系统查看 button and the 内码 whenever `Erp.review` is present on an aborted write (ticket #408).
+export const DRAFT_UNVERIFIED_NOTICE = '暂存单已生成但核对没通过，请打开检查。';
+
 export const ERP_SAVED_OUTCOME_NOTICE =
   '已从报销系统读到这张单据已保存。应用没有读到提交、审批或付款事实。';
 
