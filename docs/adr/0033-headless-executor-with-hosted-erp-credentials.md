@@ -45,10 +45,19 @@ half of the instability the 2026-10-11 audit found comes from running in the emp
 None of these exists when the browser is baox's own headless Chromium on the server. The owner chose that, with
 hosted credentials, over hardening the extension further.
 
+**Amended 2026-10-16 (owner, [#412](https://github.com/liumingjian/reimburse-ai/issues/412)): both paths are offered,
+per account.** The 设置页 opens with 「去报销的方式」: 本地执行器（推荐） or 浏览器扩展. The account's path is its
+pairing's holder (`local_executor` or `extension`); no separate setting is stored, and with no pairing the page
+defaults to 本地执行器. A job records the holder it started on, so its step list keeps matching the route that ran: the
+本地执行器 route starts with 「启动后台浏览器」 and ends with 「暂存到报销系统」, the extension route keeps 「交接单据」
+(ADR-0028). This replaces "the extension path stays in the code but is not offered" below. How the executor is installed
+is ADR-0035.
+
 ## Decisions
 
 - **One path in v1: headless.** The server runs the existing `erp-executor` in a headless Chromium on the intranet
   host. The extension path stays in the code but is not offered. Making the path a per-account setting is later work.
+  *(Superseded 2026-10-16: both paths are offered, chosen per account by the pairing; see the amendment above.)*
 - **ERP 凭据 are hosted.**
   - The employee saves their ERP account and password once, in their app account's settings.
   - The password is encrypted at rest with a key that lives only on the server.
