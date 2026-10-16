@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
-import { ERP_SIGN_IN_KNOCKS_OFF, EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '@baox/contract';
+import { EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '@baox/contract';
 import type { SeedStage } from '../mock/options';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
@@ -9,6 +9,7 @@ import { withAllowedActions } from '../mock/fixtures/allowed-actions';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import { ReviewPage } from './ReviewPage';
+import { ERP_RUN_LOGS_OUT } from './page-copy';
 
 function renderReview(seed: SeedStage = 'review') {
   window.location.hash = '#/task/T1/review';
@@ -85,26 +86,34 @@ describe('整单明细确认', () => {
     expect(screen.queryByRole('button', { name: '追加材料' })).toBeNull();
   });
 
-  test('报销系统账号密码试登录成功（走 baox 本地执行器）：去报销卡片说明由本地执行器登录，并提醒会把别处的登录挤下线；没保存或被拒绝照旧说浏览器扩展', async () => {
+  test('报销系统账号密码试登录成功（走 baox 本地执行器）：去报销卡片说明由本地执行器登录，并在去报销按钮旁一句话提醒报销系统里的登录会被退出；没保存或被拒绝照旧说浏览器扩展，不提醒', async () => {
     const adapter = renderReview();
     await screen.findByRole('heading', { name: '整单明细确认' });
     fireEvent.click(checkbox());
     await screen.findByRole('button', { name: '去报销' });
     expect(screen.getByText(/已配对的浏览器扩展会为这次报销打开报销系统标签页/)).toBeTruthy();
-    expect(screen.queryByTestId('erp-knocks-off')).toBeNull();
+    expect(screen.queryByTestId('erp-logs-out')).toBeNull();
+    expect(screen.queryByText('去报销期间你在报销系统里的登录会被退出。')).toBeNull();
     cleanup();
 
     await adapter.saveErpCredentials({ account: 'zhangsan', password: 'wrong' });
     render(<App adapter={adapter} />);
     await screen.findByRole('button', { name: '去报销' });
     expect(screen.getByText(/已配对的浏览器扩展会为这次报销打开报销系统标签页/)).toBeTruthy();
-    expect(screen.queryByTestId('erp-knocks-off')).toBeNull();
+    expect(screen.queryByTestId('erp-logs-out')).toBeNull();
+    expect(screen.queryByText('去报销期间你在报销系统里的登录会被退出。')).toBeNull();
     cleanup();
 
     await adapter.saveErpCredentials({ account: 'zhangsan', password: 'secret' });
     render(<App adapter={adapter} />);
     await screen.findByRole('button', { name: '去报销' });
-    expect((await screen.findByTestId('erp-knocks-off')).textContent).toBe(ERP_SIGN_IN_KNOCKS_OFF);
+    const warning = await screen.findByTestId('erp-logs-out');
+    expect(warning.textContent).toBe('去报销期间你在报销系统里的登录会被退出。');
+    expect(ERP_RUN_LOGS_OUT).toBe('去报销期间你在报销系统里的登录会被退出。');
+    // 一句话，不是挡路的对话框：去报销仍是一次点击，警告与按钮在同一张卡片里。
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const claim = screen.getByRole('button', { name: '去报销' });
+    expect(claim.closest('.app-card')?.contains(warning)).toBe(true);
     expect(screen.getByText(/baox 本地执行器会在你的电脑上用你保存的报销系统账号密码登录/)).toBeTruthy();
   });
 
