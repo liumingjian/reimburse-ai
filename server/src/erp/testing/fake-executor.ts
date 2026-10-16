@@ -121,6 +121,20 @@ export const uncertainDraft: Script = async (plan, channel) => {
   return event;
 };
 
+/**
+ * 暂存 landed (内码 119985) but the draft read back by its 内码 disagrees with what the fill verified: ERP 写入结果未知,
+ * with the 内码 on the result (as in QA on 2026-10-16).
+ */
+export const draftReadbackMismatch: Script = async (plan, channel) => {
+  await pastCatalog(channel);
+  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  const event: ResultEvent = { type: 'result', status: 'unknown', code: 'draft_readback_mismatch', message: '暂存单（内码 119985）和填写时回读的不一致：申请报销金额 1000.00 ≠ 1006.00', billNo: null, capture: null, draftId: '119985' };
+  await channel.emit(event);
+  return event;
+};
+
 // A 1×1 PNG: stands in for the cropped screenshot of ERP's error dialog.
 export const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 export const UNCERTAIN_SAVE_ERP_TEXT = '保存未完成：报销系统没有返回处理结果。';

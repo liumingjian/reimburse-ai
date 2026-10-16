@@ -1,7 +1,7 @@
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { abortBeforeAttempt, drafted, savedDraft } from './erp/testing/fake-executor';
+import { abortBeforeAttempt, drafted, draftReadbackMismatch, savedDraft, uncertainDraft } from './erp/testing/fake-executor';
 import { tempDataDir, testClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
@@ -37,6 +37,20 @@ describe('erp.review: where the employee checks the 暂存单', () => {
     expect(again.reached.erp.review).toEqual({ url: ENTRY(before), draftId: '119946' });
     await second.close();
     await first.close().catch(() => undefined);
+  });
+
+  it('points at the 报销系统 and the 内码 when 写入结果不确定 after a 暂存 whose 回读 did not match', async () => {
+    const { reached } = await scenario(server).at('reconcile', { erp: draftReadbackMismatch });
+
+    expect(reached.erp.abortReason).toContain('写入报销系统的结果不确定');
+    expect(reached.erp.review).toEqual({ url: ENTRY(ERP_ORIGIN), draftId: '119985' });
+  });
+
+  it('is absent when 写入结果不确定 and no 暂存单 内码 is known', async () => {
+    const { reached } = await scenario(server).at('reconcile', { erp: uncertainDraft });
+
+    expect(reached.erp.abortReason).toContain('写入报销系统的结果不确定');
+    expect(reached.erp.review).toBeNull();
   });
 
   it('is absent when 去报销 stopped before writing anything', async () => {

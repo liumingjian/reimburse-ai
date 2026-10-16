@@ -86,9 +86,10 @@ const RERUN_STOPPED = /^rerun_/;
 const LOGIN_NOT_DETECTED = '还没有检测到登录。请在为这次报销打开的报销系统标签页里登录本人账号（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
 
 // 去报销系统查看 (spec #406): the one rule for when the page offers the 报销系统 and the 暂存单's 内码. The phases in
-// which a 暂存单 the employee should check exists; `saved` is a bill now, `aborted` wrote nothing, and `handed_over` (the
-// 浏览器扩展 path) never 暂存s: its form is already open in the employee's own tab.
-const REVIEWABLE_PHASES: ReadonlySet<ErpPhase> = new Set(['drafted']);
+// which a 暂存单 the employee should check may exist: `drafted`, and `unknown` when the executor still reported the 内码
+// (暂存 landed but its 回读 did not match, ticket #408). `saved` is a bill now, `aborted` wrote nothing, and
+// `handed_over` (the 浏览器扩展 path) never 暂存s: its form is already open in the employee's own tab.
+const REVIEWABLE_PHASES: ReadonlySet<ErpPhase> = new Set(['drafted', 'unknown']);
 
 /**
  * Where the employee reviews the task's 暂存单, or null. The 内码 is the one the executor reported in its result; the
