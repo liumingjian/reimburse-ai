@@ -24,7 +24,7 @@ default, and a worktree's `.git` file points at a path that exists only on the s
 Playwright's own `--only-changed` fail there.
 
 ```bash
-rexec "set -o pipefail; P='npx --yes pnpm@10.17.1'; \$P install --frozen-lockfile --prefer-offline --reporter=silent && \$P test:changed $(git diff --name-only HEAD; git ls-files -o --exclude-standard) 2>&1 | tail -40"
+rexec "set -o pipefail; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm test:changed $(git diff --name-only HEAD; git ls-files -o --exclude-standard) 2>&1 | tail -40"
 ```
 
 The `$(...)` expands on the server before rexec sends the command. Flags: `--e2e`, `--no-e2e`, `--no-build` (reuse the
@@ -40,8 +40,8 @@ Once, when the change is done, run the gate `docs/agents/merge-conditions.md` pi
 and collect the result later; the whole e2e suite (full gate only) takes over 20 minutes.
 
 ```bash
-rexec --background 'set -o pipefail; P="npx --yes pnpm@10.17.1"; $P install --frozen-lockfile --prefer-offline --reporter=silent && $P typecheck && $P test 2>&1 | tail -40'
-rexec --background --timeout 3600 'set -o pipefail; P="npx --yes pnpm@10.17.1"; $P install --frozen-lockfile --prefer-offline --reporter=silent && $P test:e2e 2>&1 | tail -40'   # full gate only
+rexec --background 'set -o pipefail; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm typecheck && pnpm test 2>&1 | tail -40'
+rexec --background --timeout 3600 'set -o pipefail; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm test:e2e 2>&1 | tail -40'   # full gate only
 ```
 
 The Mac is shared with the maintainer's desktop apps, and the web, extension and e2e suites have timing-sensitive
@@ -58,8 +58,7 @@ timing tests; a new server test that parses an image for real goes on its `OCR_T
 Every rexec job runs in a workspace of its own. rexec syncs `/.npmrc`, so pnpm runs Node 24 through its
 `use-node-version`; it gives each job a short `TMPDIR`, so the maintenance socket stays within the 104-byte Unix socket
 limit; and it starts the job with the `node_modules` of the last successful job from the same worktree, so the install
-only reconciles against the lockfile. Install first, through `npx --yes pnpm@10.17.1` as above: the Mac's own pnpm
-switches to 10.17.1 without `node-gyp`, and `better-sqlite3` then fails to build.
+only reconciles against the lockfile. Install first, as above.
 
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
 in a rexec workspace synced from a worktree.
