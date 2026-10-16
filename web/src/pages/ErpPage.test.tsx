@@ -235,3 +235,47 @@ describe('ERP 填报', () => {
     expect(notice).not.toMatch(/ERP|重试|[\u2013\u2014]/);
   });
 });
+
+// 去报销 on the 本地执行器 ended in ERP 草稿已交接 (ticket #407): the page says, in one short line, that the bill is only
+// 暂存'd and the employee submits it, and takes them to the 报销系统 the draft was written to. The address and the 内码
+// are the snapshot's `erp.review`; the page never works them out.
+describe('去报销系统查看暂存单', () => {
+  const REVIEW = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119946' };
+
+  function renderDone(review: typeof REVIEW | null) {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status: 'done', outcome: review ? 'drafted' : 'filled', externalWait: 'none', review } };
+    });
+    render(<App adapter={adapter} />);
+  }
+
+  test('暂存后：短提示、新标签页打开报销系统的按钮、内码和复制按钮', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderDone(REVIEW);
+
+    const notice = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
+    expect((await screen.findByTestId('handover-completed')).textContent).toBe(notice);
+    const open = screen.getByRole('link', { name: '去报销系统查看' });
+    expect(open.getAttribute('href')).toBe(REVIEW.url);
+    expect(open.getAttribute('target')).toBe('_blank');
+    expect(open.getAttribute('rel')).toContain('noopener');
+    const review = screen.getByTestId('erp-review');
+    expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119946');
+    fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+    expect(writeText).toHaveBeenCalledWith('119946');
+    expect(review.textContent + notice).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('没有暂存单时不出现查看按钮和内码', async () => {
+    renderDone(null);
+
+    expect(await screen.findByTestId('handover-completed')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
+    expect(screen.queryByTestId('erp-review')).toBeNull();
+  });
+});

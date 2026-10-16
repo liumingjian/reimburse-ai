@@ -8,6 +8,7 @@ import { ActionGroup } from '../shell/ActionGroup';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
+import { ErpReview } from './ErpReview';
 import { PAGE_COPY } from './page-copy';
 
 // The page renders the server's recorded ERP read state. Refresh reads that state only; it never dispatches another
@@ -148,6 +149,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <span data-testid={erp.outcome === 'saved' ? 'saved-outcome' : 'handover-completed'}>{completedNotice}</span>
               </InlineNotification>
             ) : null}
+            {erp.review ? <ErpReview review={erp.review} /> : null}
             <ActionGroup>
               <Button size="md" href={taskHash(taskId, 'done')}>
                 查看完成结果
