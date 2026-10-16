@@ -85,6 +85,8 @@ describe('the draft read back against the page', () => {
     const cells = (net: string, tax: string, gross: string) => ({ values: { 费用项目: '招待', 费用金额: net, 税额: tax, 申请报销金额: gross, 申请付款金额: gross } });
     const page = { causa: `出差 ${MARK}`, receipts: [{ values: { 发票号码: '26427000000640558021' } }], details: [cells('¥531.13', '¥31.87', '¥563.00'), cells('￥548.11', '￥32.89', '￥581.00')] };
     expect(compareDraft(two, page)).toEqual([]);
+    const wrong = { ...page, details: [cells('¥530.13', '¥31.87', '¥563.00'), page.details[1]!] };
+    expect(compareDraft(two, wrong)).toEqual(['费用明细第 1 行：费用金额 在 View 里找不到']);
   });
 });
 
