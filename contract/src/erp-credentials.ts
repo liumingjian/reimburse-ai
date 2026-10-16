@@ -34,7 +34,8 @@ export type SaveErpCredentialsInput = z.infer<typeof SaveErpCredentialsInputSche
 // failed is not a refusal: it is the view's `status` and `message`.
 export type ErpCredentialsOutcome = { ok: true; credentials: ErpCredentialsView } | { ok: false; error: ActionError; credentials: ErpCredentialsView | null };
 
-// Said before every save and before 去报销 (ADR-0033): baox's login takes the ERP account's seat.
+// Said before every save of the 报销系统 credentials (ADR-0033): baox's login takes the ERP account's seat. The
+// confirmation page says `ERP_RUN_LOGS_OUT` instead (#409).
 export const ERP_SIGN_IN_KNOCKS_OFF = '每次 baox 登录报销系统（保存后的试登录、每次去报销和对账），都会把这个报销系统账号在别处的登录挤下线。';
 
 export const ERP_CREDENTIAL_ERRORS = {
