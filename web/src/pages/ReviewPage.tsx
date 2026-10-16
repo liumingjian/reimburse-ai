@@ -292,6 +292,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </Card>
             <Card
               title="去报销"
+              label="去报销"
               actions={
                 erpDone ? (
                   <Button href={taskHash(taskId, 'done')}>查看结果</Button>

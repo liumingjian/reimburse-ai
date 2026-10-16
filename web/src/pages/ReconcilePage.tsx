@@ -6,7 +6,7 @@ import { ActionBar } from '../shell/ActionBar';
 import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { useAction } from '../shell/useAction';
-import { UnverifiedDraftReview } from './ErpReview';
+import { UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 

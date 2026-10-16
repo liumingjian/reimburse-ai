@@ -7,7 +7,7 @@ import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
-import { ErpReview } from './ErpReview';
+import { DraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
@@ -104,7 +104,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : null}
       </div>
 
-      {erp.review ? <ErpReview review={erp.review} /> : null}
+      {erp.review ? <DraftReview review={erp.review} /> : null}
 
       {readback.rows.length > 0 ? <ReadbackTable label="逐条回读" rows={readback.rows} localTotal={readback.localTotal} erpTotal={readback.erpTotal} /> : null}
 
