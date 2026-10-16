@@ -167,6 +167,32 @@ describe('对账', () => {
     expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
   });
 
+  // 写入结果不确定后员工停在对账页（ticket #408）：暂存单内码已知时，中止原因下面就是核对没通过的提示、按钮和内码。
+  test('写入结果不确定但暂存单内码已知：中止原因还在，另有提示、去报销系统查看按钮和内码', () => {
+    const base = t2Snapshot();
+    const review = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119985' };
+    const store = new AppStore(createMockAdapter({ seed: null, fault: null }), { validate: false });
+    render(
+      <AppProvider store={store}>
+        <ReconcilePage snapshot={withAllowedActions({ ...base, erp: { ...base.erp, review } })} />
+      </AppProvider>,
+    );
+
+    const abort = screen.getByRole('region', { name: '中止原因' });
+    expect(within(abort).getByText(base.erp.abortReason!)).toBeTruthy();
+    expect(within(abort).getByTestId('erp-review-notice').textContent).toBe('暂存单已生成但核对没通过，请打开检查。');
+    expect(within(abort).getByRole('link', { name: '去报销系统查看' }).getAttribute('href')).toBe(review.url);
+    expect(within(abort).getByTestId('erp-review-draft-id').textContent).toBe('119985');
+  });
+
+  test('写入结果不确定且不知道暂存单内码：没有提示和按钮', () => {
+    renderVerdict('未知', true);
+
+    expect(screen.getByRole('region', { name: '中止原因' })).toBeTruthy();
+    expect(screen.queryByTestId('erp-review-notice')).toBeNull();
+    expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
+  });
+
   test('服务端也只接受允许的处置：转人工的 bucket 拒绝重新对账，原地等待的 bucket 两种都接受', async () => {
     const adapter = createMockAdapter({ seed: 'reconcile', fault: null });
     const t2 = await adapter.getSnapshot('T2');

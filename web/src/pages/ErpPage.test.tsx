@@ -279,3 +279,45 @@ describe('去报销系统查看暂存单', () => {
     expect(screen.queryByTestId('erp-review')).toBeNull();
   });
 });
+
+// 写入结果不确定 after a 暂存 whose 内码 is known (ticket #408, e.g. a draft 回读 mismatch): the existing reason stays,
+// and the page adds that the 暂存单 exists but its check failed, with the same button and 内码.
+describe('写入结果不确定但暂存单内码已知', () => {
+  const REVIEW = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119985' };
+  const REASON = '写入报销系统的结果不确定，应用已停止写入，不会重放。原因：暂存单（内码 119985）和填写时回读的不一致：申请报销金额 1000.00 与 1006.00 不同';
+  const NOTICE = '暂存单已生成但核对没通过，请打开检查。';
+
+  function renderUnknown(review: typeof REVIEW | null) {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status: 'aborted', outcome: 'none', externalWait: 'none', abortReason: REASON, review } };
+    });
+    render(<App adapter={adapter} />);
+  }
+
+  test('原因还在，另有一句核对没通过的提示、去报销系统查看按钮和内码', async () => {
+    renderUnknown(REVIEW);
+
+    expect(await screen.findByText(`写入报销系统已停止：${REASON}`)).toBeTruthy();
+    expect(screen.getByTestId('erp-review-notice').textContent).toBe(NOTICE);
+    const open = screen.getByRole('link', { name: '去报销系统查看' });
+    expect(open.getAttribute('href')).toBe(REVIEW.url);
+    expect(open.getAttribute('target')).toBe('_blank');
+    expect(open.getAttribute('rel')).toContain('noopener');
+    const review = screen.getByTestId('erp-review');
+    expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119985');
+    expect(within(review).getByRole('button', { name: '复制内码' })).toBeTruthy();
+    expect(review.textContent + NOTICE).not.toMatch(/ERP|重试|[–—]/);
+  });
+
+  test('不知道暂存单内码时只有原因，没有提示和按钮', async () => {
+    renderUnknown(null);
+
+    expect(await screen.findByText(`写入报销系统已停止：${REASON}`)).toBeTruthy();
+    expect(screen.queryByTestId('erp-review-notice')).toBeNull();
+    expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
+  });
+});

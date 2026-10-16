@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Button } from '@carbon/react';
+import { Button, InlineNotification } from '@carbon/react';
 import { Copy, Launch } from '@carbon/icons-react';
-import type { ErpReview as ErpReviewEntry } from '@baox/contract';
+import { DRAFT_UNVERIFIED_NOTICE, type ErpReview as ErpReviewEntry } from '@baox/contract';
 import { ActionGroup } from '../shell/ActionGroup';
 
 // 去报销系统查看 (spec #406): the 暂存单's 内码 with a copy button, and a button that opens the 报销系统 in a new tab. Both
@@ -30,5 +30,18 @@ export function ErpReview({ review }: { review: ErpReviewEntry }) {
         </Button>
       </ActionGroup>
     </div>
+  );
+}
+
+// 写入结果不确定 with a known 暂存单 (ticket #408): the draft exists but its check failed, so it needs the employee's
+// eyes more than a clean 暂存. Rendered under the existing reason, which stays as it is.
+export function UnverifiedDraftReview({ review }: { review: ErpReviewEntry }) {
+  return (
+    <>
+      <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意">
+        <span data-testid="erp-review-notice">{DRAFT_UNVERIFIED_NOTICE}</span>
+      </InlineNotification>
+      <ErpReview review={review} />
+    </>
   );
 }
