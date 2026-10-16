@@ -26,7 +26,7 @@ Reviewing a change (`/code-review` Standards axis) or fixing a QA-reported bug: 
 
 Before merging any branch (to `main` or to a spec's integration branch), check it against
 `docs/agents/merge-conditions.md`. It picks the gate (`docs`, `standard` or `full`); the whole e2e suite runs only
-on `full`.
+on `full`: an integration branch landing on `main`, or a deploy.
 
 ### Manual QA on the Mac
 

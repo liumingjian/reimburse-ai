@@ -7,8 +7,10 @@
 //   .npmrc, .nvmrc, …) can affect every package, so it runs every package's whole suite and every e2e spec. Root docs
 //   (*.md, LICENSE) and files outside every package and the root (docs/, qa/, tools/, …) select nothing; they are
 //   listed as not covered, and a run that selects nothing says so instead of reporting PASS.
-// - Playwright on the web/e2e specs whose import graph reaches a changed file (the `--only-changed` rule), after
-//   building only what those specs need: dist-mock for the mock project, server + web dist for the server project.
+// - Playwright only when a changed file is under web/e2e (a spec or the harness): the specs whose import graph reaches
+//   a changed file (the `--only-changed` rule), after building only what those specs need (dist-mock for the mock
+//   project, server + web dist for the server project). For any other change the specs it reaches are listed, not
+//   run: they belong to the full gate. `--e2e` runs them anyway, `--no-e2e` never runs any.
 //
 // The file list is an argument, not `git diff`, because rexec's Mac workspace usually has no usable git history
 // (it is not synced by default, and a worktree's `.git` file points at a path that exists only on the agent server).
@@ -17,10 +19,11 @@
 //
 // `--gate` prints which merge gate the change needs (docs/agents/merge-conditions.md) and runs nothing:
 // - docs: every file is documentation or agent configuration (*.md, docs/, .claude/, .agents/); no test can see it.
-// - full: a file the whole app rests on, so a break shows up in journeys no import edge leads to (FULL_GATE).
-// - standard: everything else.
+// - standard: everything else. A file the whole app rests on (FULL_GATE) is named as a journey foundation: it does not
+//   raise the PR's gate, but it is why the next full gate (integration landing, deploy) matters.
 //
-// Flags: --base <ref>  --gate  --no-e2e (skip Playwright)  --no-build (reuse the existing e2e builds)  --dry-run (print the plan)
+// Flags: --base <ref>  --gate  --e2e (run the reached specs)  --no-e2e (run none)  --no-build (reuse the existing e2e
+// builds)  --dry-run (print the plan)
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -42,12 +45,13 @@ const FULL_GATE = /^(contract\/src|server\/src\/db)\/|^server\/src\/e2e-main\.ts
 const isRootConfig = (file) => dirname(file) === ROOT && !ROOT_DOCS.test(relative(ROOT, file));
 
 function parseArgs(argv) {
-  const options = { base: null, gate: false, e2e: true, build: true, dryRun: false, files: [] };
+  const options = { base: null, gate: false, e2e: 'auto', build: true, dryRun: false, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--') continue;
     else if (arg === '--base') options.base = argv[++i];
     else if (arg === '--gate') options.gate = true;
+    else if (arg === '--e2e') options.e2e = true;
     else if (arg === '--no-e2e') options.e2e = false;
     else if (arg === '--no-build') options.build = false;
     else if (arg === '--dry-run') options.dryRun = true;
@@ -182,11 +186,12 @@ function affectedSpecs(files, packages) {
 
 function gateOf(files) {
   const paths = files.map((file) => relative(ROOT, file).split(sep).join('/'));
-  const full = paths.filter((path) => FULL_GATE.test(path) || isRootConfig(join(ROOT, path)));
-  if (full.length > 0) return { gate: 'full', because: full };
+  const foundation = paths.filter((path) => FULL_GATE.test(path) || isRootConfig(join(ROOT, path)));
   const code = paths.filter((path) => !DOCS_GATE.test(path));
-  return code.length > 0 ? { gate: 'standard', because: code } : { gate: 'docs', because: [] };
+  return { gate: code.length > 0 ? 'standard' : 'docs', because: code, foundation };
 }
+
+const list = (paths) => `${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ', …' : ''}`;
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
@@ -200,8 +205,9 @@ function main() {
   const files = [...new Set(listed.map((file) => resolve(ROOT, file)))].filter((file) => existsSync(file) && statSync(file).isFile());
   if (options.gate) {
     // Deleted files count here: removing a migration is a schema change.
-    const { gate, because } = gateOf([...new Set(listed.map((file) => resolve(ROOT, file)))]);
-    console.log(`test:changed: gate ${gate}${because.length > 0 ? ` (${because.slice(0, 5).join(', ')}${because.length > 5 ? ', …' : ''})` : ''}`);
+    const { gate, because, foundation } = gateOf([...new Set(listed.map((file) => resolve(ROOT, file)))]);
+    console.log(`test:changed: gate ${gate}${because.length > 0 ? ` (${list(because)})` : ''}`);
+    if (foundation.length > 0) console.log(`test:changed: journey foundation changed (${list(foundation)}); the next full gate covers it`);
     return 0;
   }
   const packages = workspacePackages();
@@ -213,7 +219,9 @@ function main() {
     if (run('pnpm', args, pkg.dir) !== 0) failures.push(`vitest ${pkg.name}`);
   }
 
-  const specs = options.e2e ? affectedSpecs(files, packages) : [];
+  const reached = options.e2e === false ? [] : affectedSpecs(files, packages);
+  const runE2e = options.e2e === true || (options.e2e === 'auto' && files.some((file) => inside(file, E2E)));
+  const specs = runE2e ? reached : [];
   if (specs.length > 0) {
     const needsServer = specs.some((spec) => inside(spec, E2E_SERVER));
     const needsMock = specs.some((spec) => !inside(spec, E2E_SERVER));
@@ -226,12 +234,15 @@ function main() {
     else if (run('pnpm', ['exec', 'playwright', 'test', ...specs], WEB) !== 0) failures.push('playwright');
   }
 
+  if (reached.length > 0 && !runE2e) {
+    console.log(`\ntest:changed: ${reached.length} e2e spec(s) reach these files, left to the full gate (--e2e runs them): ${list(reached.map((spec) => relative(WEB, spec)))}`);
+  }
   const uncovered = files.filter((file) => !ownerOf(file, packages) && !isRootConfig(file)).map((file) => relative(ROOT, file));
   if (uncovered.length > 0) console.log(`\ntest:changed: not covered by any package suite: ${uncovered.join(', ')}`);
   const verdict = failures.length > 0 ? `FAIL: ${failures.join(', ')}` : plan.length === 0 && specs.length === 0 ? 'NOTHING RUN' : 'PASS';
   console.log(
     `\ntest:changed: ${files.length} file(s); vitest in ${plan.map(({ pkg, full }) => (full ? `${pkg.name} (full)` : pkg.name)).join(', ') || 'none'}; ` +
-      `${specs.length} e2e spec(s)${options.e2e ? '' : ' (--no-e2e)'}. ${verdict}`,
+      `${specs.length} e2e spec(s) run. ${verdict}`,
   );
   return failures.length === 0 ? 0 : 1;
 }
