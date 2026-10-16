@@ -9,7 +9,6 @@ import { withAllowedActions } from '../mock/fixtures/allowed-actions';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
 import { ReviewPage } from './ReviewPage';
-import { ERP_RUN_LOGS_OUT } from './page-copy';
 
 function renderReview(seed: SeedStage = 'review') {
   window.location.hash = '#/task/T1/review';
@@ -109,11 +108,11 @@ describe('整单明细确认', () => {
     await screen.findByRole('button', { name: '去报销' });
     const warning = await screen.findByTestId('erp-logs-out');
     expect(warning.textContent).toBe('去报销期间你在报销系统里的登录会被退出。');
-    expect(ERP_RUN_LOGS_OUT).toBe('去报销期间你在报销系统里的登录会被退出。');
-    // 一句话，不是挡路的对话框：去报销仍是一次点击，警告与按钮在同一张卡片里。
+    // 一句话，不是挡路的对话框：去报销仍是一次点击，警告与按钮在同一张「去报销」卡片里。
     expect(screen.queryByRole('dialog')).toBeNull();
-    const claim = screen.getByRole('button', { name: '去报销' });
-    expect(claim.closest('.app-card')?.contains(warning)).toBe(true);
+    const card = screen.getByRole('region', { name: '去报销' });
+    expect(within(card).getByRole('button', { name: '去报销' })).toBeTruthy();
+    expect(within(card).getByTestId('erp-logs-out')).toBe(warning);
     expect(screen.getByText(/baox 本地执行器会在你的电脑上用你保存的报销系统账号密码登录/)).toBeTruthy();
   });
 

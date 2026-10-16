@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 import { App } from '../App';
 import { createMockAdapter, type Fault } from '../mock/mock-adapter';
@@ -253,9 +253,25 @@ describe('去报销系统查看暂存单', () => {
     render(<App adapter={adapter} />);
   }
 
+  const HINT = '在新标签页打开报销系统，用你自己的账号登录后，到「我的费用报销」里按内码找到这张暂存单。';
+  const COPIED = '内码已复制，可以粘贴到报销系统里查找这张暂存单。';
+  const COPY_BY_HAND = '没能复制，请选中上面的内码手动复制。';
+
+  // navigator.clipboard and document.execCommand as one test sets them, put back afterwards so no later test inherits
+  // them. jsdom has neither, as the deployed app over plain http has no clipboard API.
+  const restores: Array<() => void> = [];
+  function stub(target: object, key: string, value: unknown) {
+    const own = Object.getOwnPropertyDescriptor(target, key);
+    Object.defineProperty(target, key, { value, configurable: true, writable: true });
+    restores.push(() => (own ? Object.defineProperty(target, key, own) : Reflect.deleteProperty(target, key)));
+  }
+  afterEach(() => {
+    while (restores.length > 0) restores.pop()!();
+  });
+
   test('暂存后：短提示、新标签页打开报销系统的按钮、内码和复制按钮', async () => {
     const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stub(navigator, 'clipboard', { writeText });
     renderDone(REVIEW);
 
     const notice = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
@@ -266,9 +282,37 @@ describe('去报销系统查看暂存单', () => {
     expect(open.getAttribute('rel')).toContain('noopener');
     const review = screen.getByTestId('erp-review');
     expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119946');
+    expect(within(review).getByText(HINT)).toBeTruthy();
     fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+    expect(await within(review).findByText(COPIED)).toBeTruthy();
     expect(writeText).toHaveBeenCalledWith('119946');
-    expect(review.textContent + notice).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+    expect(review.textContent + notice + HINT).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('没有剪贴板接口（内网 http 打开）：改用选中复制，照样复制成功', async () => {
+    stub(navigator, 'clipboard', undefined);
+    const execCommand = vi.fn(() => true);
+    stub(document, 'execCommand', execCommand);
+    renderDone(REVIEW);
+
+    const review = await screen.findByTestId('erp-review');
+    fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+
+    expect(await within(review).findByText(COPIED)).toBeTruthy();
+    expect(execCommand).toHaveBeenCalledWith('copy');
+  });
+
+  test('两种复制都不行：请员工手动选中内码复制', async () => {
+    stub(navigator, 'clipboard', { writeText: vi.fn(async () => { throw new Error('denied'); }) });
+    stub(document, 'execCommand', vi.fn(() => false));
+    renderDone(REVIEW);
+
+    const review = await screen.findByTestId('erp-review');
+    fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+
+    expect(await within(review).findByText(COPY_BY_HAND)).toBeTruthy();
+    expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119946');
+    expect(COPY_BY_HAND).not.toMatch(/ERP|重试|[\u2013\u2014]/);
   });
 
   test('没有暂存单时不出现查看按钮和内码', async () => {
