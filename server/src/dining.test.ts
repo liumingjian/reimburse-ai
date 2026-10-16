@@ -342,7 +342,7 @@ describe('dining invoice evidence', () => {
     const invoice = byFileName(snapshot, sample('m11').name);
     expect(invoice).toMatchObject({ kind: 'vat_invoice', categoryLabel: '招待费', status: 'pending' });
     expect(snapshot.lines.map((line) => line.category.code)).toEqual(['long_distance', 'accommodation', 'hospitality']);
-    expect(snapshot.lines.at(-1)).toMatchObject({ voucherMaterialId: invoice.materialId, expenseItemCode: 'FY009001', expenseItemName: '招待费', grossAmount: '240.00' });
+    expect(snapshot.lines.at(-1)).toMatchObject({ voucherMaterialId: invoice.materialId, expenseItemCode: 'FY009001', expenseItemName: '招待', grossAmount: '240.00' });
     const itemId = `dining_receipt_missing.${invoice.materialId}`;
     expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toEqual([
       expect.objectContaining({ itemId, materialId: invoice.materialId, title: '餐饮发票「餐饮_发票.pdf」缺少餐饮小票', choices: [{ key: 'exclude', label: '排除这份材料' }] }),
