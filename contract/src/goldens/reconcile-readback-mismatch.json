@@ -612,7 +612,8 @@
       "displayName": "测试员",
       "account": "erp.tester",
       "tenant": "测试账套"
-    }
+    },
+    "review": null
   },
   "readback": {
     "status": "none",

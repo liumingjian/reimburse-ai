@@ -99,6 +99,17 @@ export const drafted: Script = async (plan, channel) => {
   return event;
 };
 
+/** A run whose 暂存单 (内码 119946) is saved by the time the result reads it: it has a 单据编号 and is no draft any more. */
+export const savedDraft: Script = async (plan, channel) => {
+  await pastCatalog(channel);
+  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  const event: ResultEvent = { type: 'result', status: 'saved', code: null, message: null, billNo: 'FYBX20261016000001', capture: null, draftId: '119946' };
+  await channel.emit(event);
+  return event;
+};
+
 /** 暂存 was pressed under the plan's marker and the tab never turned to 修改: ERP 写入结果未知, a bill may have landed. */
 export const uncertainDraft: Script = async (plan, channel) => {
   await pastCatalog(channel);

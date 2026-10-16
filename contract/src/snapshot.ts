@@ -884,6 +884,15 @@ export const ErpAccountViewSchema = z.object({
 });
 export type ErpAccountView = z.infer<typeof ErpAccountViewSchema>;
 
+// 去报销系统查看 (spec #406): where the employee reviews the bill 去报销 left in the 报销系统. `url` is the page the
+// button opens (today the 报销系统 entry page of the origin this task's fill plan froze), `draftId` the 暂存单's 内码 the
+// page shows with a copy button. The server alone decides when it is present; the page only renders it.
+export const ErpReviewSchema = z.object({
+  url: z.string().url(),
+  draftId: z.string().min(1),
+});
+export type ErpReview = z.infer<typeof ErpReviewSchema>;
+
 // idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
@@ -898,6 +907,7 @@ export const ErpSchema = z.object({
   // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row.
   rerunNotice: z.string().nullable(),
   erpAccount: ErpAccountViewSchema.nullable(),
+  review: ErpReviewSchema.nullable(),
 });
 export type Erp = z.infer<typeof ErpSchema>;
 
@@ -1016,9 +1026,9 @@ export type Reconcile = z.infer<typeof ReconcileSchema>;
 export const HANDOVER_COMPLETED_NOTICE =
   '报销单已经按你确认的明细填好，还没有保存或提交。请在报销系统里逐行核对，由你自己点「保存」并按流程提交。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存后回到这里再对一次账。应用只确认已填好，不代表已保存、已提交、已审批或已付款。';
 
-// ERP 草稿已交接 (ADR-0029): the baox 本地执行器 暂存'd the bill. A 暂存单 has no 单据编号 until it is saved.
-export const DRAFT_HANDOVER_NOTICE =
-  '报销单已经按你确认的明细填好，并在报销系统里暂存为草稿，还没有单据编号。请到报销系统「我的费用报销」打开这张暂存单逐行核对，由你自己点「保存」并按流程提交。事由末尾以 baox 开头的一串字母是应用找回这张草稿用的标记，请保留。应用只确认已暂存，不代表已保存、已提交、已审批或已付款。';
+// ERP 草稿已交接 (ADR-0029): the baox 本地执行器 暂存'd the bill. A 暂存单 has no 单据编号 until it is saved; the page
+// shows this next to the 去报销系统查看 button and the 内码 (`Erp.review`), so it stays one short line (spec #406).
+export const DRAFT_HANDOVER_NOTICE = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
 
 export const ERP_SAVED_OUTCOME_NOTICE =
   '已从报销系统读到这张单据已保存。应用没有读到提交、审批或付款事实。';
