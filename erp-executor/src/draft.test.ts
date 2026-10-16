@@ -76,6 +76,18 @@ describe('the draft read back against the page', () => {
   it('names the column, never the value, when a compared cell is not in the model', () => {
     expect(compareDraft(model, expected({ 发票号码: '99999999999999999999' }, {}))).toEqual(['收票分录第 1 行：发票号码 在 View 里找不到']);
   });
+
+  // Live 2026-10-16 (内码 119984): a filled detail row shows its money as ¥531.13, the View holds 531.13.
+  it('reads money the page shows with a ¥ the way the View holds it', () => {
+    const line = (net: number, tax: number, gross: number) => ({ ExpID: { Id: 9, Number: 'FY009001', Name: [{ Key: 2052, Value: '招待' }] },
+      ExpenseAmount: gross, TaxAmt: tax, LOCNOTAXAMOUNT: net, RequestAmount: gross, ReqSubmitAmount: gross });
+    const two = { ...model, ER_ExpenseReimbEntry: [line(531.13, 31.87, 563), line(548.11, 32.89, 581)] };
+    const cells = (net: string, tax: string, gross: string) => ({ values: { 费用项目: '招待', 费用金额: net, 税额: tax, 申请报销金额: gross, 申请付款金额: gross } });
+    const page = { causa: `出差 ${MARK}`, receipts: [{ values: { 发票号码: '26427000000640558021' } }], details: [cells('¥531.13', '¥31.87', '¥563.00'), cells('￥548.11', '￥32.89', '￥581.00')] };
+    expect(compareDraft(two, page)).toEqual([]);
+    const wrong = { ...page, details: [cells('¥530.13', '¥31.87', '¥563.00'), page.details[1]!] };
+    expect(compareDraft(two, wrong)).toEqual(['费用明细第 1 行：费用金额 在 View 里找不到']);
+  });
 });
 
 describe('the 暂存 boundary', () => {

@@ -110,7 +110,8 @@ export async function viewDraft(session: CdpSession, id: string): Promise<Record
 // ---------------------------------------------------------------------------------------------------------------
 // The model against the page
 
-const norm = (s: unknown) => String(s ?? '').replace(/\s+/g, '').replace(/,/g, '');
+// A filled detail row shows its money as ¥531.13 (live 2026-10-16, 内码 119984); the model holds 531.13.
+const norm = (s: unknown) => String(s ?? '').replace(/\s+/g, '').replace(/,/g, '').replace(/[¥￥]/g, '');
 const asNumber = (s: string) => (/^-?\d+(\.\d+)?$/.test(s) ? Number(s) : null);
 const keyOf = (data: Record<string, unknown>, ...keys: string[]) => {
   for (const key of keys) {
