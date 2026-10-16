@@ -310,7 +310,7 @@ describe('写入结果不确定但暂存单内码已知', () => {
     const review = screen.getByTestId('erp-review');
     expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119985');
     expect(within(review).getByRole('button', { name: '复制内码' })).toBeTruthy();
-    expect(review.textContent + NOTICE).not.toMatch(/ERP|重试|[–—]/);
+    expect(review.textContent + NOTICE).not.toMatch(/ERP|重试|[\u2013\u2014]/);
   });
 
   test('不知道暂存单内码时只有原因，没有提示和按钮', async () => {
