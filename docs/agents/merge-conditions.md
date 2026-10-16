@@ -12,28 +12,36 @@ Compute the changed files on the agent server and let the tool classify them (it
 rexec "pnpm test:changed --gate $(git diff --name-only $(git merge-base HEAD origin/main))"
 ```
 
-It prints `docs`, `standard` or `full`. Three moments raise any change to **full**, whatever its files:
+It prints `docs` or `standard`, and names any journey foundation the change touches. Two moments, not files, call for
+**full**:
 
 - a spec's integration branch merging into `main` (a feature or major change landing as a whole);
-- the build about to be deployed (`/deploy-intranet`);
-- a change that fixes a red `main`.
+- the build about to be deployed (`/deploy-intranet`), unless that commit already has a green full run.
 
 | Gate | What runs on the merge result |
 |---|---|
 | `docs` | Nothing. Only documentation and agent configuration changed; no test can see it. |
-| `standard` | `pnpm typecheck && pnpm test`, plus `pnpm test:changed` on the changed files with every e2e spec it selects. When non-test code under `server/src` changed, also name the server journey specs for that area (`pnpm test:e2e e2e/server/hotel.spec.ts`): they drive the built server, so no import edge selects them. |
+| `standard` | `pnpm typecheck && pnpm test`. |
 | `full` | `standard`, plus the whole Playwright suite (`pnpm test:e2e`, both the `mock` and `server` projects). |
 
-`full` from the files means the change touched what every journey rests on: the HTTP contract (`contract/src`), the
-database schema (`server/src/db`), the e2e harness (Playwright config, `e2e/server/fixture.ts`, `e2e-main.ts`), or a
-repository-root config such as the lockfile. `FULL_GATE` in `tools/test-changed.mjs` is the list.
+A journey foundation is a file every journey rests on: the HTTP contract (`contract/src`), the database schema
+(`server/src/db`), the e2e harness (Playwright config, `e2e/server/fixture.ts`, `e2e-main.ts`), or a repository-root
+config such as the lockfile. `FULL_GATE` in `tools/test-changed.mjs` is the list. Touching one does not raise a PR's
+gate; name it in the PR description so the next full run is read against it.
+
+A change that fixes a red `main` runs `standard` plus the specs that were red (`pnpm test:e2e <spec>...`), not the whole
+suite.
+
+GitHub does not enforce CI here (no branch protection on this plan), so the merge command waits for it. Run this as
+one background command: `gh pr checks N --watch --fail-fast && gh pr merge N --merge`. After a merge, merge the target
+into the next PR's branch and let its CI pass again before merging that PR.
 
 ## Why e2e is not on every merge
 
 The full suite takes over 20 minutes on the Mac and is the slowest, most timing-sensitive layer. A behaviour belongs
 at the cheapest level that can see it (`docs/agents/coding-standards.md`): taskPolicy rows, the scenario builder,
 recognition snapshots and the recorded-ERP executor catch most regressions in seconds. e2e proves that the pieces
-still join up, which only changes where pieces join or many changes converge: the `full` triggers above.
+still join up, which matters where many changes converge: an integration landing and a deploy.
 
 ## Keep main green
 
