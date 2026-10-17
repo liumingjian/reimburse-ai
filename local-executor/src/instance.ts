@@ -1,4 +1,4 @@
-// One 本地执行器 per PC: a second copy (the login's autostart next to one started by `setup`, say) would hold a second
+// One 本地执行器 per PC: a second copy (the login's autostart beside one the install started, say) would hold a second
 // channel, and the two would take the account's pairing from each other. The first one listens on a fixed loopback
 // port; a later one that cannot get the port leaves. The system frees the port when the holder dies, however it dies,
 // so a crash can never leave a stale claim behind (a pid file can: Windows reuses pids freely).

@@ -24,8 +24,8 @@ import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createExtensionChannel, EXTENSION_NOT_PAIRED_CODE, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
-import { mountLocalExecutorDownloadRoute, mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
-import type { LocalExecutorDist } from './local-executor/package';
+import { mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
+import type { LocalExecutorDist } from './local-executor/release';
 import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService, hasPairing } from './extension/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
@@ -70,8 +70,8 @@ export type AppOptions = {
   // The built extension template (`extension/dist`) the settings page's download is assembled from
   // (`extension/download.ts`). null (default) answers every download with 503.
   extensionTemplate?: string | null;
-  // The built 本地执行器 program and the Node runtimes fetched at deploy (`local-executor/package.ts`, ADR-0035). null
-  // (default) answers its downloads and its executors' update checks with 503.
+  // The built 本地执行器 program and the Node runtimes fetched at deploy (`local-executor/release.ts`, ADR-0035). null
+  // (default) answers its install script, runtime downloads and its executors' update checks as unavailable.
   localExecutor?: LocalExecutorDist | null;
   // The extension channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
   // hand.
@@ -327,7 +327,6 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   mountPairingRoutes(app, pairings, publicOrigin);
   mountErpCredentialRoutes(app, erpCredentials);
   mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
-  mountLocalExecutorDownloadRoute(app, localExecutor, join(dataDir, 'cache', 'local-executor'), publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));

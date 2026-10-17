@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 // Builds the 本地执行器 into one file, `dist/baox-local-executor.mjs` (or into the directory given as the first
-// argument): the program every platform's zip carries next to Node's own runtime (ADR-0035). Its dependencies are
+// argument): the program the install script downloads and installed executors update to (ADR-0035). Its dependencies are
 // plain JavaScript (zod and the workspace packages), so one bundle runs on Windows and macOS alike. The server serves
 // it as it is, and the executors that run it compare its sha256 with their own to know when to replace themselves.
 

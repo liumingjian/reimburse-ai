@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
 import { decodedLines } from '../test/powershell';
 import { expiredScript, windowsInstallScript, windowsUninstallScript } from './install-script';
-import type { LocalExecutorDist } from './package';
+import type { LocalExecutorDist } from './release';
 
 // The Windows install and uninstall scripts (spec #412 part C, #426). There is no Windows machine in the test setup:
 // their text is checked here everywhere, and where PowerShell 7 (`pwsh`) is on PATH they are parsed by PowerShell's

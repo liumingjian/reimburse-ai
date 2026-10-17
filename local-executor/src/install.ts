@@ -14,12 +14,10 @@
 //
 // A clean exit (0) means "nothing to do": another copy already running, or stopped on purpose. Anything else
 // restarts it, which is how a self-update (exit 3, `update.ts`) takes effect. Nothing here needs administrator rights.
-//
-// The zip once copied its runtime, program and config into `app` (`installApp`, the zip's `setup`).
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, win32 } from 'node:path';
-import { LOCAL_EXECUTOR_CONFIG_FILE, localExecutorRuntimePath, localExecutorRuntimeSha256Path, type LocalExecutorPlatform } from '@baox/contract';
+import { localExecutorRuntimePath, localExecutorRuntimeSha256Path, type LocalExecutorPlatform } from '@baox/contract';
 import { CODE_LOADING_ENV, windowsPath } from './runtime';
 
 export const PROGRAM_FILE = 'baox-local-executor.mjs';
@@ -165,24 +163,6 @@ exec "$node" --use-system-ca ${sh(posix.join(appDir, PROGRAM_FILE))} run
     ];
   }
   return [];
-}
-
-const sameSize = (a: string, b: string) => existsSync(b) && statSync(a).size === statSync(b).size;
-
-/**
- * Copy the unpacked zip's runtime, program and config into `appDir`. A runtime of the same size is left alone: it is
- * the same Node release, and on Windows a copy that is running cannot be overwritten.
- */
-export function installApp({ sourceDir, appDir, platform }: { sourceDir: string; appDir: string; platform: string }): void {
-  const binary = runtimeBinary(platform);
-  mkdirSync(join(appDir, 'runtime'), { recursive: true });
-  const runtime = join(sourceDir, 'runtime', binary);
-  const installedRuntime = join(appDir, 'runtime', binary);
-  if (!sameSize(runtime, installedRuntime)) {
-    copyFileSync(runtime, installedRuntime);
-    chmodSync(installedRuntime, 0o755);
-  }
-  for (const file of [PROGRAM_FILE, LOCAL_EXECUTOR_CONFIG_FILE]) copyFileSync(join(sourceDir, file), join(appDir, file));
 }
 
 export function writeInstallFiles(files: readonly InstallFile[]): void {

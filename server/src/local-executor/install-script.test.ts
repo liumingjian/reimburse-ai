@@ -13,7 +13,7 @@ import {
 } from '@baox/contract';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
-import type { LocalExecutorDist } from './package';
+import type { LocalExecutorDist } from './release';
 
 // The Mac install and uninstall scripts, run for real on a Mac (spec #412 part C): `curl -fsSL <app>/install/<码> | sh`
 // against this app on a loopback port, under a temporary HOME, with stub `node`, `codesign` and `launchctl` first on

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { LOCAL_EXECUTOR_RUNTIME_ERRORS, localExecutorRuntimePath, localExecutorRuntimeSha256Path } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestServer } from '../test/harness';
-import type { LocalExecutorDist } from './package';
+import type { LocalExecutorDist } from './release';
 
 // The Node runtime the install script and the 本地执行器 download when the PC has no usable Node (ADR-0035), at the
 // HTTP seam, over a runtime cache laid out the way the deploy leaves it (`local-executor/scripts/fetch-runtimes.mjs`):

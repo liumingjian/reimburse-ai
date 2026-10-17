@@ -1,22 +1,14 @@
 import { z } from 'zod';
 
-// The baox 本地执行器 (local executor) as it reaches an employee's PC (ADR-0035): one zip per platform from the settings
-// page, holding Node's own signed runtime, the bundled program and a launcher. Installed once by double-clicking the
-// launcher, it starts with the employee's login and keeps itself on the program this server ships.
+// The baox 本地执行器 (local executor) as it reaches an employee's PC (ADR-0035, amended 2026-10-17): the 设置页 shows
+// one command, pasted into Terminal or PowerShell, that installs it (LOCAL_EXECUTOR_INSTALL_PATH below). It then starts
+// with the employee's login and keeps itself on the program this server ships. There is no install package any more;
+// an executor installed from the old zip keeps working and takes each new program by self-update.
 
-// What the settings page offers. A browser cannot tell an Apple-silicon Mac from an Intel one, so the employee picks.
+// The platforms the server caches Node's own runtime for. The install script tells them apart by itself.
 export const LOCAL_EXECUTOR_PLATFORMS = ['win-x64', 'darwin-arm64', 'darwin-x64'] as const;
 export const LocalExecutorPlatformSchema = z.enum(LOCAL_EXECUTOR_PLATFORMS);
 export type LocalExecutorPlatform = z.infer<typeof LocalExecutorPlatformSchema>;
-export const LOCAL_EXECUTOR_PLATFORM_LABELS: Readonly<Record<LocalExecutorPlatform, string>> = {
-  'win-x64': 'Windows',
-  'darwin-arm64': 'Mac（Apple 芯片）',
-  'darwin-x64': 'Mac（Intel 芯片）',
-};
-
-// Behind the session gate: `?platform=<one of the above>`.
-export const LOCAL_EXECUTOR_DOWNLOAD_PATH = '/api/local-executor/download';
-export const localExecutorDownloadFilename = (platform: LocalExecutorPlatform) => `baox-local-executor-${platform}.zip`;
 
 // The executor's own half, mounted before the session gate and proven by its pairing token (`Authorization: Bearer`):
 // what the server ships now, and the program itself.
@@ -37,17 +29,17 @@ export const localExecutorRuntimeSha256Path = (platform: string) => `${LOCAL_EXE
 export const LocalExecutorReleaseSchema = z.object({ program: z.string().regex(/^[0-9a-f]{64}$/), runtime: z.string().min(1) });
 export type LocalExecutorRelease = z.infer<typeof LocalExecutorReleaseSchema>;
 
-// Inside every zip, beside the program: the app's address, written by the server that served it (as the extension's
-// origin is), so the launcher only has to ask for the 配对码. `node` is the absolute path of the Node the executor runs
+// Beside the installed program: the app's address, written by the install script's last step (a zip install had it
+// from the zip). `node` is the absolute path of the Node the executor runs
 // on, which its start-at-login entry runs (ADR-0035, amended 2026-10-16): the employee's own Node 24, or the runtime
 // downloaded into the executor's `app/runtime`. A zip install recorded none; it runs on the runtime beside it.
 export const LOCAL_EXECUTOR_CONFIG_FILE = 'baox-config.json';
 export const LocalExecutorConfigSchema = z.object({ origin: z.string().url(), platform: LocalExecutorPlatformSchema, node: z.string().min(1).optional() });
 export type LocalExecutorConfig = z.infer<typeof LocalExecutorConfigSchema>;
 
-export const LOCAL_EXECUTOR_DOWNLOAD_ERRORS = {
-  unavailable: '这台服务器上还没有这个系统的本地执行器安装包，请联系管理员。',
-  platform: '请选择 Windows 或 Mac 的安装包。',
+// The executor's own routes (release, program) when this server has no program or runtime to ship.
+export const LOCAL_EXECUTOR_RELEASE_ERRORS = {
+  unavailable: '这台服务器上还没有本地执行器，请联系管理员。',
 } as const;
 
 // The running executor's own loopback listener on the employee's PC (ADR-0035): it holds the one-per-PC slot, and it
@@ -100,6 +92,10 @@ export const localExecutorInstallPath = (code: string) => `${LOCAL_EXECUTOR_INST
 export const localExecutorInstallProgramPath = (code: string) => `${LOCAL_EXECUTOR_INSTALL_PATH}/${code}/program`;
 export const LOCAL_EXECUTOR_UNINSTALL_PATH = '/uninstall';
 export const localExecutorUninstallPath = (system: InstallSystem) => `${LOCAL_EXECUTOR_UNINSTALL_PATH}/${system}`;
+
+// The command the 设置页 shows, for the address the server admits (`ExtensionPairing.activeOrigin`).
+const pasteCommand = (system: InstallSystem, url: string) => (system === 'windows' ? `powershell -ExecutionPolicy Bypass -c "irm ${url} | iex"` : `curl -fsSL ${url} | sh`);
+export const localExecutorInstallCommand = (system: InstallSystem, origin: string, code: string) => pasteCommand(system, `${origin.replace(/\/+$/, '')}${localExecutorInstallPath(code)}`);
 
 // Everything the install and uninstall scripts print: these lines and nothing else (story 29, 30).
 export const LOCAL_EXECUTOR_INSTALL_MESSAGES = {
