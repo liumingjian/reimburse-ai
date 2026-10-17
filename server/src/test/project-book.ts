@@ -6,7 +6,7 @@ import type { ScenarioOptions } from './scenario';
 
 // Hotel e-invoice + rail ticket inventoried (住宿 trio answered 确认没有, "confirm none"), with the project book exactly
 // as the test left it: `scenario(server, client).at('project', INVENTORIED)`.
-export const INVENTORIED = { materials: ['m01', 'm07'], projectBook: 'as_is' } as const satisfies ScenarioOptions;
+export const INVENTORIED = { materials: ['m01', 'm02', 'm07'], projectBook: 'as_is' } as const satisfies ScenarioOptions;
 
 // One write to a project book endpoint (intake, edit, deactivate, convert, …), expected to be answered 200: its result.
 // A refusal is part of the result (`status: 'rejected'`), not an HTTP error.

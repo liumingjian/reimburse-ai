@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
-import { answerStayGaps, expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, hotelFolio, signIn, test } from './fixture';
 
 test.use({ serverEnv: { BAOX_PARSE_FIXTURE: 'uncertain-invoice-type' } });
 
@@ -23,6 +23,7 @@ test('未知票面票种要求选择 ERP 发票类型，且不改写票面字段
       })
     ).json(),
   );
+  snapshot = TaskSnapshotSchema.parse(await (await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { ...hotelFolio(), name: 'uncertain-invoice-type-folio.pdf' } } })).json());
   await page.request.post(`/api/tasks/${taskId}/actions/start-inventory`, { data: { stepToken: snapshot.step.stepToken } });
   await answerStayGaps(page, taskId);
 

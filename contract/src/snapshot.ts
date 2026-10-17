@@ -569,8 +569,7 @@ export const STAY_TRIO_COPY = {
   folio: {
     title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少结账单`,
     why: (totalAmount: string | undefined) =>
-      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}没有配对到结账单：结账单的消费合计要和发票价税合计一分不差，才算同一次住宿。请在上传页追加结账单后重新盘点；确实没有结账单，就选「确认没有结账单」，这条明细的日期只能用发票上的日期。`,
-    confirmNone: '确认没有结账单',
+      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}没有配对到结账单。入住、离店日期只能从结账单上取，没有结账单这张发票就报不了：请在上传页追加结账单后重新盘点（结账单的消费合计要和发票价税合计一分不差；认不出的结账单可以手工补填）。拿不到结账单，就排除这张发票。`,
   },
   screenshot: {
     title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少支付截图`,

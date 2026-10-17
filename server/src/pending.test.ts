@@ -110,11 +110,12 @@ describe('an unrecognised material', () => {
   });
 
   it('mark as reference: resolved, the material becomes a 参考材料 and forms no line', async () => {
-    const start = await inventory('pending', ['m01', 'm12']);
+    const start = await inventory('pending', ['m01', 'm02', 'm12']);
     const id = byFileName(start, sample('m12').name).materialId;
     const done = await answered(start, `unrecognised.${id}`, { choice: 'reference' });
     expect(byFileName(done, sample('m12').name)).toMatchObject({ role: 'reference', status: 'ok' });
-    expect(done.inventory.summary).toMatchObject({ referenceCount: 1, openPendingItemCount: 0 });
+    // m12 and the folio m02.
+    expect(done.inventory.summary).toMatchObject({ referenceCount: 2, openPendingItemCount: 0 });
     expect(done.lines.map((line) => line.voucherMaterialId)).toEqual([byFileName(done, sample('m01').name).materialId]);
   });
 
@@ -140,8 +141,8 @@ describe('a recognised material with gaps', () => {
   it('missing_required uses the same form for just the gaps; the values join as `user` candidates', async () => {
     // The e-invoice layout, minus the seller's name.
     const gappy = { ...einvoice, parse: (doc: Parameters<typeof einvoice.parse>[0]) => ({ ...einvoice.parse(doc), candidates: einvoice.parse(doc).candidates.filter((c) => c.key !== 'sellerName') }) };
-    await rebooted({ parser: inlineExecutor([gappy]) });
-    const start = await inventory('pending', ['m01']);
+    await rebooted({ parser: inlineExecutor([gappy, ...LAYOUTS.filter((layout) => layout !== einvoice)]) });
+    const start = await inventory('pending', ['m01', 'm02']);
     const id = byFileName(start, sample('m01').name).materialId;
     const gap = item(start, `missing_required.${id}`);
     expect(gap).toMatchObject({ kind: 'form', status: 'open' });
@@ -150,7 +151,7 @@ describe('a recognised material with gaps', () => {
     // The 校验 column used to be empty here, which the inventory renders as 无; it now names the slot that is missing.
     expect(byFileName(start, sample('m01').name).checkText.split('；')).toContain('缺少必填字段：销售方名称');
 
-    // Clean now, so the 住宿 trio (#213) asks for its folio and screenshot: answered with 确认没有.
+    // Clean now, so it pairs with its folio m02 and the 住宿 trio (#213) asks for its screenshot: answered with 确认没有.
     const done = await client.withoutStayGaps(await answered(start, gap.itemId, { sellerName: '上海某某酒店管理有限公司' }));
     const hotel = byFileName(done, sample('m01').name);
     expect(hotel).toMatchObject({ status: 'ok', role: 'primary_voucher' });
@@ -164,7 +165,7 @@ describe('a recognised material with gaps', () => {
 describe('ambiguous layouts', () => {
   it('choosing one of the matching layouts resolves the material with that layout', async () => {
     await rebooted({ parser: inlineExecutor([...LAYOUTS, { ...einvoice, name: 'einvoice_copy', label: '全电发票（另一版式）' }]) });
-    const start = await inventory('pending', ['m01']);
+    const start = await inventory('pending', ['m01', 'm02']);
     const id = byFileName(start, sample('m01').name).materialId;
     const done = await client.withoutStayGaps(await answered(start, `ambiguous_layout.${id}`, { choice: 'layout:vat_invoice/einvoice_copy' }));
     expect(byFileName(done, sample('m01').name)).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice_copy', status: 'ok' });
@@ -174,7 +175,7 @@ describe('ambiguous layouts', () => {
 
 describe('edit classes', () => {
   it('fact_locked: a PDF text-layer fact refuses edits', async () => {
-    const start = await inventory('project', ['m01']);
+    const start = await inventory('project', ['m01', 'm02']);
     const hotel = byFileName(start, sample('m01').name);
     expect(hotel.fields.every((f) => f.editClass === 'fact_locked')).toBe(true);
     const failure = await refused(await answer(start, `edit.${hotel.materialId}.totalAmount`, { value: '3000.00' }), 'fact_locked');
@@ -197,7 +198,7 @@ describe('edit classes', () => {
   });
 
   it('presentation: the line shows the 呈现值 while the resolved facts stay', async () => {
-    const start = await inventory('project', ['m01']);
+    const start = await inventory('project', ['m01', 'm02']);
     const id = byFileName(start, sample('m01').name).materialId;
     const done = await answered(start, `edit.${id}.description`, { value: '上海出差住宿' });
     expect(done.lines[0]).toMatchObject({ description: '上海出差住宿', grossAmount: '3640.00' });
@@ -205,7 +206,7 @@ describe('edit classes', () => {
   });
 
   it('maps a known face kind and asks once for an explicit ERP type when the face kind is unknown', async () => {
-    const known = await inventory('project', ['m01']);
+    const known = await inventory('project', ['m01', 'm02']);
     expect(known.lines[0]).toMatchObject({ invoiceType: '增值税发票', invoiceTypeSource: 'face_type_to_erp_enum' });
 
     const uncertain = {
@@ -215,9 +216,9 @@ describe('edit classes', () => {
         return { ...parsed, candidates: parsed.candidates.map((candidate) => (candidate.key === 'invoiceType' ? { ...candidate, value: '定额发票' } : candidate)) };
       },
     };
-    await rebooted({ parser: inlineExecutor([uncertain]) });
+    await rebooted({ parser: inlineExecutor([uncertain, ...LAYOUTS.filter((layout) => layout !== einvoice)]) });
 
-    const start = await inventory('pending', ['m01']);
+    const start = await inventory('pending', ['m01', 'm02']);
     const material = byFileName(start, sample('m01').name);
     const id = material.materialId;
     const typeItemId = `erp_invoice_type.${id}`;
@@ -235,7 +236,7 @@ describe('edit classes', () => {
   });
 
   it('an unknown field is refused', async () => {
-    const start = await inventory('project', ['m01']);
+    const start = await inventory('project', ['m01', 'm02']);
     const id = byFileName(start, sample('m01').name).materialId;
     await refused(await answer(start, `edit.${id}.nothing`, { value: 'x' }), 'field_not_found');
   });
@@ -243,7 +244,7 @@ describe('edit classes', () => {
 
 describe('re-derivation', () => {
   it('a re-derived pending item keeps its earlier answer', async () => {
-    const scene = await scenario(server, signedIn).at('pending', { materials: ['m01', 'm12'], stayTrio: 'answered' });
+    const scene = await scenario(server, signedIn).at('pending', { materials: ['m01', 'm02', 'm12'], stayTrio: 'answered' });
     const id = byFileName(scene.reached, sample('m12').name).materialId;
     await answered(scene.reached, `unrecognised.${id}`, { choice: 'reference' });
 
@@ -267,7 +268,7 @@ describe('重复发票 (duplicate invoices) inside the task', () => {
     // The copy's bytes have no preset parse outcome: both files parse for real.
     await rebooted({ parser: inlineExecutor() });
     const hotel = sample('m01');
-    const start = await inventory('pending', [hotel, copyOf(hotel, '全季酒店_发票_副本.pdf')]);
+    const start = await inventory('pending', [hotel, sample('m02'), copyOf(hotel, '全季酒店_发票_副本.pdf')]);
     const copy = byFileName(start, '全季酒店_发票_副本.pdf');
     const duplicate = item(start, `duplicate_invoice.${copy.materialId}`);
     expect(duplicate).toMatchObject({ kind: 'choice', status: 'open' });
@@ -285,7 +286,7 @@ describe('重复发票 (duplicate invoices) inside the task', () => {
 
 describe('cross-task invoice occupancy (发票占用)', () => {
   it("an invoice held by another account's non-terminal task blocks this task until excluded, naming nobody", async () => {
-    const alice = await inventory('project', ['m01']);
+    const alice = await inventory('project', ['m01', 'm02']);
     const bob = await server.signIn('bob');
     const bobs = api(() => bob);
     // m07 (rail) forms a line on its own; a ride-hailing invoice alone would wait on category_city_missing (#188).
@@ -305,10 +306,10 @@ describe('cross-task invoice occupancy (发票占用)', () => {
   });
 
   it('a voided task holds nothing', async () => {
-    const alice = await inventory('project', ['m01']);
+    const alice = await inventory('project', ['m01', 'm02']);
     expect((await signedIn.request(`/api/tasks/${alice.task.taskId}/abandon`, { method: 'POST' })).status).toBe(200);
     const bob = await server.signIn('bob');
-    const free = await inventory('project', ['m01'], bob);
+    const free = await inventory('project', ['m01', 'm02'], bob);
     expect(free.blockers).toEqual([]);
     expect(free.lines).toHaveLength(1);
   });

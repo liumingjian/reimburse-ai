@@ -32,16 +32,20 @@ describe('checkStayTrios', () => {
     ]);
   });
 
-  it('a missing folio: one item on the invoice that names the 结账单 and the invoice', () => {
+  it('a missing folio: one item on the invoice that names the 结账单 and the invoice, answered only by excluding it', () => {
     const result = check([invoice], [], ['inv']);
     expect(items(result)).toEqual([
       expect.objectContaining({ itemId: 'stay_folio_missing.inv', materialId: 'inv', kind: 'choice', status: 'open', title: '住宿发票「全季酒店_发票.pdf」缺少结账单', why: expect.stringContaining('价税合计 3640.00 元') }),
       expect.objectContaining({ itemId: 'stay_screenshot_missing.inv', status: 'resolved' }),
     ]);
-    expect(items(result)[0]?.choices).toEqual([
-      { key: 'confirm_none', label: '确认没有结账单' },
-      { key: 'exclude', label: '排除这份材料' },
-    ]);
+    // Only the folio dates the stay, so its absence cannot be confirmed away.
+    expect(items(result)[0]?.choices).toEqual([{ key: 'exclude', label: '排除这份材料' }]);
+  });
+
+  it('a 确认没有 stored for a missing folio no longer settles it', () => {
+    const result = check([invoice], [], ['inv'], new Map([['stay_folio_missing.inv', { choice: 'confirm_none' }]]));
+    expect(items(result)[0]).toMatchObject({ itemId: 'stay_folio_missing.inv', status: 'open', answer: null });
+    expect(result.trios[0]?.folio).toEqual({ present: false, noneConfirmed: false });
   });
 
   it('a folio of another amount is not this invoice’s folio: nothing is inferred from its presence', () => {
@@ -169,19 +173,21 @@ describe('the 住宿 trio at inventory', () => {
     expect(start).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
   });
 
-  it('an invoice without its folio: the queue names the 结账单; 确认没有 lets the list proceed with the absence recorded', async () => {
+  it('an invoice without its folio blocks the list: only 排除 is offered, 确认没有 is refused, and excluding the invoice clears it', async () => {
     const start = (await scenario(server, alice).at('pending', { materials: ['m01'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const supplied = await screenshots(start, invoice.materialId, [png()]);
     const declared = await client.accepted(await complete(supplied, invoice.materialId));
     expect(openIds(declared)).toEqual([`stay_folio_missing.${invoice.materialId}`]);
-    expect(declared.pendingItems[0]).toMatchObject({ title: '住宿发票「全季酒店_发票.pdf」缺少结账单' });
+    expect(declared.pendingItems[0]).toMatchObject({ title: '住宿发票「全季酒店_发票.pdf」缺少结账单', choices: [{ key: 'exclude', label: '排除这份材料' }] });
 
-    const done = await answer(declared, `stay_folio_missing.${invoice.materialId}`, 'confirm_none');
-    expect(done.pendingItems).toEqual([expect.objectContaining({ status: 'resolved', answer: { choice: 'confirm_none' } }), expect.objectContaining({ status: 'resolved' })]);
-    expect(done.stage).toBe('project');
-    // Nothing is inferred: without a folio the line keeps the invoice's own date and no reference material.
-    expect(done.lines).toEqual([expect.objectContaining({ voucherMaterialId: invoice.materialId, referenceMaterialIds: [] })]);
+    await refused(await client.act(declared, 'answer-pending', { itemId: `stay_folio_missing.${invoice.materialId}`, answer: { choice: 'confirm_none' } }), 'invalid_answer');
+    expect(await client.current(declared.task.taskId)).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
+
+    const done = await answer(declared, `stay_folio_missing.${invoice.materialId}`, 'exclude');
+    expect(byFileName(done, invoice.fileName)).toMatchObject({ role: 'excluded', status: 'excluded' });
+    expect(openIds(done)).toEqual([]);
+    expect(done.lines).toEqual([]);
   });
 
   it('a folio without an invoice: the queue names the 住宿发票 on the folio', async () => {
