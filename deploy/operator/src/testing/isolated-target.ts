@@ -2,7 +2,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startServer, type RunningServer } from '../../../../server/src/server.js';
 import { writeBlob } from '../../../../server/src/data-dir.js';
@@ -175,7 +174,9 @@ export class LocalTargetRunner {
 }
 
 export async function createIsolatedTarget({ holdBuild = false, buildEnvironment = true, fenceOldWorker = false, snapshotAvailableBytes }: IsolatedTargetOptions = {}): Promise<IsolatedTarget> {
-  const root = mkdtempSync(join(tmpdir(), 'baox-candidate-target-'));
+  // /tmp, not tmpdir(): the target's maintenance socket sits four levels down, and under macOS's /var/folders/…/T/ its
+  // path reaches the 104-byte Unix socket limit (listen EINVAL).
+  const root = mkdtempSync('/tmp/baox-candidate-target-');
   const deployRoot = join(root, 'deploy');
   const dataDir = join(deployRoot, 'data');
   const serviceHome = join(root, 'home', 'baox');
@@ -709,6 +710,7 @@ if [ "$1" = --filter ]; then
       server) printf 'main rebuilt' > server/dist/main.mjs; printf 'cli rebuilt' > server/dist/baox.mjs ;;
       web) printf '<html>rebuilt</html>' > web/dist/index.html ;;
       extension) printf '{"manifest_version":3,"rebuilt":true}' > extension/dist/manifest.json ;;
+      local-executor) printf 'program rebuilt' > local-executor/dist/baox-local-executor.mjs ;;
     esac
     shift 2
   done
@@ -734,6 +736,7 @@ if [ "$1" = build ]; then
   printf 'cli' > server/dist/baox.mjs
   printf '<html></html>' > web/dist/index.html
   printf '{"manifest_version":3}' > extension/dist/manifest.json
+  if [ -d local-executor ]; then mkdir -p local-executor/dist; printf 'program' > local-executor/dist/baox-local-executor.mjs; fi
   exit 0
 fi
 exit 2

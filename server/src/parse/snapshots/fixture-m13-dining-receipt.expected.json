@@ -1,0 +1,6 @@
+{
+  "about": "#360: itemised restaurant checkout slip, never a hotel folio",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "facts": { "merchantName": "小河餐厅", "receiptDate": "2026-08-18", "receiptTime": "19:20:00", "paidAmount": "240.00", "originalTotal": "240.00" }
+}

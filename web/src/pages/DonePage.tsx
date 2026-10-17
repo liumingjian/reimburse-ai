@@ -1,12 +1,13 @@
 import { Button, InlineNotification, Tag } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, Printer } from '@carbon/icons-react';
-import { ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionGroup } from '../shell/ActionGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
+import { DraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
@@ -24,7 +25,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const handedOff = reconcile.status === 'handed_off';
   const canHandOff = snapshot.allowedActions.includes('hand_off');
   const { busy, error, run } = useAction(taskId);
-  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
+  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
 
   return (
     <>
@@ -102,6 +103,8 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
           </ul>
         ) : null}
       </div>
+
+      {erp.review ? <DraftReview review={erp.review} /> : null}
 
       {readback.rows.length > 0 ? <ReadbackTable label="逐条回读" rows={readback.rows} localTotal={readback.localTotal} erpTotal={readback.erpTotal} /> : null}
 

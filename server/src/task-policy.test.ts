@@ -83,6 +83,15 @@ const notReconciling = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.not
 
 describe('taskPolicy: admit', () => {
   it.each<[string, Partial<TaskFacts>, boolean, ActionName, string | null, Admission]>([
+    ['dining evidence with unrelated pending work', { ...clean, parse: { waiting: 0, openPendingItems: 3, blockers: [] } }, false, 'change_dining_evidence', TOKEN, 'ok'],
+    ['dining evidence before confirmation', submitted, false, 'change_dining_evidence', TOKEN, 'ok'],
+    ['dining evidence with cross-task blockers', { ...clean, parse: { waiting: 0, openPendingItems: 0, blockers: [blocker] } }, false, 'change_dining_evidence', TOKEN, { code: 'not_ready', message: '当前材料盘点完成后才能修改餐饮材料。' }],
+    ['dining evidence before current inventory', { ...clean, versionNo: 2 }, false, 'change_dining_evidence', TOKEN, { code: 'not_ready', message: '当前材料盘点完成后才能修改餐饮材料。' }],
+    ['dining evidence after confirmation', confirmed, false, 'change_dining_evidence', TOKEN, { code: 'dining_evidence_locked', message: '整单明细已确认，请先重新打开上传再修改餐饮材料。' }],
+    ['dining evidence after ERP attempt', { ...confirmed, erp: job('unknown') }, true, 'change_dining_evidence', TOKEN, erpStarted],
+    ['dining evidence while parsing', { ...run, parse: { waiting: 1, openPendingItems: 0, blockers: [] } }, false, 'change_dining_evidence', TOKEN, 'stale'],
+    ['dining evidence after void', { ...clean, lifecycle: 'voided' }, false, 'change_dining_evidence', TOKEN, closed],
+    ['stale dining evidence token beats void', { ...clean, lifecycle: 'voided' }, false, 'change_dining_evidence', 't.6', 'stale'],
     // stepToken
     ['the current token', {}, false, 'upload', TOKEN, 'ok'],
     ['an old token is stale', {}, false, 'upload', 't.6', 'stale'],
@@ -173,6 +182,9 @@ describe('taskPolicy: allowed actions by ERP phase', () => {
     ['imported, not filled, a 单据编号 read: only 转人工', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工', { billNo: 'BX-1' }) }, ['hand_off', 'print', 'void_task']],
     ['the fill result carried a 单据编号: no 重新去报销', unknown, { attempted: true, result: { type: 'result', status: 'unknown', code: null, message: null, billNo: 'BX-1', capture: null }, ...judged('未保存·已导入未写明细', '转人工') }, ['hand_off', 'print', 'void_task']],
     ['no 费用报销单 open: 重新去报销, 重新对账 or 转人工', unknown, { attempted: true, ...judged('未知', '原地等待', { noForm: true }) }, ['reconcile', 'hand_off', 'refill', 'print', 'void_task']],
+    ['after 暂存, not looked up yet: 开始对账 or 转人工, never 重新去报销', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true }, ['reconcile', 'hand_off', 'print', 'void_task']],
+    ['after 暂存, the lookup got no answer: 重新对账 or 转人工', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '原地等待', { draft: { outcome: 'unread', draftId: null, found: 0 } }) }, ['reconcile', 'hand_off', 'print', 'void_task']],
+    ['after 暂存, no draft found: only 转人工, not 重新去报销 even with no form', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '转人工', { noForm: true, draft: { outcome: 'none', draftId: null, found: 0 } }) }, ['hand_off', 'print', 'void_task']],
     ['a 对账 job running: nothing, not even 作废', { ...confirmed, erp: job('unknown', { reconciling: true }) }, { attempted: true }, []],
     ['ERP 单据已交接: print and 作废', { ...confirmed, erp: job('handed_over') }, { attempted: true }, ['print', 'void_task']],
     ['a saved draft: print and 作废', { ...confirmed, erp: job('saved') }, { attempted: true }, ['print', 'void_task']],

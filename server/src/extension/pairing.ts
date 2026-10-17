@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, type ExtensionPairingState } from '@baox/contract';
+import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, type ExtensionHolder, type ExtensionPairingState } from '@baox/contract';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
@@ -44,6 +44,14 @@ const refuseCode = () => new AuthRefusal(401, 'pairing_code_invalid', EXTENSION_
 export async function hasPairing(db: Db, accountId: string): Promise<boolean> {
   const row = await db.selectFrom('extension_pairing').select('token_sha256').where('account_id', '=', accountId).executeTakeFirst();
   return !!row?.token_sha256;
+}
+
+// What this account's redeemed pairing is, or null when there is none. Anything that did not say (every extension
+// paired before the column existed) is an extension: only a baox 本地执行器 that said so is given the ERP 凭据.
+export async function holderOf(db: Db, accountId: string): Promise<ExtensionHolder | null> {
+  const row = await db.selectFrom('extension_pairing').select(['token_sha256', 'holder']).where('account_id', '=', accountId).executeTakeFirst();
+  if (!row?.token_sha256) return null;
+  return row.holder === 'local_executor' ? 'local_executor' : 'extension';
 }
 
 // What the pairing service needs of the live channel (`channel.ts`): whether an account's extension is connected, and
@@ -109,6 +117,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
             token_sha256: null,
             browser: null,
             version: null,
+            holder: null,
             created_at: iso(now),
             paired_at: null,
             last_connected_at: null,
@@ -141,7 +150,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
 
     // Single use: the update matches only while the code is still on the row and clears it in the same statement, so
     // two extensions racing the same 配对码 cannot both walk away with a token.
-    async redeem(code: string, browser: string | null, version: string | null): Promise<{ token: string; accountId: string }> {
+    async redeem(code: string, browser: string | null, version: string | null, holder: ExtensionHolder | null = null): Promise<{ token: string; accountId: string }> {
       const now = clock();
       const codeSha = sha256(normalise(code));
       const row = await db.selectFrom('extension_pairing').selectAll().where('code_sha256', '=', codeSha).executeTakeFirst();
@@ -150,7 +159,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       const at = iso(now);
       const updated = await db
         .updateTable('extension_pairing')
-        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, version, paired_at: at, last_connected_at: at })
+        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, version, holder: holder ?? 'extension', paired_at: at, last_connected_at: at })
         .where('account_id', '=', row.account_id)
         .where('code_sha256', '=', codeSha)
         .executeTakeFirst();

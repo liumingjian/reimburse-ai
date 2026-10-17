@@ -1,5 +1,6 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
+import type { ErpCredentialsOutcome, ErpCredentialsView, SaveErpCredentialsInput } from './erp-credentials';
 import type { ExtensionPairing, ExtensionPairingOutcome } from './extension';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
@@ -105,6 +106,12 @@ export interface AppAdapter {
   getExtensionPairing(): Promise<ExtensionPairing>;
   createExtensionPairingCode(): Promise<ExtensionPairingOutcome>;
   revokeExtensionPairing(): Promise<ExtensionPairingOutcome>;
+  // ERP 凭据 (ADR-0033): read the view (never the password); save, which runs a 试登录 through the paired baox 本地执行器;
+  // run the 试登录 again; clear, which deletes them.
+  getErpCredentials(): Promise<ErpCredentialsView>;
+  saveErpCredentials(input: SaveErpCredentialsInput): Promise<ErpCredentialsOutcome>;
+  testErpCredentials(): Promise<ErpCredentialsOutcome>;
+  clearErpCredentials(): Promise<ErpCredentialsOutcome>;
   getSnapshot(taskId: string): Promise<TaskSnapshot>;
   subscribe(taskId: string, onEvent: (event: AdapterEvent) => void): Unsubscribe;
 
@@ -118,6 +125,7 @@ export interface AppAdapter {
   // 在住宿发票的支付截图待确认项里上传（ADR-0032）：这些截图作为新的上传批次、归到这张发票，并立即重新盘点；带 stepToken。
   // 整单明细确认后或已开始写入报销系统后被拒绝（screenshot_locked / erp_started）。
   addPaymentScreenshots(taskId: string, voucherMaterialId: string, files: readonly File[], stepToken: string): Promise<ActionOutcome>;
+  supplementDiningEvidence(taskId: string, input: { pendingItemId: string; files: readonly File[] }, stepToken: string): Promise<ActionOutcome>;
   // #331 存在 payment_screenshot 表里的旧截图组：只能删、只能点「已传齐」，不带 stepToken。
   removePaymentScreenshot(taskId: string, screenshotId: string): Promise<ActionOutcome>;
   // 「已传齐」：这张住宿发票的支付截图组已传完整，缺支付截图的待确认项随之处理完毕。组里至少要有一张。

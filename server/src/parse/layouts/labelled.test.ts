@@ -133,13 +133,14 @@ describe('hotel_folio/labelled recognition anchors', () => {
     expect(values(recognised(doc))).toEqual({ checkIn: '2026-08-09', roomNumber: '0816', checkOut: '2026-08-22', roomRate: '280.00', folioTotal: '3640.00' });
   });
 
-  it('leaves a 结账单 without accommodation labels unrecognised: the title alone never recognises', () => {
+  it('never recognises a restaurant checkout slip or a folio stripped of its accommodation labels', () => {
     const restaurant = photo([
       ['桌号', 'A12'],
       ['人数', '4'],
       ['合计', '386.00'],
     ]);
-    expect(dispatch(restaurant, LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
+    expect(labelled.recognise(restaurant)).toBe(false);
+    expect(dispatch(restaurant, LAYOUTS)).toMatchObject({ outcome: 'recognised', kind: 'dining_receipt' });
     const stripped = folioDoc().observations.filter((o) => !/^(入住日期|离店日期|房号|消费合计)/.test(o.text));
     expect(dispatch({ ...folioDoc(), observations: stripped }, LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
   });

@@ -282,7 +282,7 @@ export const TAXI_0819 = {
   faded: true,
 };
 
-export const OTHER_INVOICE = {
+export const DINING_INVOICE = {
   id: 'm11',
   file: 'm11-other-invoice.pdf',
   title: '电子发票（普通发票）',
@@ -296,8 +296,29 @@ export const OTHER_INVOICE = {
   grossWords: '贰佰肆拾圆整',
 };
 
+export const DINING_RECEIPT = {
+  id: 'm13', title: '结账单', merchant: '小河餐厅', date: '2026-08-18', time: '19:20:00', total: '240.00', paid: '240.00', discount: null,
+};
+
+export const DISCOUNTED_DINING_RECEIPT = {
+  ...DINING_RECEIPT, id: 'm14', title: '消费清单', total: '300.00', discount: '60.00',
+};
+
+export const MISMATCHED_DINING_RECEIPT = {
+  ...DINING_RECEIPT, id: 'm15', total: '239.99', paid: '239.99',
+};
+
+export const OFFICE_SUPPLIES_INVOICE = {
+  ...DINING_INVOICE,
+  id: 'm12',
+  file: 'm12-office-supplies-invoice.pdf',
+  number: '26312000000103317791',
+  seller: { name: '上海某某办公用品有限公司', taxNo: '91310000WWWWWWWW0F' },
+  rows: [{ name: '*办公用品*文具', unit: '批', qty: '1', price: '226.42', net: '226.42', rate: '6%', tax: '13.58' }],
+};
+
 // ---- Regression fixtures: the text-run splits of a real PDF (#200) ----
-// The sample materials (m01…m11) draw one text run per anchor; a real invoice does not — a label and its value are
+// The sample materials (m01…m12) draw one text run per anchor; a real invoice does not — a label and its value are
 // usually two runs, and a title is often one run per glyph. These two fixtures reproduce those splits; the rest of the
 // layout matches the hotel invoice, so each uploads on its own with no folio needed.
 
@@ -348,6 +369,13 @@ export const PRINT_PAGES = [
   { id: 'pg7', file: 'print-pg7.png', nos: 'No.9', date: '08-09', category: '住宿', amount: '3640.00', top: 'm01', bottom: 'm02', rotateTop: false, rotateBottom: true },
 ];
 
+export const DINING_PRINT_PAGES = [
+  { id: 'dining', file: 'print-dining.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm13', rotateTop: false, rotateBottom: false },
+  { id: 'dining-discounted', file: 'print-dining-discounted.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm14', rotateTop: false, rotateBottom: false },
+  { id: 'dining-photo', file: 'print-dining-photo.png', nos: 'No.1', date: '08-14', category: '招待费', amount: '240.00', top: 'm11', bottom: 'm16', rotateTop: false, rotateBottom: false },
+];
+export const diningPrintSheetFile = (page) => `print-${page.id}-sheet.pdf`;
+
 export function headerOf(page) {
   return `${page.nos} · ${page.date} · ${page.category} · ${page.amount}`;
 }
@@ -363,7 +391,7 @@ export function printPageFile(page, rotateTop, rotateBottom) {
 }
 
 // Every rotation combination other than the default placement: one for a page without a bottom half, three with one.
-export const PRINT_VARIANTS = PRINT_PAGES.flatMap((page) => {
+export const PRINT_VARIANTS = [...PRINT_PAGES, ...DINING_PRINT_PAGES].flatMap((page) => {
   const combos = page.bottom === null ? [[true, false], [false, false]] : [[false, false], [false, true], [true, false], [true, true]];
   return combos
     .map(([rotateTop, rotateBottom]) => ({ ...page, rotateTop, rotateBottom, file: printPageFile(page, rotateTop, rotateBottom) }))
@@ -414,3 +442,5 @@ export const WRAPPED_ITEM_INVOICE = {
   grossWords: '肆拾捌圆整',
   wideNameColumn: true,
 };
+
+export const DINING_RECEIPT_PHOTO = { ...DISCOUNTED_DINING_RECEIPT, id: 'm16', title: '消费小票' };

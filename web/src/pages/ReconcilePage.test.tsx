@@ -5,7 +5,7 @@ import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
 import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY } from '@baox/contract';
 import type { SeedStage } from '../mock/options';
-import { reconcileVerdict } from '../mock/fixtures/erp';
+import { emptyReadback, reconcileVerdict } from '../mock/fixtures/erp';
 import { withAllowedActions } from '../mock/fixtures/allowed-actions';
 import { t2Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -165,6 +165,53 @@ describe('对账', () => {
     expect(screen.getByTestId('handover-completed').textContent).toBe(HANDOVER_COMPLETED_NOTICE);
     // 交接时单据还没有保存：完成页说「尚无」，而不是端出一个编号。
     expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
+  });
+
+  // 写入结果不确定后员工停在对账页（ticket #408）：暂存单内码已知时，中止原因下面就是核对没通过的提示、按钮和内码。
+  test('写入结果不确定但暂存单内码已知：中止原因还在，另有提示、去报销系统查看按钮和内码', () => {
+    // As the server sends it after a 暂存 whose 回读 did not match: 写入结果不确定, no 单据编号, not yet 对账'd.
+    const base = t2Snapshot();
+    const review = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119985' };
+    const mismatch = '暂存单（内码 119985）和填写时回读的不一致：申请报销金额 1000.00 与 1006.00 不同';
+    const reason = `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${mismatch}`;
+    const snapshot = withAllowedActions({
+      ...base,
+      erp: { ...base.erp, status: 'aborted', outcome: 'none', draftNo: null, abortReason: reason, review },
+      readback: emptyReadback(),
+      reconcile: {
+        status: 'pending',
+        bucket: null,
+        action: null,
+        actionCode: null,
+        allowedActions: ['wait', 'hand_off'],
+        humanReview: false,
+        banner: '点了「暂存」之后结果不确定：应用已停止写入，不会重放。点「开始对账」，应用会按这次的归属标记只读查找暂存单；也可以直接转人工。',
+        draftNo: null,
+        rows: [],
+        reasons: [mismatch],
+        capture: null,
+      },
+    });
+    const store = new AppStore(createMockAdapter({ seed: null, fault: null }), { validate: false });
+    render(
+      <AppProvider store={store}>
+        <ReconcilePage snapshot={snapshot} />
+      </AppProvider>,
+    );
+
+    const abort = screen.getByRole('region', { name: '中止原因' });
+    expect(within(abort).getByText(reason)).toBeTruthy();
+    expect(within(abort).getByTestId('erp-review-notice').textContent).toBe('暂存单已生成但核对没通过，请打开检查。');
+    expect(within(abort).getByRole('link', { name: '去报销系统查看' }).getAttribute('href')).toBe(review.url);
+    expect(within(abort).getByTestId('erp-review-draft-id').textContent).toBe('119985');
+  });
+
+  test('写入结果不确定且不知道暂存单内码：没有提示和按钮', () => {
+    renderVerdict('未知', true);
+
+    expect(screen.getByRole('region', { name: '中止原因' })).toBeTruthy();
+    expect(screen.queryByTestId('erp-review-notice')).toBeNull();
+    expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
   });
 
   test('服务端也只接受允许的处置：转人工的 bucket 拒绝重新对账，原地等待的 bucket 两种都接受', async () => {

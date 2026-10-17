@@ -8,7 +8,7 @@ import { vatItemCategory } from '../slots';
 
 const KIND = 'vat_invoice';
 const NAME = 'einvoice';
-const VERSION = '3';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 export const QR_SOURCE = ruleSource(KIND, 'einvoice_qr');
 
@@ -256,8 +256,7 @@ export const einvoice: Layout = {
 
   recognise(doc) {
     const lines = joinedRows(doc, 1, ROW_TOLERANCE);
-    // v1 kinds cover lodging and ride-hailing only; an e-invoice for anything else (e.g. 餐饮) is not this layout. One
-    // such row is enough: real ride-hailing invoices bundle unrelated fee rows (服务费, 经纪代理服务) beside it.
+    // One supported row is enough: real ride-hailing invoices bundle unrelated fee rows beside it.
     return Boolean(matchSpan(lines, TITLE) && matchSpan(lines, NUMBER)) && itemNames(lines).some((item) => vatItemCategory(item) !== null);
   },
 

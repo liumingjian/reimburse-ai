@@ -1,0 +1,29 @@
+{
+  "name": "@baox/local-executor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The 本地执行器 (local executor): runs 去报销 on the employee's PC in its own headless Chromium, paired with one 应用账号 like the browser extension (ADR-0033)",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "fetch-runtimes": "node scripts/fetch-runtimes.mjs",
+    "start": "tsx src/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@baox/contract": "workspace:*",
+    "@baox/erp-executor": "workspace:*",
+    "@baox/extension": "workspace:*",
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}

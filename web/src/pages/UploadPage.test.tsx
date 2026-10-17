@@ -200,7 +200,7 @@ describe('上传材料', () => {
   test('有材料但盘点没开始时，后续页面提示阶段不可跳过', async () => {
     renderUpload();
     await screen.findByRole('button', { name: '拖入文件，或点击选择' });
-    chooseFiles([pdf('餐饮_发票.pdf')]);
+    chooseFiles([pdf('办公用品_发票.pdf')]);
     await batchPanel('上传批次 #1');
     window.location.hash = '#/task/T1/review';
     expect(await screen.findByRole('heading', { name: '还不能进入这一步' })).toBeTruthy();

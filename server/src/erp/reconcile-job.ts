@@ -7,7 +7,8 @@ import { createErpJobs, serverChannel, type ErpJudge } from './jobs';
 import { ReconcilePlanSchema, type ExecutorChannel, type ExecutorEvent, type ReadbackEvent, type ReconcilePlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { classifyReconciliation, reconcileReadings, reconcileRecord } from './reconcile';
 
-export type ReconcileExecutor = (plan: ReconcilePlan, channel: ExecutorChannel) => Promise<ResultEvent>;
+// `signal` aborts when the server has ended the job (its deadline, `reconcile-jobs.ts`).
+export type ReconcileExecutor = (plan: ReconcilePlan, channel: ExecutorChannel, options?: { signal?: AbortSignal }) => Promise<ResultEvent>;
 
 /** A reconcile read-back is acknowledged, never judged live: the executor has nothing to act on. */
 export const acknowledgeReadings: ErpJudge = () => ({ ok: true });

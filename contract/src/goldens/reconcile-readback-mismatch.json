@@ -76,7 +76,7 @@
           "label": "发票号码",
           "value": "26312000000098127734",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -85,7 +85,7 @@
           "label": "开票日期",
           "value": "2026-08-22",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -94,7 +94,7 @@
           "label": "发票票种",
           "value": "专票",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -103,7 +103,7 @@
           "label": "购买方名称",
           "value": "某某科技（上海）有限公司",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -112,7 +112,7 @@
           "label": "购买方纳税人识别号",
           "value": "91310000XXXXXXXX0A",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -121,7 +121,7 @@
           "label": "销售方名称",
           "value": "上海某某酒店管理有限公司",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -130,7 +130,7 @@
           "label": "销售方纳税人识别号",
           "value": "91310000YYYYYYYY0B",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -139,7 +139,7 @@
           "label": "项目名称",
           "value": "*住宿服务*住宿费",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -148,7 +148,7 @@
           "label": "不含税金额",
           "value": "3433.96",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -157,7 +157,7 @@
           "label": "税额",
           "value": "206.04",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -166,7 +166,7 @@
           "label": "价税合计",
           "value": "3640.00",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         }
@@ -607,11 +607,13 @@
     "draftNo": null,
     "abortReason": "写入报销系统的结果不确定，应用已停止写入，不会重放。原因：ERP 明细「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致",
     "loginNotice": null,
+    "rerunNotice": null,
     "erpAccount": {
       "displayName": "测试员",
       "account": "erp.tester",
       "tenant": "测试账套"
-    }
+    },
+    "review": null
   },
   "readback": {
     "status": "none",

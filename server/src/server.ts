@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net';
+import type { LocalExecutorDist } from './local-executor/package';
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
 import type { ErpConfig } from './erp/config';
@@ -32,15 +33,18 @@ export type StartOptions = {
   publicOrigin?: string | null;
   // The built extension template (`extension/dist`) the settings page's download is assembled from; null serves none.
   extensionTemplate?: string | null;
+  localExecutor?: LocalExecutorDist | null;
   // A host-local credential enables the Unix-socket maintenance controller. Production loads it from a root/baox-owned
   // file; tests pass a value directly. Without it, an older release remains observable as lacking a maintenance gate.
   maintenanceToken?: string | null;
   maintenanceSocketPath?: string | null;
+  // The key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`); null disables them.
+  erpCredentialKey?: Buffer | null;
 };
 
 export type RunningServer = { url: string; port: number; maintenanceSocketPath: string | null; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, parser, erpConfig, publicOrigin = null, extensionTemplate = null, maintenanceToken = null, maintenanceSocketPath = null }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, parser, erpConfig, publicOrigin = null, extensionTemplate = null, localExecutor = null, maintenanceToken = null, maintenanceSocketPath = null, erpCredentialKey = null }: StartOptions): Promise<RunningServer> {
   // First, so a misconfigured address never gets as far as the data directory lock.
   const served = publicOrigin ? parsePublicOrigin(publicOrigin) : null;
   ensureDataDir(dataDir);
@@ -52,7 +56,7 @@ export async function startServer({ dataDir, port, webDist = null, legacyHome = 
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(parser ? { parser } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, localExecutor, erpCredentialKey, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(parser ? { parser } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let control: MaintenanceControl | null = null;
   let server: ReturnType<typeof serve> | null = null;
   let info: AddressInfo | null = null;

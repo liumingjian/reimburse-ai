@@ -10,9 +10,6 @@ import { testClient, type TestClient } from './test/harness';
 import { withQr } from './test/qr-pdf';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
-// Slice 04 (#183): the background parser job after start-inventory, and the `vat_invoice/einvoice` layout, through
-// `app.request()`. Samples (m01–m11) replay their preset parse outcomes, which test/parse-presets.test.ts holds to
-// the real parser; a test on regression fixtures (r*) or altered bytes parses for real with `useParser`.
 
 let server: ScenarioServer;
 let signedIn: TestClient;
@@ -39,9 +36,9 @@ const inventory = async (stage: 'inventory' | 'pending' | 'project', materials: 
   (await scenario(server, signedIn).at(stage, { materials, stayTrio: 'answered' })).reached;
 
 describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
-  it('parses m01, m03, m05 and r201 into their face fields; m06 and m11 stay unrecognised', async () => {
+  it('parses m01, m03, m05 and r201 into their face fields; m06 and m12 stay unrecognised', async () => {
     await useParser(inlineExecutor());
-    const snapshot = await inventory('pending', ['m01', 'm02', 'm03', 'm05', 'm06', 'm11', 'r201']);
+    const snapshot = await inventory('pending', ['m01', 'm02', 'm03', 'm05', 'm06', 'm12', 'r201']);
 
     const hotel = byFileName(snapshot, sample('m01').name);
     expect(hotel).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', role: 'primary_voucher', status: 'ok' });
@@ -92,8 +89,7 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
       totalAmount: '48.98',
     });
 
-    // No v1 layout covers the 曹操 itinerary; a 餐饮 (catering) e-invoice is outside the v1 kinds.
-    for (const prefix of ['m06', 'm11']) {
+    for (const prefix of ['m06', 'm12']) {
       const material = byFileName(snapshot, sample(prefix).name);
       expect(material).toMatchObject({ kind: null, layout: null, role: 'pending', status: 'pending', fields: [] });
       expect(material.pendingItemIds).toHaveLength(1);

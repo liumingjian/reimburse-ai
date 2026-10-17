@@ -37,7 +37,7 @@ const LONG = [
   '2026年8月上海出差_全季酒店上海虹桥国家会展中心店_住宿费增值税电子普通发票_含早餐及服务费明细.pdf',
   '上海市出租汽车统一发票_沪A·D12345_2026-08-10_浦东国际机场T2航站楼至静安寺商圈_夜间附加费.pdf',
 ];
-for (const f of LONG) fs.copyFileSync(path.join(samples, '餐饮_发票.pdf'), path.join(upDir, f));
+for (const f of LONG) fs.copyFileSync(path.join(samples, '办公用品_发票.pdf'), path.join(upDir, f));
 const allFiles = fs.readdirSync(upDir).map((f) => path.join(upDir, f));
 const shortFiles = allFiles.filter((f) => !LONG.some((l) => f.endsWith(l)));
 
@@ -100,6 +100,29 @@ const STATES = [
   ['06-project-add-dialog', '?seed=project', '#/task/T1/project', (p) => click(p, btn(p, '新增项目'))],
   ['06-project-empty-book-gate', '?seed=project&book=empty', '#/task/T1/project'],
   ['06-project-after-actions', '?seed=actions', '#/task/T1/project'],
+  ['06-dining', '?seed=upload', '#/task/T1/upload', async (p, shot) => {
+    await upload(p, ['餐饮_发票.pdf', '餐饮_小票.pdf'].map((name) => path.join(samples, name)));
+    await click(p, btn(p, '开始材料盘点'));
+    await click(p, p.getByRole('link', { name: '进入项目归属', exact: true }));
+    await click(p, btn(p, '查看餐饮材料 No.1'));
+    await settle(p, 3000);
+    await shot('-invoice');
+    await click(p, p.getByRole('tab', { name: '餐饮小票：餐饮_小票.pdf' }));
+    await settle(p, 3000);
+    await shot('-receipt');
+    await click(p, btn(p, '关闭预览'));
+    await p.getByLabel('报销事由', { exact: true }).fill('客户招待');
+    await p.locator('label[for^="pick-"]').first().click();
+    await click(p, p.getByRole('complementary', { name: '归入项目' }).getByRole('button', { name: /P-2307/ }));
+    await click(p, btn(p, '确认项目归属'));
+    await click(p, btn(p, '确认整单明细'));
+    await click(p, p.getByRole('link', { name: '去打印', exact: true }));
+    await settle(p, 3000);
+    await shot('-print');
+    await click(p, p.locator('img.app-page-image').first());
+    await shot('-print-fullscreen');
+    return 'done';
+  }],
   ['07-review', '?seed=review', '#/task/T1/review'],
   ['07-review-actions', '?seed=actions', '#/task/T1/review'],
   ['07-review-not-ready', '?seed=project', '#/task/T1/review'],

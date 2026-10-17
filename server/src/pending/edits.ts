@@ -41,7 +41,9 @@ export function judgeEdit(target: Editable, answer: PendingAnswer): Verdict {
   if (!value) return { ok: false, code: 'invalid_answer', message: PENDING_ANSWER_ERRORS.required };
   if (target.editClass === 'choice') {
     const allowed = target.allowed ?? [];
-    return allowed.includes(value) ? { ok: true, answer: { value } } : { ok: false, code: 'choice_not_allowed', message: EDIT_COPY.notAllowed(target.label, allowed) };
+    if (!allowed.includes(value)) return { ok: false, code: 'choice_not_allowed', message: EDIT_COPY.notAllowed(target.label, allowed) };
+    const failed = target.check?.(value);
+    return failed ? { ok: false, code: 'check_failed', message: failed } : { ok: true, answer: { value } };
   }
   if (target.editClass === 'presentation') {
     return value.length > PRESENTATION_MAX_LENGTH ? { ok: false, code: 'invalid_answer', message: EDIT_COPY.tooLong } : { ok: true, answer: { value } };

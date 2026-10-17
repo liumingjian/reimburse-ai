@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 import { App } from '../App';
 import { createMockAdapter, type Fault } from '../mock/mock-adapter';
@@ -219,5 +219,149 @@ describe('ERP 填报', () => {
     window.location.hash = '#/tasks';
     const row = await screen.findByRole('row', { name: /2026-08 上海出差（产品评审）/ });
     expect(await within(row).findByText('已转人工')).toBeTruthy();
+  });
+
+  test('自动重新去报销时说明这是应用自己换了一张新单，第几次', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    const notice = '上一次没有填完，应用已自动换一张新单重新填报（第 1 次）。';
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, rerunNotice: notice } };
+    });
+    render(<App adapter={adapter} />);
+    expect((await screen.findByTestId('erp-rerun-notice')).textContent).toContain(notice);
+    expect(notice).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+});
+
+// 去报销 on the 本地执行器 ended in ERP 草稿已交接 (ticket #407): the page says, in one short line, that the bill is only
+// 暂存'd and the employee submits it, and takes them to the 报销系统 the draft was written to. The address and the 内码
+// are the snapshot's `erp.review`; the page never works them out.
+describe('去报销系统查看暂存单', () => {
+  const REVIEW = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119946' };
+
+  function renderDone(review: typeof REVIEW | null) {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status: 'done', outcome: review ? 'drafted' : 'filled', externalWait: 'none', review } };
+    });
+    render(<App adapter={adapter} />);
+  }
+
+  const HINT = '在新标签页打开报销系统，用你自己的账号登录后，到「我的费用报销」里按内码找到这张暂存单。';
+  const COPIED = '内码已复制，可以粘贴到报销系统里查找这张暂存单。';
+  const COPY_BY_HAND = '没能复制，请选中上面的内码手动复制。';
+
+  // navigator.clipboard and document.execCommand as one test sets them, put back afterwards so no later test inherits
+  // them. jsdom has neither, as the deployed app over plain http has no clipboard API.
+  const restores: Array<() => void> = [];
+  function stub(target: object, key: string, value: unknown) {
+    const own = Object.getOwnPropertyDescriptor(target, key);
+    Object.defineProperty(target, key, { value, configurable: true, writable: true });
+    restores.push(() => (own ? Object.defineProperty(target, key, own) : Reflect.deleteProperty(target, key)));
+  }
+  afterEach(() => {
+    while (restores.length > 0) restores.pop()!();
+  });
+
+  test('暂存后：短提示、新标签页打开报销系统的按钮、内码和复制按钮', async () => {
+    const writeText = vi.fn(async () => undefined);
+    stub(navigator, 'clipboard', { writeText });
+    renderDone(REVIEW);
+
+    const notice = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
+    expect((await screen.findByTestId('handover-completed')).textContent).toBe(notice);
+    const open = screen.getByRole('link', { name: '去报销系统查看' });
+    expect(open.getAttribute('href')).toBe(REVIEW.url);
+    expect(open.getAttribute('target')).toBe('_blank');
+    expect(open.getAttribute('rel')).toContain('noopener');
+    const review = screen.getByTestId('erp-review');
+    expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119946');
+    expect(within(review).getByText(HINT)).toBeTruthy();
+    fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+    expect(await within(review).findByText(COPIED)).toBeTruthy();
+    expect(writeText).toHaveBeenCalledWith('119946');
+    expect(review.textContent + notice + HINT).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('没有剪贴板接口（内网 http 打开）：改用选中复制，照样复制成功', async () => {
+    stub(navigator, 'clipboard', undefined);
+    const execCommand = vi.fn(() => true);
+    stub(document, 'execCommand', execCommand);
+    renderDone(REVIEW);
+
+    const review = await screen.findByTestId('erp-review');
+    fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+
+    expect(await within(review).findByText(COPIED)).toBeTruthy();
+    expect(execCommand).toHaveBeenCalledWith('copy');
+  });
+
+  test('两种复制都不行：请员工手动选中内码复制', async () => {
+    stub(navigator, 'clipboard', { writeText: vi.fn(async () => { throw new Error('denied'); }) });
+    stub(document, 'execCommand', vi.fn(() => false));
+    renderDone(REVIEW);
+
+    const review = await screen.findByTestId('erp-review');
+    fireEvent.click(within(review).getByRole('button', { name: '复制内码' }));
+
+    expect(await within(review).findByText(COPY_BY_HAND)).toBeTruthy();
+    expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119946');
+    expect(COPY_BY_HAND).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('没有暂存单时不出现查看按钮和内码', async () => {
+    renderDone(null);
+
+    expect(await screen.findByTestId('handover-completed')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
+    expect(screen.queryByTestId('erp-review')).toBeNull();
+  });
+});
+
+// 写入结果不确定 after a 暂存 whose 内码 is known (ticket #408, e.g. a draft 回读 mismatch): the existing reason stays,
+// and the page adds that the 暂存单 exists but its check failed, with the same button and 内码.
+describe('写入结果不确定但暂存单内码已知', () => {
+  const REVIEW = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119985' };
+  const REASON = '写入报销系统的结果不确定，应用已停止写入，不会重放。原因：暂存单（内码 119985）和填写时回读的不一致：申请报销金额 1000.00 与 1006.00 不同';
+  const NOTICE = '暂存单已生成但核对没通过，请打开检查。';
+
+  function renderUnknown(review: typeof REVIEW | null) {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status: 'aborted', outcome: 'none', externalWait: 'none', abortReason: REASON, review } };
+    });
+    render(<App adapter={adapter} />);
+  }
+
+  test('原因还在，另有一句核对没通过的提示、去报销系统查看按钮和内码', async () => {
+    renderUnknown(REVIEW);
+
+    expect(await screen.findByText(`写入报销系统已停止：${REASON}`)).toBeTruthy();
+    expect(screen.getByTestId('erp-review-notice').textContent).toBe(NOTICE);
+    const open = screen.getByRole('link', { name: '去报销系统查看' });
+    expect(open.getAttribute('href')).toBe(REVIEW.url);
+    expect(open.getAttribute('target')).toBe('_blank');
+    expect(open.getAttribute('rel')).toContain('noopener');
+    const review = screen.getByTestId('erp-review');
+    expect(within(review).getByTestId('erp-review-draft-id').textContent).toBe('119985');
+    expect(within(review).getByRole('button', { name: '复制内码' })).toBeTruthy();
+    expect(review.textContent + NOTICE).not.toMatch(/ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('不知道暂存单内码时只有原因，没有提示和按钮', async () => {
+    renderUnknown(null);
+
+    expect(await screen.findByText(`写入报销系统已停止：${REASON}`)).toBeTruthy();
+    expect(screen.queryByTestId('erp-review-notice')).toBeNull();
+    expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
   });
 });

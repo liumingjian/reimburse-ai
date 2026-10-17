@@ -255,6 +255,11 @@ $gutter: $spacing-06;
   font-size: 0.8125rem;
 }
 
+// A value the employee may have to copy by hand (the 暂存单 内码): one click selects all of it.
+.app-select-all {
+  user-select: all;
+}
+
 .app-num {
   font-variant-numeric: tabular-nums;
   text-align: end;

@@ -17,7 +17,10 @@ import {
   CAOCAO_ITINERARY,
   HOTEL_FOLIO,
   HOTEL_INVOICE,
-  OTHER_INVOICE,
+  DINING_INVOICE,
+  DINING_RECEIPT,
+  DISCOUNTED_DINING_RECEIPT,
+  OFFICE_SUPPLIES_INVOICE,
   RAIL_0809,
   RAIL_0822,
   RAIL_SPLIT_RUNS,
@@ -31,6 +34,8 @@ import { EXPECTED_FILES, OUTPUT_DIR, PDF_DOC_FILES } from './generate.mjs';
 
 // What every PDF must yield: its title, number, date, amounts and the wording that identifies the face.
 const EXPECTED_TEXT = {
+  m13: [DINING_RECEIPT.title, DINING_RECEIPT.merchant, DINING_RECEIPT.date, '实付', DINING_RECEIPT.paid],
+  m14: [DISCOUNTED_DINING_RECEIPT.title, '合计', DISCOUNTED_DINING_RECEIPT.total, '优惠', DISCOUNTED_DINING_RECEIPT.discount, '实付', DISCOUNTED_DINING_RECEIPT.paid],
   m01: ['电子发票', '增值税专用发票', HOTEL_INVOICE.number, HOTEL_INVOICE.date, HOTEL_INVOICE.seller.name, '价税合计', HOTEL_INVOICE.gross, HOTEL_INVOICE.net, HOTEL_INVOICE.tax, '住宿服务'],
   m02: ['结账单', HOTEL_FOLIO.hotel, '入住日期', HOTEL_FOLIO.checkIn, '离店日期', HOTEL_FOLIO.checkOut, '消费合计', HOTEL_FOLIO.total],
   m03: ['电子发票', '普通发票', AMAP_INVOICE.number, AMAP_INVOICE.date, '运输服务', '价税合计', AMAP_INVOICE.gross, AMAP_INVOICE.net, AMAP_INVOICE.tax],
@@ -41,7 +46,8 @@ const EXPECTED_TEXT = {
   m08: ['铁路电子客票', RAIL_0822.number, RAIL_0822.date, RAIL_0822.train, RAIL_0822.from, RAIL_0822.to, RAIL_0822.price],
   r201: ['电子发票', '普通发票', BUNDLED_FEE_INVOICE.number, BUNDLED_FEE_INVOICE.date, '运输服务', '经纪代理服务', '价税合计', BUNDLED_FEE_INVOICE.gross, BUNDLED_FEE_INVOICE.net, BUNDLED_FEE_INVOICE.tax],
   r202: ['行程单', AMAP_ITINERARY_GAP.brand, `共计${AMAP_ITINERARY_GAP.count}单行程`, `合计${AMAP_ITINERARY_GAP.total}元`, '张江', '浦东机场', '待结算'],
-  m11: ['电子发票', '普通发票', OTHER_INVOICE.number, OTHER_INVOICE.date, '餐饮服务', OTHER_INVOICE.gross],
+  m11: ['电子发票', '普通发票', DINING_INVOICE.number, DINING_INVOICE.date, '餐饮服务', DINING_INVOICE.gross],
+  m12: ['电子发票', '普通发票', OFFICE_SUPPLIES_INVOICE.number, OFFICE_SUPPLIES_INVOICE.date, '办公用品', OFFICE_SUPPLIES_INVOICE.gross],
   r204: ['铁路电子客票', RAIL_SPLIT_RUNS.number, RAIL_SPLIT_RUNS.date, RAIL_SPLIT_RUNS.train, RAIL_SPLIT_RUNS.from, RAIL_SPLIT_RUNS.to, RAIL_SPLIT_RUNS.seat, '票价', RAIL_SPLIT_RUNS.price],
   r01: ['电子发票', '增值税专用发票', SPLIT_NUMBER_INVOICE.number, SPLIT_NUMBER_INVOICE.date, '住宿服务', SPLIT_NUMBER_INVOICE.gross, SPLIT_NUMBER_INVOICE.net, SPLIT_NUMBER_INVOICE.tax],
   r205: ['行程单', AMAP_ITINERARY_WRAPPED.brand, `共计${AMAP_ITINERARY_WRAPPED.count}单行程`, `合计${AMAP_ITINERARY_WRAPPED.total}元`, '2026-08-10', '08:52', '26.69元', '42.50', '虹桥枢纽', '张江'],

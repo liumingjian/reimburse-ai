@@ -55,8 +55,9 @@ export type JudgeBase = {
   projects: CatalogEntry[]; expenseItems: CatalogEntry[]; invoices: ReadbackInvoice[];
 };
 
-// What `erp_job.plan` stores.
-export type FrozenJob = { plan: FillPlan; judge: JudgeBase };
+// What `erp_job.plan` stores. `rerunOf` is an 自动重新去报销's cause (ADR-0034): the job whose unknown result it
+// starts over from, that result's code, and which re-run in a row this is.
+export type FrozenJob = { plan: FillPlan; judge: JudgeBase; rerunOf?: { jobId: string; code: string | null; no: number } };
 
 const cents = (amount: string) => {
   const [whole = '0', fraction = ''] = amount.split('.');

@@ -1,0 +1,6 @@
+{
+  "about": "#363: photographed discounted dining slip, paid 240.00 rather than the original total 300.00",
+  "outcome": "recognised",
+  "layout": "dining_receipt/labelled",
+  "facts": { "merchantName": "小河餐厅", "receiptDate": "2026-08-18", "receiptTime": "19:20:00", "paidAmount": "240.00", "originalTotal": "300.00", "discount": "60.00" }
+}

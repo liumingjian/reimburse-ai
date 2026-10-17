@@ -8,6 +8,7 @@ import {
   type ActionOutcome,
   type AppAdapter,
   type AuthOutcome,
+  type ErpCredentialsOutcome,
   type ExtensionPairingOutcome,
   type LegacyImportOutcome,
   type ProjectBookOutcome,
@@ -33,6 +34,7 @@ import { createInventoryFlow } from './flows/inventory';
 import { createPendingFlow } from './flows/pending';
 import { createPrintFlow } from './flows/print';
 import { createProjectFlow } from './flows/project';
+import { createErpCredentialsFlow } from './erp-credentials';
 import { createExtensionPairingFlow } from './extension';
 import { createLegacyImportFlow } from './legacy-import';
 import type { MockOptions } from './options';
@@ -63,11 +65,13 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 }
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
-const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getExtensionPairing']);
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getExtensionPairing', 'getErpCredentials']);
 // 旧数据导入的重试 / 跳过带回新的导入结果。
 const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['retryLegacyImport', 'skipLegacyImport']);
 // Issuing a 配对码 (pairing code) and revoking the pairing answer with the new pairing.
 const PAIRING_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['createExtensionPairingCode', 'revokeExtensionPairing']);
+// Saving, 试登录 and clearing the ERP 凭据 answer with the new view.
+const CREDENTIAL_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['saveErpCredentials', 'testErpCredentials', 'clearErpCredentials']);
 // 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
 const LIST_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['abandonTask', 'resetAll']);
 const AUTH_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['setupAdmin', 'register', 'login', 'logout', 'changePassword']);
@@ -209,6 +213,18 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       return bus.commit(emptySnapshot({ taskId, name: `${at.slice(0, 10)} 新建报销`, period: null, homeCity, createdAt: at, updatedAt: at }, 'upload'), false);
     },
     uploadBatch: inventory.uploadBatch,
+    async supplementDiningEvidence(taskId, { pendingItemId, files }, stepToken) {
+      const admitted = bus.withStep(taskId, stepToken, (snapshot) => {
+        if (!snapshot.allowedActions.includes('change_dining_evidence')) return { error: { code: 'dining_evidence_locked', message: '当前不能修改餐饮材料。' } };
+        const item = snapshot.pendingItems.find((candidate) => candidate.itemId === pendingItemId);
+        if (!item?.dining?.supplement || item.status !== 'open') return { error: { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' } };
+        return snapshot;
+      });
+      if (!admitted.ok) return admitted;
+      const uploaded = await inventory.uploadBatch(taskId, files);
+      if (!uploaded.ok || !uploaded.snapshot.batches.at(-1)?.files.some((file) => file.status === 'accepted')) return uploaded;
+      return inventory.startInventory(taskId, uploaded.snapshot.step.stepToken);
+    },
     startInventory: inventory.startInventory,
     reopenUpload: inventory.reopenUpload,
     answerPendingItem: pending.answerPendingItem,
@@ -242,6 +258,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     },
     ...createLegacyImportFlow(options),
     ...createExtensionPairingFlow(options),
+    ...createErpCredentialsFlow(),
     ...createPrintFlow(bus),
     ...createErpFlow(bus),
   };
@@ -250,15 +267,17 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome>;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome | ErpCredentialsOutcome>;
     const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
-    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome =>
+    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome | ErpCredentialsOutcome =>
       ACCOUNT_METHODS.has(key)
         ? { ok: false, error: unavailable, accountList: null }
         : LEGACY_METHODS.has(key)
         ? { ok: false, error: unavailable, legacyImport: null }
         : PAIRING_METHODS.has(key)
         ? { ok: false, error: unavailable, pairing: null }
+        : CREDENTIAL_METHODS.has(key)
+        ? { ok: false, error: unavailable, credentials: null }
         : LIST_METHODS.has(key)
         ? { ok: false, error: unavailable, taskList: null }
         : AUTH_METHODS.has(key)

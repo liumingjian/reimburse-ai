@@ -697,6 +697,54 @@ export async function settleLegacyScreenshots331(db: Kysely<unknown>): Promise<v
   `.execute(db);
 }
 
+// Line 2 of erp-headless-v1.md, item 1: ERP 凭据 hosted for the baox 本地执行器 (ADR-0033). One row per 应用账号, the
+// password sealed with the server's key; and the pairing learns what paired, so the 凭据 go only to a 本地执行器.
+const erpCredentials: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('erp_credential')
+      .addColumn('account_id', 'text', (c) => c.primaryKey().references('account.account_id'))
+      .addColumn('erp_account', 'text', (c) => c.notNull())
+      .addColumn('password_sealed', 'text')
+      .addColumn('status', 'text', (c) => c.notNull())
+      .addColumn('message', 'text')
+      .addColumn('saved_at', 'text', (c) => c.notNull())
+      .addColumn('checked_at', 'text')
+      .execute();
+    await db.schema.alterTable('extension_pairing').addColumn('holder', 'text').execute();
+  },
+};
+
+// Line 2, item 4: 自动重新去报销 (ADR-0034) starts a fill job nobody clicked, and the trail has to tell it from the
+// employee's 重新去报销. `erp_job.trigger` gains `rerun`, by the same rebuild #242 used to add `refill` (see there for
+// why each pragma is set).
+const rerunTrigger: Migration = {
+  async up(db: Kysely<unknown>) {
+    await sql`PRAGMA foreign_keys = OFF`.execute(db);
+    await sql`PRAGMA defer_foreign_keys = ON`.execute(db);
+    await db.schema
+      .createTable('erp_job_rebuilt')
+      .addColumn('job_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('kind', 'text', (c) => c.notNull().check(sql`kind IN ('fill')`))
+      .addColumn('trigger', 'text', (c) => c.notNull().check(sql`trigger IN ('start', 'confirm_login', 'refill', 'rerun')`))
+      .addColumn('confirmation_digest', 'text', (c) => c.notNull())
+      .addColumn('plan', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await sql`INSERT INTO erp_job_rebuilt (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+              SELECT job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at FROM erp_job`.execute(db);
+    await sql`DROP TABLE erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = ON`.execute(db);
+    await sql`ALTER TABLE erp_job_rebuilt RENAME TO erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = OFF`.execute(db);
+    await appendOnly(db, 'erp_job');
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -726,4 +774,6 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0018_273_project_deadline': projectDeadline273,
   '0019_312_blob_medium': blobMedium312,
   '0020_331_screenshot_group': screenshotGroup331,
+  '0021_line2_erp_credentials': erpCredentials,
+  '0022_line2_rerun_trigger': rerunTrigger,
 };

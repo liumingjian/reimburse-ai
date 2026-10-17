@@ -1,12 +1,13 @@
 // The snapshot's `erp`, `readback`, `reconcile` and `catalog` sections, worded from the task's ERP record
 // (`erp/fill-state.ts`). Which actions are on offer is the task policy's (`task-policy.ts`); these views only word them.
 
-import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { erpEntryOf } from '@baox/erp-executor/probe';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
-import type { ErpRecord, ReconcileJudgement } from '../erp/fill-state';
+import type { DraftOutcome, ErpRecord, ReconcileJudgement } from '../erp/fill-state';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from '../extension/channel';
-import { erpActionsOf, reconcileActionsOf, reconcileReading } from '../task-policy';
+import { erpActionsOf, reconcileActionsOf, reconcileReading, type ErpPhase } from '../task-policy';
 
 // Executor events are only interpreted here. The client receives the resulting stage and never infers progress from
 // event names or event order.
@@ -36,7 +37,7 @@ function stepsOf(record: ErpRecord): ErpStep[] {
       else if (seen === 'running' && status !== 'failed') status = 'running';
       else if (seen === 'done' && status === 'todo') status = 'done';
     }
-    if (phase === 'handed_over' || phase === 'saved') status = 'done';
+    if (phase === 'handed_over' || phase === 'drafted' || phase === 'saved') status = 'done';
     if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
   });
@@ -74,7 +75,42 @@ const CATALOG_QUERY_FAILED_REASON = '没能在报销系统里查到项目与费�
  */
 const FORM_OBSTRUCTED_BEFORE_FILL = 'form_obstructed_before_fill';
 
+// 自动重新去报销 (ADR-0034): what the employee is told while baox starts over by itself, and after it gave up; and the
+// executor's codes for a re-run that stopped before uploading because ERP showed the bill landed (or could not say).
+// Their own sentence says what happened; 「写入结果不确定」 would be false about a run that wrote nothing.
+const rerunRunning = (no: number) => `上一次没有填完，应用已自动换一张新单重新填报（第 ${no} 次）。`;
+const rerunSpent = (no: number) => `应用已自动换新单重新填报 ${no} 次，仍然没有完成，需要你来决定下一步。`;
+const RERUN_STOPPED = /^rerun_/;
+
 const LOGIN_NOT_DETECTED = '还没有检测到登录。请在为这次报销打开的报销系统标签页里登录本人账号（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
+
+// 去报销系统查看 (spec #406): the one rule for when the page offers the 报销系统 and the 暂存单's 内码. The phases in
+// which a 暂存单 the employee should check may exist: `drafted`, and `unknown` when its 内码 is known (暂存 landed but
+// its 回读 did not match, ticket #408, or 对账 found the task's one 暂存单 and could not prove it). `saved` is a bill
+// now, `aborted` wrote nothing, and `handed_over` (the 浏览器扩展 path) never 暂存s: its form is already open in the
+// employee's own tab.
+const REVIEWABLE_PHASES: ReadonlySet<ErpPhase> = new Set(['drafted', 'unknown']);
+
+// What 对账 by the ownership marker found that is still a 暂存单 needing the employee's eyes. `saved` is a bill now:
+// 对账 leaves the phase `unknown` (the bill is 转人工), but there is no draft left to check.
+const UNPROVED_DRAFT: ReadonlySet<DraftOutcome> = new Set(['mismatch', 'unproved']);
+
+/**
+ * Where the employee reviews the task's 暂存单, or null. The 内码 is the one the executor reported in its result, or
+ * else the one 对账 found under the task's own marker; the address is built from the `erpOrigin` frozen in this
+ * task's fill plan, never the server's current configuration, so the button opens the 报销系统 the draft was written
+ * to. Today it is that 报销系统's entry page (where the executor signs in); a direct link to the bill would change only
+ * this function.
+ */
+function reviewOf(record: ErpRecord): ErpReview | null {
+  const phase = record.facts?.phase;
+  const found = record.reconcile?.judged?.draft ?? null;
+  if (found?.outcome === 'saved') return null;
+  const draftId = record.result?.draftId ?? (found && UNPROVED_DRAFT.has(found.outcome) ? found.draftId : null);
+  const origin = record.frozen?.plan.erpOrigin ?? null;
+  if (!phase || !REVIEWABLE_PHASES.has(phase) || !draftId || !origin) return null;
+  return { url: erpEntryOf(origin), draftId };
+}
 
 export function erpView(record: ErpRecord): Erp {
   const idle: Erp = {
@@ -87,7 +123,9 @@ export function erpView(record: ErpRecord): Erp {
     draftNo: null,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: record.erpAccount,
+    review: null,
   };
   const facts = record.facts;
   if (!facts) return idle;
@@ -97,11 +135,13 @@ export function erpView(record: ErpRecord): Erp {
     currentStage: currentStageOf(steps),
     externalWait: externalWaitOf(record),
     allowedActions: erpActionsOf(facts.phase),
+    review: reviewOf(record),
   };
   const reason = record.result?.message ?? record.result?.code ?? '';
+  const rerunNo = facts.trigger === 'rerun' ? (record.frozen?.rerunOf?.no ?? 1) : null;
   switch (facts.phase) {
     case 'running':
-      return { ...idle, ...readState, status: 'running' };
+      return { ...idle, ...readState, status: 'running', rerunNotice: rerunNo ? rerunRunning(rerunNo) : null };
     case 'waiting_login':
       return { ...idle, ...readState, status: 'waiting_login', loginNotice: facts.trigger === 'confirm_login' ? LOGIN_NOT_DETECTED : null };
     case 'aborted':
@@ -115,11 +155,16 @@ export function erpView(record: ErpRecord): Erp {
       };
     case 'handed_over':
       return { ...idle, ...readState, status: 'done', outcome: 'filled', draftNo: null };
+    // ERP 草稿已交接: the draft has no 单据编号 until the employee saves it.
+    case 'drafted':
+      return { ...idle, ...readState, status: 'done', outcome: 'drafted', draftNo: null };
     case 'saved':
       return { ...idle, ...readState, status: 'done', outcome: 'saved', draftNo: record.result?.billNo ?? null };
     case 'unknown':
       return { ...idle, ...readState, status: 'aborted', draftNo: record.result?.billNo ?? null,
-        abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL
+        // A re-run that stopped before uploading filled nothing: its own reason says so, and «仍然没有完成» would not.
+        rerunNotice: rerunNo && !RERUN_STOPPED.test(record.result?.code ?? '') ? rerunSpent(rerunNo) : null,
+        abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL || RERUN_STOPPED.test(record.result?.code ?? '')
           ? reason
           : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
     default:
@@ -145,7 +190,7 @@ const centsOf = (amount: string | null | undefined) => {
  */
 export function readbackView(record: ErpRecord, lines: readonly Line[]): Readback {
   const phase = record.facts?.phase;
-  if (phase !== 'handed_over' && phase !== 'saved') return EMPTY_READBACK;
+  if (phase !== 'handed_over' && phase !== 'drafted' && phase !== 'saved') return EMPTY_READBACK;
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const rows: ReadbackRow[] = lines.map((line) => {
@@ -182,7 +227,7 @@ const LINE_REASON = /任务第 (\d+) 行/;
  * rather than echoing the local one back as if it had been read.
  */
 function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lines: readonly Line[]): ReadbackRow[] {
-  if (!judged || judged.verdict.bucket !== '已保存' || lines.length === 0) return [];
+  if (!judged || judged.draft || judged.verdict.bucket !== '已保存' || lines.length === 0) return [];
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const perLine = new Map<number, string[]>();
@@ -227,6 +272,19 @@ const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) =>
   '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里逐行核对后自己点「保存」，或转人工。',
   已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它的合计与这次确认的明细一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
+};
+
+// 对账 after 暂存 (line 2 item 5): what the lookup by the ownership marker found, as the page says it. `drafted` never
+// shows: it promotes to ERP 草稿已交接.
+const DRAFT_UNJUDGED_BANNER = '点了「暂存」之后结果不确定：应用已停止写入，不会重放。点「开始对账」，应用会按这次的归属标记只读查找暂存单；也可以直接转人工。';
+const DRAFT_BANNER: Readonly<Record<DraftOutcome, string>> = {
+  drafted: '找到了这次的暂存单，内容和确认的明细一致。',
+  unread: '这次没有在报销系统里查清暂存单，可以再对账一次，也可以转人工。',
+  none: '按这次的归属标记，报销系统里没有找到暂存单。不知道点了暂存之后单据有没有落下，应用不会再去报一次，请转人工。',
+  several: '报销系统里带这个报销任务归属标记的暂存单，和应有的不一样：应当只有这次暂存的一张。请转人工处理。',
+  saved: '这次暂存的单据在报销系统里已经保存过，或者不再是暂存状态，应用不再动它。请转人工确认。',
+  mismatch: '找到了这次的暂存单，但它和暂存前核对过的内容不一致。请转人工处理。',
+  unproved: '找到了这次的暂存单，但没有暂存前核对过的内容可比，证明不了它和确认的明细一致。请转人工处理。',
 };
 
 // 对账 found no 费用报销单 open at all. Said in place of the generic 未知 sentence, which only tells the employee to
@@ -289,7 +347,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
       actionCode: null,
       allowedActions,
       humanReview: false,
-      banner: notice ?? RECONCILE_UNJUDGED_BANNER,
+      banner: notice ?? (record.facts.drafting ? DRAFT_UNJUDGED_BANNER : RECONCILE_UNJUDGED_BANNER),
       reasons: fillReasons,
     };
   }
@@ -319,7 +377,7 @@ export function reconcileView(record: ErpRecord, taskId: string, lifecycle: Task
     actionCode: handOffOnly ? 'hand_off' : 'wait',
     allowedActions,
     humanReview: handOffOnly,
-    banner: notice ?? BUCKET_BANNER[judged.verdict.bucket](judged.billNo),
+    banner: notice ?? (judged.draft ? DRAFT_BANNER[judged.draft.outcome] : BUCKET_BANNER[judged.verdict.bucket](judged.billNo)),
     reasons: judged.verdict.reasons,
   };
 }
@@ -360,7 +418,9 @@ export function legacyErpView(legacy: LegacyTaskTable): Erp {
     draftNo: legacy.bill_no,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
 }
 

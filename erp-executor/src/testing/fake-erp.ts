@@ -209,6 +209,27 @@ export type FakeErpOptions = {
    */
   newFormClickDead?: boolean;
   /**
+   * The first N clicks on 新增, or on the 我的费用报销 shortcut, land and do nothing; the next one works. Measured live
+   * 2026-10-12 (S8, headless, right after login): the 我的费用报销 list stood open with one visible 新增, and 45 s
+   * after its click no form had opened; on another run the main menu stayed shut after its click.
+   */
+  newFormDeadClicks?: number;
+  openListDeadClicks?: number;
+  /** 暂存 is pressed and nothing lands: the tab stays 新增. */
+  draftCommandDead?: boolean;
+  /** 暂存 lands the draft but the tab stays 新增, so the fill cannot tell it landed: what 对账 by the marker is for. */
+  draftTabStays?: boolean;
+  /** Another 暂存 draft already carries this 事由, mark and all, so a search by the mark finds two. */
+  draftMarkTaken?: boolean;
+  /** What ERP stores as 事由 when it is not what was typed (a cut, say), to prove the read-back of the model. */
+  draftStoresCausa?: string;
+  /** 费用报销单 that already hold an invoice, by invoice number: its 单据编号, or '' for a 暂存 draft (V-63). */
+  heldInvoices?: Record<string, string>;
+  /** 暂存 drafts already in ERP before the run, by 事由. */
+  draftsBefore?: string[];
+  /** ExecuteBillQuery refuses a query by 发票号码. */
+  occupancyQueryFails?: boolean;
+  /**
    * Raise ERP's own idle-timeout prompt (金蝶提示「系统闲置时间过长」) before the run starts, covering the element
    * this selector names — the state an unattended run inherits when the session was left sitting. Measured live
    * 2026-09-20: the prompt's overlay covered the header strip, so every click under it was refused and the run
@@ -311,7 +332,7 @@ export type FakeErpOptions = {
    */
   optionItemCoverTicks?: number;
 };
-export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save'; detail: string };
+export type FakeMutation = { kind: 'import' | 'cell' | 'option' | 'header' | 'addRow' | 'save' | 'draft'; detail: string };
 
 const SLOT = 10;
 const COLS = 100;
@@ -638,8 +659,10 @@ export async function createFakeErp(options: FakeErpOptions) {
     // from a browser context with no history, so it cannot show this.
     // @unverified: k3cloudloginInfo survives logout onto the login page [unseen]
     doc.window.localStorage.setItem('k3cloudloginInfo', JSON.stringify({ user: account.account, acc: account.tenant }));
-    doc.window.fetch = async (_input: string, init: { body: string }) => {
-      const body = answerBillQuery(init.body, options);
+    doc.window.fetch = async (input: string, init: { body: string }) => {
+      const payload = String(input).includes('ExecuteBillQuery') ? JSON.parse(JSON.parse(init.body).parameters[0]) : null;
+      const body = String(input).includes('DynamicFormService.View') ? answerView(init.body)
+        : payload?.FormId === formId ? answerDraftQuery(payload) : answerBillQuery(init.body, options);
       return { status: 200, text: async () => JSON.stringify(body) };
     };
     await doc.ready();
@@ -1053,6 +1076,51 @@ const kendoDate = (raw: string) => {
     mutate('save', billNo);
   }
 
+  // 暂存 drafts this ERP holds: what WebAPI View returns by 内码, and what ExecuteBillQuery finds by 事由.
+  // @unverified: 暂存 turns the tab to 费用报销单-修改, leaves 单据编号 empty and lands a draft with status Z (S5 live) [unseen]
+  // @unverified: View by 内码 answers Result.Result with DocumentStatus, BillNo, FCausa and the RecInvInfo / ER_ExpenseReimbEntry rows; a query by FCausa finds the draft [unseen]
+  const drafts: Array<{ id: string; causa: string; receipts: string[][]; details: string[][] }> = [];
+  let nextDraftId = 119946;
+  // A model row as the page shows it, its cells as plain values; a page date (2026/9/4) is stored the way the model
+  // holds dates (2026-09-04T00:00:00).
+  const gridModel = (grid: string) => [...main.document.querySelectorAll(`.kd-grid-panel[data-grid="${grid}"] tbody tr:not(.k-footer-template)`)]
+    .map((tr: any) => [...tr.querySelectorAll('td')].map((td: any) => String(td.textContent ?? '').trim())
+      .map((cell) => { const d = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(cell); return d ? `${d[1]}-${d[2]!.padStart(2, '0')}-${d[3]!.padStart(2, '0')}T00:00:00` : cell; }))
+    .filter((cells) => cells.some((cell) => cell !== '' && cell !== '普通发票'));
+  function saveDraft() {
+    commitEditor();
+    closeDropdown();
+    show(q('#save-group'), false);
+    if (options.draftCommandDead) return;
+    const typed = String(q(`[id$="-FCAUSA-EDITOR"]`).value).trim();
+    const id = String(nextDraftId++);
+    drafts.push({ id, causa: options.draftStoresCausa ?? typed, receipts: gridModel('receipts'), details: gridModel('detail') });
+    if (options.draftMarkTaken) drafts.push({ id: String(nextDraftId++), causa: typed, receipts: [], details: [] });
+    // Spaced, as live 2026-10-13 read it after 暂存.
+    if (!options.draftTabStays) q('.form-tab').textContent = '费用报销单 - 修改';
+    mutate('draft', id);
+  }
+  for (const causa of options.draftsBefore ?? []) drafts.push({ id: String(nextDraftId++), causa, receipts: [], details: [] });
+  // @unverified: ExecuteBillQuery on 费用报销单 filtered by FRecInv.FIVNUMBER answers one row per bill holding the number (S12 live, an audited bill; a 暂存 draft only through FRecInv.FBillNo) [unseen]
+  function answerOccupancy(filter: string): unknown {
+    if (options.occupancyQueryFails) return [[{ Result: { ResponseStatus: { IsSuccess: false, Errors: [{ Message: '元数据中标识为FRecInv的字段上的引用字段FIVNUMBER不存在' }] } } }]];
+    const asked = [...filter.matchAll(/FRecInv\.FIVNUMBER = '(\d+)'/g)].map((m) => m[1]!);
+    return asked.filter((no) => no in (options.heldInvoices ?? {})).map((no) => [options.heldInvoices![no] || ' ', options.heldInvoices![no] ? 'C' : 'Z', no]);
+  }
+  function answerDraftQuery(payload: { FilterString?: string }): unknown {
+    if (String(payload.FilterString ?? '').includes('FRecInv.FIVNUMBER')) return answerOccupancy(String(payload.FilterString));
+    const like = /FCausa like '%([^%']*)%'/.exec(String(payload.FilterString ?? ''));
+    return drafts.filter((d) => like && d.causa.includes(like[1]!)).map((d) => [d.id, ' ', 'Z', d.causa]);
+  }
+  function answerView(requestBody: string): unknown {
+    const id = JSON.parse(JSON.parse(requestBody).parameters[1]).Id;
+    const draft = drafts.find((d) => d.id === String(id));
+    if (!draft) return { Result: { ResponseStatus: { IsSuccess: false, Errors: [{ Message: '单据不存在' }] }, Result: null } };
+    return { Result: { ResponseStatus: null, Result: { Id: Number(draft.id), BillNo: ' ', DocumentStatus: 'Z', FCausa: draft.causa, RecInvInfo: draft.receipts, ER_ExpenseReimbEntry: draft.details } } };
+  }
+
+  let deadNewFormClicks = 0;
+  let deadOpenListClicks = 0;
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
     if (visible(assistant) && !assistant.contains(el)) return; // the modal assistant swallows clicks
@@ -1073,10 +1141,13 @@ const kendoDate = (raw: string) => {
     if (td && !td.parentElement.classList.contains('k-footer-template')) return editCell(td);
     commitEditor();
     switch (action) {
-      case 'open-list': return show(q('#expense-list'), true);
+      case 'open-list':
+        if (deadOpenListClicks < (options.openListDeadClicks ?? 0)) { deadOpenListClicks += 1; return undefined; }
+        return show(q('#expense-list'), true);
       // @unverified: clicking 新增 reveals the form in the same document, where live adds a tab panel (recordings/new-form) [fake]
       case 'new-form':
         if (options.newFormClickDead) return undefined;
+        if (deadNewFormClicks < (options.newFormDeadClicks ?? 0)) { deadNewFormClicks += 1; return undefined; }
         show(q('#expense-list'), false);
         show(q('#expense-form'), true);
         if (options.sectionOverlayTicks) {
@@ -1116,6 +1187,7 @@ const kendoDate = (raw: string) => {
         return insertDetailRow();
       }
       case 'save': return save();
+      case 'save-temp': return saveDraft();
       case 'close-window': {
         const win = el.closest('.k-window');
         // A 处理结果 whose 退出 does nothing: the click lands, the window stays, and everything under it is
@@ -1385,6 +1457,10 @@ const kendoDate = (raw: string) => {
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':
+          // Kendo opens the 保存 split button's group on mouse-over of its arrow.
+          if (params.type === 'mouseMoved' && doc === main && !recorded) {
+            if (doc.elementAt(Number(params.x), Number(params.y))?.closest('[data-action="save-arrow"]')) show(q('#save-group'), true);
+          }
           if (params.type === 'mousePressed') {
             const el = doc.elementAt(Number(params.x), Number(params.y));
             if (el) { if (recorded) await replayClick(doc, el); else if (doc === main) await clickMain(el); else clickAssistant(el); }

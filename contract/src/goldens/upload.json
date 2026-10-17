@@ -151,7 +151,9 @@
     "draftNo": null,
     "abortReason": null,
     "loginNotice": null,
-    "erpAccount": null
+    "rerunNotice": null,
+    "erpAccount": null,
+    "review": null
   },
   "readback": {
     "status": "none",

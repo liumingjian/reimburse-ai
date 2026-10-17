@@ -70,11 +70,18 @@ export const HTTP_ENDPOINTS = {
   getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
   createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: [] },
   revokeExtensionPairing: { method: 'POST', path: '/api/extension/pairing/revoke', body: 'json', fields: [] },
+  // ERP 凭据 (ADR-0033): every answer is the ErpCredentialsView, never the password. Saving and 试登录 wait for the
+  // 试登录 (up to about five minutes); one that ran and failed is in the view, not an { error }.
+  getErpCredentials: { method: 'GET', path: '/api/erp-credentials', body: 'none', fields: [] },
+  saveErpCredentials: { method: 'POST', path: '/api/erp-credentials', body: 'json', fields: ['account', 'password'] },
+  testErpCredentials: { method: 'POST', path: '/api/erp-credentials/test', body: 'json', fields: [] },
+  clearErpCredentials: { method: 'POST', path: '/api/erp-credentials/clear', body: 'json', fields: [] },
   getSnapshot: { method: 'GET', path: '/api/tasks/:id', body: 'none', fields: [] },
   subscribe: { method: 'GET', path: '/api/tasks/:id/events', body: 'sse', fields: [] },
   createTask: { method: 'POST', path: '/api/tasks', body: 'json', fields: ['homeCity'] },
   uploadBatch: { method: 'POST', path: '/api/tasks/:id/batches', body: 'multipart', fields: ['files', 'sourcePaths'] },
   addPaymentScreenshots: { method: 'POST', path: '/api/tasks/:id/payment-screenshots', body: 'multipart', fields: ['voucherMaterialId', 'files', 'stepToken'] },
+  supplementDiningEvidence: { method: 'POST', path: '/api/tasks/:id/dining-evidence', body: 'multipart', fields: ['pendingItemId', 'files', 'stepToken'] },
   startInventory: action('start-inventory', 'stepToken'),
   answerPendingItem: action('answer-pending', 'itemId', 'answer', 'stepToken'),
   confirmReview: action('confirm-review', 'digest', 'acceptDeadlineWarnings', 'stepToken'),

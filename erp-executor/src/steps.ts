@@ -114,7 +114,7 @@ const clickCss = (page: WritePage, session: CdpSession, selector: string, label:
 
 const clickText = (page: WritePage, session: CdpSession, text: string, { exact = true, ...options }: { timeoutMs?: number; exact?: boolean } = {}) =>
   clickWhere(page, session, textPoint(text, { exact }), `「${text}」`,
-    () => new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到唯一的「${text}」按钮或菜单项`), options);
+    (count) => new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到唯一的「${text}」按钮或菜单项（匹配 ${count} 个）`), options);
 
 const clickPoint = (page: WritePage, session: CdpSession, snippet: string, label: string, options: { timeoutMs?: number } = {}) =>
   clickWhere(page, session, snippet, label,
@@ -154,21 +154,40 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
     }
   }
   const has = (text: string) => waitVisibleText(page, session, text, paceOf(page).settleMs);
+  // Each click of the path is followed by what it is for, and clicked again when that does not come. Live 2026-10-12
+  // (S8, headless, right after login) a click landed and did nothing: the main menu stayed shut over a 员工服务 that
+  // was in the page but hidden, and on another run the 我的费用报销 list stood open with its one visible 新增 and no
+  // form came. Clicked once only, each waited out its whole 45 s for nothing. 新增 is clicked again only while no
+  // 费用报销单-新增 is on screen, and a second form opened by a slow first click is caught by the preflight's
+  // refusal of a 新增 tab that is not unique; opening a form writes nothing.
+  const budget = cap(page, timeoutMs);
+  const until = async (click: () => Promise<unknown>, effect: string, attempts = 3) => {
+    const deadline = Date.now() + budget;
+    for (let attempt = 1; ; attempt += 1) {
+      await click();
+      const left = Math.max(0, deadline - Date.now());
+      if (await waitVisibleText(page, session, effect, attempt < attempts ? Math.min(left, budget / attempts) : left)) return true;
+      if (attempt >= attempts || Date.now() >= deadline) return false;
+    }
+  };
+  const openList = () => until(() => clickText(page, session, '我的费用报销', { timeoutMs }), '新增');
+  let opened: boolean;
   if (await has('费用报销单-新增')) {
     await clickText(page, session, '费用报销单-新增', { timeoutMs });
-  } else if (await has('我的费用报销')) {
-    await clickText(page, session, '我的费用报销', { timeoutMs });
-    await clickText(page, session, '新增', { timeoutMs });
+    opened = await waitVisibleText(page, session, '费用报销单-新增', timeoutMs);
   } else {
-    await clickCss(page, session, '.kd_SystemMenu', 'ERP 主菜单');
-    await clickText(page, session, '员工服务', { timeoutMs });
-    await clickText(page, session, '我的费用报销', { timeoutMs });
-    await clickText(page, session, '新增', { timeoutMs });
+    if (await has('我的费用报销')) {
+      await openList();
+    } else {
+      await until(() => clickCss(page, session, '.kd_SystemMenu', 'ERP 主菜单'), '员工服务');
+      await until(() => clickText(page, session, '员工服务', { timeoutMs }), '我的费用报销');
+      await openList();
+    }
+    // The result of this wait used to be discarded and `{ok:true}` returned regardless, so a form that never opened
+    // was reported as opened; the run then failed further on, with a message about something else entirely — live
+    // 2026-09-19, as a version mismatch on a matching version. A step reports what it actually achieved.
+    opened = await until(() => clickText(page, session, '新增', { timeoutMs }), '费用报销单-新增');
   }
-  // The result of this wait used to be discarded and `{ok:true}` returned regardless, so a form that never opened
-  // was reported as opened; the run then failed further on, with a message about something else entirely — live
-  // 2026-09-19, as a version mismatch on a matching version. A step reports what it actually achieved.
-  const opened = await waitVisibleText(page, session, '费用报销单-新增', timeoutMs);
   if (!opened) {
     throw new ExecutorError('ERP_NEW_FORM_NOT_OPENED',
       `点过之后 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内没有出现「费用报销单-新增」页签：新的费用报销单没有打开`);

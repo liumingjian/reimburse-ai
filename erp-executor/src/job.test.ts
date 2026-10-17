@@ -309,6 +309,30 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(inputEvents(fake)).toEqual([]);
   });
 
+  it('signs in with the ERP 凭据 on the login page when given a way to, and carries on (headless, ADR-0033)', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
+    let signIns = 0;
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => { signIns += 1; await fake.login(); return { ok: true }; },
+    });
+    expect(result).toMatchObject({ status: 'handed_over', code: null });
+    expect(signIns).toBe(1);
+    expect(server.events.some((e) => e.type === 'waiting_login')).toBe(false);
+  });
+
+  it('aborts with the sign-in\'s own reason, before any attempt or input, when ERP refuses the login', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => ({ ok: false, code: 'erp_sign_in_refused', message: 'ERP 拒绝了这组账号密码' }),
+    });
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_sign_in_refused', message: 'ERP 拒绝了这组账号密码' });
+    expect(server.events).toContainEqual({ type: 'step', step: 'login', status: 'failed' });
+    expect(server.attempts).toEqual([]);
+    expect(inputEvents(fake)).toEqual([]);
+  });
+
   it('aborts on a catalog mismatch before import, with no attempt and no input', async () => {
     const fake = await createFakeErp(fakeErpOptions({ projects: [{ code: '39163', name: '改过名的项目' }, { code: '38480', name: '中国农业发展银行河南省分行-20-1961', forbidStatus: 'B' }] }));
     const result = await run(fake);
@@ -531,6 +555,18 @@ describe('opening a new 费用报销单', () => {
     // form and failed later, somewhere else, saying something else.
     await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))
       .rejects.toMatchObject({ code: 'ERP_NEW_FORM_NOT_OPENED' });
+  });
+
+  // Live 2026-10-12 (S8, headless, right after login): a navigation click landed and did nothing — the list stood open
+  // with one visible 新增 and no form came; on another run the main menu stayed shut. Each was clicked once only.
+  it('clicks 新增 again when the first click opened nothing', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newFormDeadClicks: 1 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
+
+  it('clicks 我的费用报销 again when the first click opened no list', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ openListDeadClicks: 1 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
   });
 });
 

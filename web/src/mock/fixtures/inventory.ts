@@ -1,4 +1,6 @@
 import {
+  DINING_COPY,
+  DINING_ITEM_CODES,
   PENDING_CHOICE_KEY,
   STAY_TRIO_CONFIRM_NONE,
   STAY_TRIO_COPY,
@@ -20,9 +22,6 @@ import {
   stayTrioItemId,
 } from '@baox/contract';
 
-// 盘点结果夹具：11 份材料的识别结果、9 个费用事件、4 个待确认项（3 个按材料，外加住宿发票缺支付截图），以及答复后的候选明细。
-// 数字与人物沿用原型；文件对应 fixtures/generated/ 里由脚本生成的示例原件（fixtures/scripts/data.mjs 是同一份数据）。
-// mock 服务端按文件名把上传的材料对到这里的档案；对不上的材料形成「不支持的材料类型」待确认项。
 
 // Inventory phases, as the server projects them (server/src/inventory-view.ts): reading the PDFs, then the photos when
 // the task has any. None before the first inventory.
@@ -36,7 +35,8 @@ export function inventoryPhases(materials: readonly Material[], status: Inventor
 
 export const FIXTURE_URL_BASE = 'fixtures/';
 
-const CATEGORY: Readonly<Record<'accommodation' | 'long_distance' | 'remote_city_transport', ExpenseCategory>> = {
+const CATEGORY: Readonly<Record<'accommodation' | 'long_distance' | 'remote_city_transport' | 'hospitality', ExpenseCategory>> = {
+  hospitality: { code: 'hospitality', label: '招待费' },
   accommodation: { code: 'accommodation', label: '住宿' },
   long_distance: { code: 'long_distance', label: '长途交通' },
   remote_city_transport: { code: 'remote_city_transport', label: '外地市内交通' },
@@ -71,6 +71,7 @@ type Profile = {
 const RULE = {
   vat: 'rule:vat_invoice/einvoice',
   folio: 'rule:hotel_folio/labelled',
+  dining: 'rule:dining_receipt/labelled',
   passenger: 'rule:vat_invoice/einvoice',
   amap: 'rule:ride_itinerary/amap',
   caocao: 'rule:ride_itinerary/caocao',
@@ -80,6 +81,11 @@ const RULE = {
 
 // 材料种类 / 版式 per fixture id; absent = unrecognised.
 const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>> = {
+  m11: { kind: 'vat_invoice', layout: 'einvoice' },
+  m13: { kind: 'dining_receipt', layout: 'labelled' },
+  m14: { kind: 'dining_receipt', layout: 'labelled' },
+  m15: { kind: 'dining_receipt', layout: 'labelled' },
+  m16: { kind: 'dining_receipt', layout: 'labelled' },
   m01: { kind: 'vat_invoice', layout: 'einvoice' },
   m02: { kind: 'hotel_folio', layout: 'labelled' },
   m03: { kind: 'vat_invoice', layout: 'einvoice' },
@@ -92,7 +98,6 @@ const IDENTITY: Readonly<Record<string, { kind: MaterialKind; layout: string }>>
   m10: { kind: 'taxi_receipt', layout: 'machine_printed' },
 };
 
-// 以夹具材料 id（m01…m11）为键的识别档案。
 export const PROFILES: Readonly<Record<string, Profile>> = {
   m01: {
     fileName: '全季酒店_发票.pdf',
@@ -293,15 +298,53 @@ export const PROFILES: Readonly<Record<string, Profile>> = {
   m11: {
     fileName: '餐饮_发票.pdf',
     file: 'm11-other-invoice.pdf',
+    kindLabel: '全电发票（普票）',
+    categoryLabel: '招待费',
+    role: 'primary_voucher',
+    shape: 'portrait',
+    mediaType: 'pdf',
+    status: 'pending',
+    checkText: '缺少餐饮小票',
+    linked: [],
+    fields: [
+      field('invoiceNumber', '发票号码', '26312000000103317790', RULE.vat),
+      field('issueDate', '开票日期', '2026-08-14', RULE.vat),
+      field('invoiceType', '发票票种', '普票', RULE.vat),
+      field('sellerName', '销售方', '上海某某餐饮有限公司', RULE.vat),
+      field('itemName', '项目名称', '*餐饮服务*餐费', RULE.vat),
+      field('totalAmount', '价税合计', '240.00', RULE.vat),
+      field('netAmount', '不含税金额', '226.42', RULE.vat),
+      field('taxAmount', '税额', '13.58', RULE.vat),
+    ],
+  },
+  m12: {
+    fileName: '办公用品_发票.pdf',
+    file: 'm12-office-supplies-invoice.pdf',
     kindLabel: '未识别版式',
     categoryLabel: null,
     role: 'pending',
     shape: 'portrait',
     mediaType: 'pdf',
     status: 'pending',
-    checkText: '不属于住宿、网约车、高铁、出租车四类',
+    checkText: '版式没有被任何规则认领',
     linked: [],
     fields: [],
+  },
+  m13: {
+    fileName: '餐饮_小票.pdf', file: 'm13-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 240.00 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '240.00', RULE.dining)],
+  },
+  m14: {
+    fileName: '餐饮_优惠小票.pdf', file: 'm14-discounted-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 240.00 元；原价 300.00 元，优惠 60.00 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '300.00', RULE.dining), field('discount', '优惠金额', '60.00', RULE.dining)],
+  },
+  m15: {
+    fileName: '餐饮_金额不一致小票.pdf', file: 'm15-mismatched-dining-receipt.pdf', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'pdf', status: 'ok', checkText: '实付金额 239.99 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '239.99', RULE.dining), field('originalTotal', '原价合计', '239.99', RULE.dining)],
+  },
+  m16: {
+    fileName: '餐饮_小票照片.jpg', file: 'm16-dining-receipt-photo.jpg', kindLabel: '餐饮小票', categoryLabel: '招待费', role: 'reference', shape: 'portrait', mediaType: 'image', status: 'ok', checkText: '实付金额 240.00 元；原价 300.00 元，优惠 60.00 元', linked: [],
+    fields: [field('merchantName', '商户名称', '小河餐厅', RULE.dining), field('receiptDate', '消费日期', '2026-08-18', RULE.dining), field('receiptTime', '消费时间', '19:20:00', RULE.dining), field('paidAmount', '实付金额', '240.00', RULE.dining), field('originalTotal', '原价合计', '300.00', RULE.dining), field('discount', '优惠金额', '60.00', RULE.dining)],
   },
 };
 
@@ -340,6 +383,7 @@ type EventTemplate = {
 // 费用事件按内核的事件顺序给出：先按主要报销凭证的 materialId，再按行程段（events.mjs:356-359）。
 // 统一业务序号在 inventoryResult 里按内核确认表的分类排序重排（见 CATEGORY_ORDER）。
 const EVENTS: readonly EventTemplate[] = [
+  { voucher: 'm11', refs: [], category: CATEGORY.hospitality, summary: '餐费', evidenceNote: null, date: '2026-08-14', endDate: null, city: null, origin: null, destination: null, gross: '240.00', net: '226.42', tax: '13.58', invoiceType: '增值税普通发票' },
   { voucher: 'm01', refs: ['m02'], category: CATEGORY.accommodation, summary: '全季酒店 13 晚', evidenceNote: '住宿发票 3640.00 = 结账单消费合计 3640.00；13 天 = 08-09 入住至 08-22 离店', date: '2026-08-09', endDate: '2026-08-22', city: '上海', origin: null, destination: null, gross: '3640.00', net: '3433.96', tax: '206.04', invoiceType: '增值税发票' },
   { voucher: 'm03', refs: ['m04'], category: CATEGORY.remote_city_transport, summary: '高德 · 虹桥枢纽 → 漕河泾', evidenceNote: '打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒', date: '2026-08-10', endDate: null, city: '上海', origin: '虹桥枢纽', destination: '漕河泾', gross: '26.69', net: '25.92', tax: '0.77', invoiceType: '普通发票' },
   { voucher: 'm03', refs: ['m04'], category: CATEGORY.remote_city_transport, summary: '高德 · 漕河泾 → 静安寺', evidenceNote: null, date: '2026-08-10', endDate: null, city: '上海', origin: '漕河泾', destination: '静安寺', gross: '20.85', net: '20.24', tax: '0.61', invoiceType: '普通发票' },
@@ -352,7 +396,7 @@ const EVENTS: readonly EventTemplate[] = [
 ];
 
 // 内核确认表的费用分类顺序（next.mjs:520-521）：统一业务序号按它排，同一分类内保持事件顺序（排序是稳定的）。
-const CATEGORY_ORDER: readonly string[] = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+const CATEGORY_ORDER: readonly string[] = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation', 'hospitality'];
 function categoryRank(code: string): number {
   const index = CATEGORY_ORDER.indexOf(code);
   return index === -1 ? CATEGORY_ORDER.length : index;
@@ -362,6 +406,10 @@ function categoryRank(code: string): number {
 const LINE_FACTS = new Map(EVENTS.map((event, index) => [index, { net: event.net, tax: event.tax, invoiceType: event.invoiceType }]));
 
 type PendingTemplate = Omit<PendingItem, 'itemId' | 'materialId' | 'status' | 'answer'>;
+
+function diningExclusion({ title, why }: Pick<PendingTemplate, 'title' | 'why'>): PendingTemplate {
+  return { title, why, kind: 'choice', resolver: '要你处理', fields: [], choices: [{ key: 'exclude', label: '排除这份材料' }], allocation: null, screenshotGroup: null, manualKinds: [] };
+}
 
 const TAXI_ROUTE_FIELDS = (originHint: string, destinationHint: string): PendingItem['fields'] => [
   { key: 'origin', label: '起点', placeholder: `如：${originHint}`, required: true, format: 'text' },
@@ -375,6 +423,7 @@ export const UNSUPPORTED_CHOICES: PendingItem['choices'] = [
 
 // 示例材料的待确认项都由用户处理（内核 WHO：要你处理）。
 const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
+  m11: diningExclusion({ title: DINING_COPY.receiptMissing.title('餐饮_发票.pdf'), why: DINING_COPY.receiptMissing.why('240.00') }),
   m09: {
     title: '补填起点与终点',
     why: '客运费明细要求结构化的起点和终点，纸质车票上没有这两项，需要你对照行程回忆填写。',
@@ -397,9 +446,9 @@ const PENDING_TEMPLATES: Readonly<Record<string, PendingTemplate>> = {
     screenshotGroup: null,
     manualKinds: [],
   },
-  m11: {
+  m12: {
     title: '不支持的材料类型',
-    why: '第一版只处理住宿、网约车、高铁、出租车四类材料。这份发票不会被猜费用类别，请选择排除，或自行手工处理后再回来。',
+    why: '这份发票没有被任何规则认领，不会被猜费用类别，请选择排除，或自行手工处理后再回来。',
     kind: 'choice',
     resolver: '要你处理',
     fields: [],
@@ -517,7 +566,7 @@ function allocationTemplate(fileName: string): PendingTemplate {
 export const SEED_ANSWERS: Readonly<Record<string, PendingAnswer>> = {
   m09: { origin: '张江高科', destination: '漕河泾开发区' },
   m10: { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' },
-  m11: { [PENDING_CHOICE_KEY]: 'exclude' },
+  m12: { [PENDING_CHOICE_KEY]: 'exclude' },
   // 仅在 `?fault=unsupported-material` 下存在的待确认项。
   m06: { [PENDING_CHOICE_KEY]: 'exclude' },
   // 仅在 `?allocation=1` 下存在的逐段分摊：按原件给出，明细与默认相同。
@@ -549,6 +598,20 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     }
   }
   const pendingItems: PendingItem[] = [];
+  const receiptIds = uploaded.flatMap((material) => {
+    const fixture = fixtureOf.get(material.materialId);
+    const profile = fixture ? PROFILES[fixture] : undefined;
+    return fixture && IDENTITY[fixture]?.kind === 'dining_receipt' && profile?.fields.some((candidate) => candidate.key === 'paidAmount' && candidate.value === '240.00') ? [material.materialId] : [];
+  });
+  const diningInvoiceId = actualOf.get('m11');
+  const diningReceiptId = diningInvoiceId && receiptIds.length === 1 ? receiptIds[0] : undefined;
+  const unpairedPaidAmounts = [...new Set(uploaded.flatMap((material) => {
+    const fixture = fixtureOf.get(material.materialId);
+    const profile = fixture ? PROFILES[fixture] : undefined;
+    const paidAmount = profile?.fields.find((candidate) => candidate.key === 'paidAmount')?.value;
+    return fixture && IDENTITY[fixture]?.kind === 'dining_receipt' && material.materialId !== diningReceiptId && paidAmount ? [paidAmount] : [];
+  }))];
+  const diningMismatch = unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes('240.00');
   const pendingIdOf = new Map<string, string>();
   const materials: Material[] = uploaded.map((material) => {
     const fixtureId = fixtureOf.get(material.materialId);
@@ -559,16 +622,25 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
     const source = profile ?? known;
     const unknown = fixtureId ? null : unknownKind(material);
     const splitting = allocationRequired && fixtureId === AMAP_VOUCHER;
-    const template = splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
+    const orphanReceipt = fixtureId !== undefined && IDENTITY[fixtureId]?.kind === 'dining_receipt' && material.materialId !== diningReceiptId;
+    const template: PendingTemplate | undefined = orphanReceipt ? diningExclusion({
+      title: DINING_COPY.invoiceMissing.title(material.fileName),
+      why: DINING_COPY.invoiceMissing.why(p.fields.find((field) => field.key === 'paidAmount')?.value),
+    }) : fixtureId === 'm11' && diningReceiptId ? undefined : fixtureId === 'm11' && diningMismatch ? diningExclusion({
+      title: DINING_COPY.amountMismatch.title(material.fileName),
+      why: DINING_COPY.amountMismatch.why('240.00', unpairedPaidAmounts),
+    }) : splitting ? allocationTemplate(material.fileName) : fixtureId ? PENDING_TEMPLATES[fixtureId] : UNKNOWN_TEMPLATES[unknown ?? 'unsupported'];
     const pendingItemIds: string[] = [];
     if (template) {
-      const itemId = `p${pendingItems.length + 1}`;
-      pendingItems.push({ itemId, materialId: material.materialId, status: 'open', answer: null, ...template });
+      const itemId = orphanReceipt ? `${DINING_ITEM_CODES.invoiceMissing}.${material.materialId}` : fixtureId === 'm11' ? `${diningMismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing}.${material.materialId}` : `p${pendingItems.length + 1}`;
+      const dining: PendingItem['dining'] = orphanReceipt ? { kind: 'receipt', supplement: 'invoice', assignment: { address: `edit.${material.materialId}.diningInvoice`, selection: { kind: 'automatic' }, options: diningInvoiceId && !diningReceiptId ? [{ invoiceId: diningInvoiceId, amount: '240.00', label: '餐饮发票 · 240.00 元' }] : [] } } : fixtureId === 'm11' ? { kind: 'invoice', supplement: 'receipt' } : null;
+      pendingItems.push({ dining, itemId, materialId: material.materialId, status: 'open', answer: null, ...template });
       pendingItemIds.push(itemId);
       pendingIdOf.set(material.materialId, itemId);
     }
-    const linked = p.linked.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
+    const linked = fixtureId === 'm11' && diningReceiptId ? [diningReceiptId] : material.materialId === diningReceiptId && diningInvoiceId ? [diningInvoiceId] : p.linked.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
     let checkText = unknown ? UNKNOWN_CHECK_TEXT[unknown] : p.checkText;
+    if (fixtureId === 'm11' && diningReceiptId) checkText = '餐饮发票与餐饮小票实付金额一致';
     if (fixtureId === 'm05' && unsupportedFault) checkText = '二维码核对一致；没有找到可配对的行程单，按发票 1 段';
     if (splitting) checkText = ALLOCATION_CHECK.voucher;
     if (allocationRequired && fixtureId === 'm04') checkText = ALLOCATION_CHECK.itinerary;
@@ -582,7 +654,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       role: p.role,
       shape: source ? source.shape : material.shape,
       mediaType: source ? source.mediaType : material.mediaType,
-      status: splitting ? 'pending' : p.status,
+      status: orphanReceipt || splitting ? 'pending' : fixtureId === 'm11' && diningReceiptId ? 'ok' : p.status,
       checkText,
       linkedMaterialIds: linked,
       pendingItemIds,
@@ -625,7 +697,7 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
   EVENTS.forEach((template, index) => {
     const voucherMaterialId = actualOf.get(template.voucher);
     if (!voucherMaterialId) return;
-    const refs = template.refs.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
+    const refs = template.voucher === 'm11' && diningReceiptId ? [diningReceiptId] : template.refs.map((id) => actualOf.get(id)).filter((id): id is string => Boolean(id));
     let evidenceNote = template.evidenceNote;
     if (template.voucher === 'm05' && refs.length === 0) evidenceNote = '没有找到可配对的行程单，按发票 1 段计一次费用';
     // 逐段分摊之前，高德各段先按行程单读数记（第 3 段读错）；答复后换成用户给的金额。
@@ -680,6 +752,12 @@ export function applyPendingAnswer(result: InventoryResult, item: PendingItem, a
     material.role = 'excluded';
     material.status = 'excluded';
     material.checkText = choice === 'manual' ? '已标记为自行手工处理：你会在报销系统里另行补录，应用不碰它' : '已排除：不进入明细，也不上传报销系统';
+    for (let index = result.events.length - 1; index >= 0; index -= 1) {
+      if (result.events[index]?.voucherMaterialId === material.materialId) result.events.splice(index, 1);
+    }
+    result.events.forEach((event, index) => {
+      event.no = index + 1;
+    });
     return;
   }
   for (const f of item.fields) {
@@ -796,6 +874,7 @@ export function duplicateBlockers(materials: Material[], hit: BlockerTask): Bloc
 
 // 虚构的费用项目编码与名称（内核 FY0xxxxx / 名称的写法），按费用分类给出。
 const EXPENSE_ITEMS: Readonly<Record<string, { code: string; name: string }>> = {
+  hospitality: { code: 'FY009001', name: '招待' },
   local_city_transport: { code: 'FY010101', name: '市内交通费' },
   remote_city_transport: { code: 'FY020103', name: '外地市内交通费' },
   long_distance: { code: 'FY020101', name: '长途交通费' },

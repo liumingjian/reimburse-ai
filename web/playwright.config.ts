@@ -9,6 +9,9 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   outputDir: './test-results',
   fullyParallel: true,
+  // Half the cores by default; a server spec boots a server plus Chrome, so that alone drove the shared Mac's load to 20
+  // and timed out dozens of specs (docs/agents/testing.md).
+  workers: 3,
   reporter: [['list']],
   use: {
     channel: 'chrome',
@@ -18,6 +21,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'mock', testDir: './e2e', testIgnore: 'server/**' },
-    { name: 'server', testDir: './e2e/server' },
+    // One at a time: each spec boots a server, Chrome and the real OCR. Three in parallel still drove the Mac's load to 15
+    // and timed out specs that pass alone (docs/agents/testing.md).
+    { name: 'server', testDir: './e2e/server', workers: 1 },
   ],
 });

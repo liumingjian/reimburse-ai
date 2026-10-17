@@ -66,11 +66,12 @@ export type TaskFacts = {
 // `saved`: a 对账 (reconcile) proved the employee's own save, or a legacy import recorded one — also terminal.
 // `unknown`: ERP 写入结果未知 after an attempt, reconcile. `aborted` / `catalog_mismatch` / `cancelled`: nothing
 // was written.
-export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'handed_over' | 'saved' | 'unknown';
+// `drafted` is ERP 草稿已交接 (ADR-0029): the 本地执行器 暂存'd the bill and found it again; terminal, like `handed_over`.
+export type ErpPhase = 'running' | 'waiting_login' | 'cancelled' | 'catalog_mismatch' | 'aborted' | 'handed_over' | 'drafted' | 'saved' | 'unknown';
 
 export type ErpFacts = {
   jobId: string;
-  trigger: 'start' | 'confirm_login' | 'refill';
+  trigger: 'start' | 'confirm_login' | 'refill' | 'rerun';
   // The revision the job was accepted at.
   revision: number;
   phase: ErpPhase;
@@ -78,6 +79,9 @@ export type ErpFacts = {
   reassign: boolean;
   // A read-only 对账 (reconcile) job runs on this fill (#192): like a running job, only its own writes pass.
   reconciling: boolean;
+  // The job pressed 暂存 (a `save` attempt with an ownership marker is on record, ADR-0029): a bill may have landed with no 单据编号, so
+  // 重新去报销 could make a second one. 对账 looks the draft up by its marker instead of reading a page.
+  drafting?: boolean;
 };
 
 export const ACTION_COPY = {
@@ -99,8 +103,9 @@ export type ErpVerdict = Pick<ErpRecord, 'attempted' | 'reconcile' | 'result'>;
 
 // Every write the task service accepts, by name: the contract's task actions (the ones a page can ask for, listed in
 // the snapshot's `allowedActions`), plus the jobs' own writes. `job` is the ERP job's write and the book-change
-// revision bump; `record_parse` is the parser job's.
-export type ActionName = TaskAction | 'job' | 'record_parse';
+// revision bump; `record_parse` is the parser job's; `auto_rerun` is the 自动重新去报销 a fill job's end may start
+// (ADR-0034), never a page's.
+export type ActionName = TaskAction | 'job' | 'record_parse' | 'auto_rerun';
 
 // 'stale' is the HTTP 409 of ADR-0014 (a stale stepToken, or any foreign write while a job runs); a Refusal is a 400.
 export type Admission = 'ok' | 'stale' | Refusal;
@@ -154,6 +159,8 @@ const NOT_ALLOWED: Refusal = { code: 'action_not_allowed', message: ERP_ACTION_E
 export const ERP_IN_USE: Refusal = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 export const STALE_JOB: Refusal = { code: 'stale_job', message: 'the inventory run changed under the parser job' };
+// The server's own refusal of an 自动重新去报销 whose moment passed (a later job, a 对账, a hand-off); never shown.
+export const NO_RERUN: Refusal = { code: 'no_rerun', message: 'the write result is no longer unknown before 暂存' };
 
 const atStep =
   (steps: readonly Step['kind'][], refusal: Refusal) =>
@@ -188,6 +195,13 @@ const ACTIONS: Record<ActionName, Traits> = {
   exclude_material: {},
   // A batch stopped by 发票占用 has no pending items to answer; excluding the held material is the way out.
   answer_pending: { ready: (facts) => (facts.parse && facts.parse.blockers.length === 0 ? null : { code: 'not_ready', message: ACTION_COPY.notAnswering }) },
+  change_dining_evidence: {
+    ready: (facts) => {
+      if (facts.confirmation === 'confirmed') return { code: 'dining_evidence_locked', message: '整单明细已确认，请先重新打开上传再修改餐饮材料。' };
+      return inventoried(facts) && facts.parse?.waiting === 0 && facts.parse.blockers.length === 0
+        ? null : { code: 'not_ready', message: '当前材料盘点完成后才能修改餐饮材料。' };
+    },
+  },
   set_home_city: { ownsFreeze: true, ready: (_facts, _step, erp) => (erp?.attempted ? { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked } : null) },
   assign_project_lines: { ready: assigning },
   submit_project_assignment: { ready: assigning },
@@ -208,6 +222,10 @@ const ACTIONS: Record<ActionName, Traits> = {
   print: { printOnly: true },
   void_task: { voids: true },
   job: { job: true },
+  // 自动重新去报销 (ADR-0034): taken by the server, with no stepToken, from a write result that is unknown before 暂存.
+  // An ERP action like 重新去报销, and it waits for the account's ERP like one; what else it needs (the job went to a
+  // 本地执行器, its last attempt was the import or the fill, re-runs left) is `tasks.ts`'s to read from the record.
+  auto_rerun: { erpAction: true, takesLease: 'before_ready', ready: (facts) => (facts.erp?.phase === 'unknown' && !facts.erp.drafting ? null : NO_RERUN) },
   record_parse: { job: true, ready: (facts) => (parseRunning(facts) ? null : STALE_JOB) },
 };
 
@@ -246,6 +264,7 @@ export function erpActionsOf(phase: ErpPhase | null | undefined): Erp['allowedAc
     case 'aborted':
     case 'unknown':
     case 'handed_over':
+    case 'drafted':
     case 'saved':
       return ['refresh'];
     default:
@@ -274,6 +293,9 @@ export function erpActionsOf(phase: ErpPhase | null | undefined): Erp['allowedAc
 export function reconcileActionsOf(phase: ErpFacts | null | undefined, erp: ErpVerdict): Reconcile['allowedActions'] {
   if (phase?.phase !== 'unknown' || phase.reconciling) return [];
   const { judged, draftNo, noForm } = reconcileReading(erp);
+  // After 暂存 the draft is looked up by its marker (line 2 item 5): 再对一次账 until a lookup answers, then only
+  // 转人工. Never 重新去报销: a draft may have landed, and a second 去报销 would make a second bill.
+  if (phase.drafting) return !judged || judged.verdict.action === '原地等待' ? ['wait', 'hand_off'] : ['hand_off'];
   if (!judged) return ['wait', 'hand_off'];
   if ((judged.verdict.bucket === '未保存·已导入未写明细' || noForm) && draftNo === null) return noForm ? ['refill', 'wait', 'hand_off'] : ['refill', 'hand_off'];
   return judged.verdict.action === '转人工' ? ['hand_off'] : ['wait', 'hand_off'];
@@ -312,7 +334,7 @@ function admit(facts: TaskFacts, erp: ErpVerdict | null, step: Step['kind'], act
     if (jobInFlight(facts, loginPause)) return 'stale';
     if (!printOnly && !voids) {
       const phase = facts.erp?.phase;
-      if (phase === 'handed_over' || phase === 'saved') return TASK_CLOSED;
+      if (phase === 'handed_over' || phase === 'drafted' || phase === 'saved') return TASK_CLOSED;
       if (phase === 'unknown' && !erpAction) return ERP_STARTED;
       // ADR-0014: a task's materials freeze at its first ERP action attempt. The phase checks above catch the shapes
       // that freeze normally takes, but the rule is about the attempt existing at all, so it is stated once here
@@ -344,6 +366,7 @@ function project(facts: TaskFacts): Projection {
   // login pause is the erp stage. Everything else about the job leaves the task where its other facts put it.
   switch (facts.erp?.phase) {
     case 'handed_over':
+    case 'drafted':
     case 'saved':
       return at('done', 'none');
     case 'unknown':
@@ -378,5 +401,5 @@ function project(facts: TaskFacts): Projection {
 // At most one non-terminal task per account (ADR-0018). Terminal: voided, handed off (转人工, a lifecycle), and the
 // derived ERP 单据已交接 (a saved fill job). A write result unknown is not terminal: reconcile still owns it.
 export function isNonTerminal(lifecycle: TaskLifecycle, erpPhase: ErpPhase | null = null): boolean {
-  return lifecycle === 'open' && erpPhase !== 'handed_over' && erpPhase !== 'saved';
+  return lifecycle === 'open' && erpPhase !== 'handed_over' && erpPhase !== 'drafted' && erpPhase !== 'saved';
 }
