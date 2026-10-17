@@ -77,3 +77,68 @@ export const LOCAL_EXECUTOR_RUNTIME_ERRORS = {
   unavailable: '这台服务器上还没有这个系统的运行环境，请联系管理员。',
   platform: '没有这个系统的运行环境，只有 Windows 和 Mac 的。',
 } as const;
+
+// One command installs the 本地执行器 (spec #412 part C, ADR-0035 amended 2026-10-17). The employee picks the system
+// on the 设置页 when generating the 配对码; the code is stored with that choice, and the public install route answers
+// the script for it:
+//
+//   Mac      curl -fsSL <应用地址>/install/<配对码> | sh
+//   Windows  powershell -ExecutionPolicy Bypass -c "irm <应用地址>/install/<配对码> | iex"
+//
+// Fetching the script does not spend the code; pairing does. The script and the program it downloads are served for
+// the code's ten minutes, paired or not, so a run cut off after pairing can be run again. Any other code answers a
+// script that prints LOCAL_EXECUTOR_INSTALL_MESSAGES.expired and exits non-zero, so `curl -f` never shows an English
+// error. Uninstalling needs no code.
+export const INSTALL_SYSTEMS = ['mac', 'windows'] as const;
+export const InstallSystemSchema = z.enum(INSTALL_SYSTEMS);
+export type InstallSystem = z.infer<typeof InstallSystemSchema>;
+export const CreatePairingCodeInputSchema = z.object({ system: InstallSystemSchema.optional() });
+export type CreatePairingCodeInput = z.infer<typeof CreatePairingCodeInputSchema>;
+
+export const LOCAL_EXECUTOR_INSTALL_PATH = '/install';
+export const localExecutorInstallPath = (code: string) => `${LOCAL_EXECUTOR_INSTALL_PATH}/${code}`;
+export const localExecutorInstallProgramPath = (code: string) => `${LOCAL_EXECUTOR_INSTALL_PATH}/${code}/program`;
+export const LOCAL_EXECUTOR_UNINSTALL_PATH = '/uninstall';
+export const localExecutorUninstallPath = (system: InstallSystem) => `${LOCAL_EXECUTOR_UNINSTALL_PATH}/${system}`;
+
+// Everything the install and uninstall scripts print: these lines and nothing else (story 29, 30).
+export const LOCAL_EXECUTOR_INSTALL_MESSAGES = {
+  checking: '检查运行环境',
+  downloading: (percent: number) => `下载运行环境 ${percent}%`,
+  pairing: '配对',
+  installed: '已安装，可以关掉这个窗口',
+  uninstalled: '已卸载，可以关掉这个窗口',
+  expired: '配对码已过期，请回设置页重新生成',
+  wrongSystem: '这条命令只能在 Mac 上运行，请回设置页选择你的系统',
+  unreachable: '连不上应用，请检查网络后再运行一次这条命令',
+  unavailable: '应用服务器上还没有本地执行器，请联系管理员',
+  download: '运行环境没有下载完整，请再运行一次这条命令',
+  disk: '没能写入你的用户目录，请确认磁盘还有空间后再运行一次这条命令',
+  start: '已安装，但没能马上启动，请退出登录再登录一次电脑',
+  failed: '安装没有完成，请再运行一次这条命令',
+} as const;
+
+// How the program's install step (`finish-install`, local-executor/src/main.ts) tells the script what went wrong; the
+// script prints the sentence for it.
+export const LOCAL_EXECUTOR_INSTALL_EXIT = { expired: 10, unreachable: 11, start: 12 } as const;
+
+// Node.js's own Developer ID (checked 2026-10-15): "Developer ID Application: Node.js Foundation (HX7739G8FX)". Both the
+// install script and the executor's start check the employee's Node against it on macOS (ADR-0035).
+export const NODE_SIGNER_TEAM = 'HX7739G8FX';
+export const NODE_SIGNATURE_REQUIREMENT = `=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = ${NODE_SIGNER_TEAM}`;
+
+// Variables that make Node load code the program did not bring, or trust a certificate the system does not: cleared
+// at every start, so a PC's Node setup cannot reach the 报销系统 password the executor holds (story 26). The app's
+// private CA is trusted through the system store (`--use-system-ca`, ADR-0036), so NODE_EXTRA_CA_CERTS is not needed.
+export const CODE_LOADING_ENV = [
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'NODE_REPL_EXTERNAL_MODULE',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FRAMEWORK_PATH',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+] as const;

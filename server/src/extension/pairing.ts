@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, type ExtensionHolder, type ExtensionPairingState } from '@baox/contract';
+import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, InstallSystemSchema, type ExtensionHolder, type ExtensionPairingState, type InstallSystem } from '@baox/contract';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
@@ -103,7 +103,8 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
 
     // Issuing is also how a pairing is replaced: the previous row goes first, so an extension paired a moment ago
     // stops being this account's extension before the new 配对码 is even readable.
-    async issue(accountId: string): Promise<ExtensionPairingState> {
+    // `system`: the one-command install's choice (#425), which makes the code fetch that system's install script.
+    async issue(accountId: string, system: InstallSystem | null = null): Promise<ExtensionPairingState> {
       const code = generatePairingCode();
       const now = clock();
       await db.transaction().execute(async (tx) => {
@@ -118,6 +119,8 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
             browser: null,
             version: null,
             holder: null,
+            install_system: system,
+            install_code_sha256: system ? sha256(code) : null,
             created_at: iso(now),
             paired_at: null,
             last_connected_at: null,
@@ -126,6 +129,19 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       });
       live.disconnect(accountId);
       return view(accountId, code);
+    },
+
+    // What `/install/<配对码>` answers for (#425): the account and system of a code issued for an install, for its ten
+    // minutes, whether it has paired yet or not. Null for any other code. Reading it spends nothing.
+    async installCode(code: string): Promise<{ accountId: string; system: InstallSystem } | null> {
+      const row = await db
+        .selectFrom('extension_pairing')
+        .select(['account_id', 'install_system', 'created_at'])
+        .where('install_code_sha256', '=', sha256(normalise(code)))
+        .executeTakeFirst();
+      if (!row || Date.parse(row.created_at) + EXTENSION_PAIRING_CODE_TTL_MS <= clock().getTime()) return null;
+      const system = InstallSystemSchema.safeParse(row.install_system);
+      return system.success ? { accountId: row.account_id, system: system.data } : null;
     },
 
     // 撤销配对 (revoke the pairing): the extension's token stops resolving and its socket closes, at once. The

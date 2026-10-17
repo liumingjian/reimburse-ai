@@ -50,6 +50,10 @@ export interface ExtensionPairingTable {
   // What paired: 'local_executor' (a baox 本地执行器, sent the ERP 凭据 with each job) or 'extension'. Null for an
   // extension paired before the column existed, and until something pairs; both read as an extension.
   holder: string | null;
+  // The one-command install (#425): the system the employee picked for this 配对码 ('mac' or 'windows'), and the
+  // code's hash kept for the install route after redeeming clears `code_sha256`. Null for a code issued without one.
+  install_system: string | null;
+  install_code_sha256: string | null;
   created_at: string;
   paired_at: string | null;
   last_connected_at: string | null;

@@ -68,7 +68,7 @@ export const HTTP_ENDPOINTS = {
   // the unpaired pairing. Failures are { error }. The extension's own endpoints (EXTENSION_PAIR_PATH) are not in this
   // table: they carry no session and no page sends them.
   getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
-  createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: [] },
+  createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: ['system'] },
   revokeExtensionPairing: { method: 'POST', path: '/api/extension/pairing/revoke', body: 'json', fields: [] },
   // ERP 凭据 (ADR-0033): every answer is the ErpCredentialsView, never the password. Saving and 试登录 wait for the
   // 试登录 (up to about five minutes); one that ran and failed is in the view, not an { error }.

@@ -24,7 +24,7 @@ import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createExtensionChannel, EXTENSION_NOT_PAIRED_CODE, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
-import { mountLocalExecutorDownloadRoute, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
+import { mountLocalExecutorDownloadRoute, mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
 import type { LocalExecutorDist } from './local-executor/package';
 import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
 import { createPairingService, hasPairing } from './extension/pairing';
@@ -299,6 +299,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   mountExtensionPairRoutes(app, pairings);
   mountLocalExecutorReleaseRoutes(app, localExecutor, pairings);
   mountLocalExecutorRuntimeRoutes(app, localExecutor);
+  mountLocalExecutorInstallRoutes(app, localExecutor, pairings, publicOrigin);
   // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
   // reason: the extension's token is its only credential. Three answers read alike, so nothing can be learnt by
   // probing: no running job, a sha256 its plan does not name, and another account's original. The task service is
