@@ -4,7 +4,9 @@
 //   setup                                        the launcher's: ask for the 配对码, install into the executor's own
 //                                                directory, start with the login, start now (packaged only)
 //   run [--origin http://<app>]                  hold the channel and run each 去报销 headless; keep to the
-//                                                program the app ships. Unpaired, or once its pairing is gone,
+//                                                program the app ships. Installed, it first rechecks the Node
+//                                                its config records and keeps its start entry to it (start.ts).
+//                                                Unpaired, or once its pairing is gone,
 //                                                it stays up and waits on 47319 for a 配对码 from the 设置页
 //   pair --origin http://<app> <配对码>          pair with the 应用账号 that issued the code
 //   unpair                                       撤销配对, on the app and here
@@ -20,15 +22,17 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LocalExecutorConfigSchema } from '@baox/contract';
+import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, type LocalExecutorPlatform } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
 import { serverBlobs } from '@baox/extension/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
 import { launchHeadless } from './headless';
 import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
-import { autostartFiles, installApp, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, writeInstallFiles, type InstallFile } from './install';
+import { autostartFiles, downloadedRuntimePath, installApp, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, type InstallFile } from './install';
 import { createPairingHolder, pairingListener } from './pairing-port';
 import { createLocalRunner } from './runner';
+import { ensureDownloaded, NODE_MAJOR, nodeProbe } from './runtime';
+import { prepareStart, readConfig, recordNode } from './start';
 import { openStore, type StoredPairing } from './store';
 import { checkForUpdate, SELF_CHECK_ANSWER, sha256 } from './update';
 
@@ -43,7 +47,9 @@ const fail = (line: string): never => {
 const programPath = fileURLToPath(import.meta.url);
 const programDir = dirname(programPath);
 const configFile = join(programDir, LOCAL_EXECUTOR_CONFIG_FILE);
-const config = existsSync(configFile) ? LocalExecutorConfigSchema.parse(JSON.parse(readFileSync(configFile, 'utf8')) as unknown) : null;
+const config = existsSync(configFile) ? readConfig(configFile) : null;
+// Installed: the program runs from the executor's own directory, whose start entry it keeps (`start.ts`).
+const installed = config !== null && resolve(programDir) === resolve(store.appDir);
 const UPDATE_EVERY_MS = 30 * 60_000;
 // After a refusal that a new program did not fix: wait before the launcher starts it again, so a server that keeps
 // refusing is asked every few minutes, not every ten seconds.
@@ -76,10 +82,17 @@ async function unpair() {
   say(revoked ? '已撤销配对。' : '本机的配对已删除；应用暂时连不上，请在应用的设置页里确认配对已撤销。');
 }
 
-const installFiles = (): InstallFile[] => autostartFiles({
-  platform: process.platform, appDir: store.appDir, logsDir: store.logsDir, userHome: homedir(),
-  ...(process.env['APPDATA'] ? { appData: process.env['APPDATA'] } : {}),
-});
+const hostPlatform = (): LocalExecutorPlatform => (process.platform === 'win32' ? 'win-x64' : process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64');
+const appData = process.env['APPDATA'] ? { appData: process.env['APPDATA'] } : {};
+const where = { platform: process.platform, appDir: store.appDir, logsDir: store.logsDir, userHome: homedir(), ...appData };
+const installedConfig = () => join(store.appDir, LOCAL_EXECUTOR_CONFIG_FILE);
+const downloadedRuntime = downloadedRuntimePath(store.appDir, process.platform);
+
+/** The start-at-login files as the installed config has them; their paths are what uninstalling needs. */
+const installFiles = (): InstallFile[] => {
+  const installedCfg = existsSync(installedConfig()) ? readConfig(installedConfig()) : config;
+  return autostartFiles({ ...where, node: installedCfg?.node ?? downloadedRuntime, origin: installedCfg?.origin ?? '', runtimePlatform: installedCfg?.platform ?? hostPlatform() });
+};
 
 /** Start the installed copy now, as the login would: no window, and the launcher's restart rule. */
 function startInBackground(files: readonly InstallFile[]): boolean {
@@ -138,8 +151,9 @@ async function setup() {
     if (resolve(programDir) !== resolve(store.appDir)) installApp({ sourceDir: programDir, appDir: store.appDir, platform: process.platform });
     // The copy came out of a downloaded zip; Node's own signature is what macOS checks, the download flag is not needed.
     if (process.platform === 'darwin') { try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', store.appDir], { stdio: 'ignore' }); } catch { /* not set */ } }
+    // The zip's own runtime is the downloaded one; each start rechecks it (`start.ts`).
+    recordNode({ configFile: installedConfig(), node: downloadedRuntime, ...where });
     const files = installFiles();
-    writeInstallFiles(files);
     if (startInBackground(files)) say('已安装：本地执行器正在后台运行，以后每次登录电脑都会自动运行。现在可以关掉这个窗口，回到应用去报销。');
     else say('已安装，但这次没能马上在后台启动。请退出登录再登录一次电脑，它会自动运行。');
     if (process.stdin.isTTY) await prompt.question('按回车键关闭这个窗口。');
@@ -164,6 +178,20 @@ async function run(args: string[]) {
   const appOrigin = (config?.origin ?? (at >= 0 ? args[at + 1] : undefined) ?? stored?.origin)?.replace(/\/+$/, '');
   if (!appOrigin) return fail('这台电脑还没有配对：先运行 pair，或用 run --origin http://<应用地址> 等设置页来连接。');
   store.prepare();
+  // Recheck the Node it runs on and keep the start entry to it (ADR-0035): before anything else, so that a Node that
+  // no longer qualifies never gets as far as a job.
+  if (installed) {
+    try {
+      const started = await prepareStart({ ...where, configFile, execPath: process.execPath, major: NODE_MAJOR });
+      if (started.why) say(`记录的 Node ${started.why}，改用应用服务器提供的运行环境`);
+      if (started.rewrote) say('已更新随登录启动的设置');
+      if (started.restart) process.exit(RESTART_EXIT_CODE);
+    } catch (error) {
+      say(`检查运行环境没有成功：${error instanceof Error ? error.message : String(error)}`);
+      await sleep(REFUSED_BACKOFF_MS);
+      process.exit(1);
+    }
+  }
   const log = join(store.logsDir, 'executor.log');
   try { if (existsSync(log) && statSync(log).size > LOG_LIMIT_BYTES) truncateSync(log, 0); } catch { /* held by the launcher: next time */ }
 
@@ -178,15 +206,21 @@ async function run(args: string[]) {
   // Packaged only: from the repo there is no release to follow.
   const running = sha256(readFileSync(programPath));
   const update = async (pairing: StoredPairing, why: string) => {
-    if (!config) return;
-    const check = await checkForUpdate({ origin: pairing.origin, token: pairing.token, programPath, running });
+    if (!config || !installed) return;
+    const check = await checkForUpdate({
+      origin: pairing.origin, token: pairing.token, programPath, running,
+      // The server moved to another Node major version: the runtime it serves, in place of whatever Node this was.
+      downloadedRuntime: (major) => ensureDownloaded({ downloaded: downloadedRuntime, major, probe: nodeProbe(), runtime: { origin: config.origin, platform: config.platform } }),
+    });
     if (check.kind === 'restart') {
       // Never under a job: a restart there would cut it off mid-write. The new program waits on disk until it is done.
       while (runner?.busy()) await sleep(5_000);
-      say(`换成应用发布的新版本（${why}）`);
+      if (check.node) {
+        recordNode({ configFile, node: check.node, ...where });
+        say(`应用服务器换了 Node 大版本，改用它提供的运行环境（${why}）`);
+      } else say(`换成应用发布的新版本（${why}）`);
       leave(RESTART_EXIT_CODE);
     }
-    if (check.kind === 'runtime') say(`应用发布的版本要用新的运行环境（Node ${check.wants}），请到应用的设置页重新下载本地执行器安装包。`);
     if (check.kind === 'failed') say(`检查新版本没有成功：${check.reason}`);
   };
 

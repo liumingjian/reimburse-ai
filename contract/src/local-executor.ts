@@ -32,14 +32,17 @@ export const localExecutorRuntimePath = (platform: string) => `${LOCAL_EXECUTOR_
 export const localExecutorRuntimeSha256Path = (platform: string) => `${LOCAL_EXECUTOR_RUNTIME_PATH}/${platform}/sha256`;
 
 // The program is identified by its bytes (sha256): an executor runs exactly the program its server serves, older or
-// newer. `runtime` is the Node version the zips carry; a program for another runtime is not swapped in place.
+// newer. `runtime` is the Node version the server caches; an executor compares only its major version (ADR-0035): a
+// minor change is ignored, a major change switches it to the runtime downloaded from the server.
 export const LocalExecutorReleaseSchema = z.object({ program: z.string().regex(/^[0-9a-f]{64}$/), runtime: z.string().min(1) });
 export type LocalExecutorRelease = z.infer<typeof LocalExecutorReleaseSchema>;
 
 // Inside every zip, beside the program: the app's address, written by the server that served it (as the extension's
-// origin is), so the launcher only has to ask for the 配对码.
+// origin is), so the launcher only has to ask for the 配对码. `node` is the absolute path of the Node the executor runs
+// on, which its start-at-login entry runs (ADR-0035, amended 2026-10-16): the employee's own Node 24, or the runtime
+// downloaded into the executor's `app/runtime`. A zip install recorded none; it runs on the runtime beside it.
 export const LOCAL_EXECUTOR_CONFIG_FILE = 'baox-config.json';
-export const LocalExecutorConfigSchema = z.object({ origin: z.string().url(), platform: LocalExecutorPlatformSchema });
+export const LocalExecutorConfigSchema = z.object({ origin: z.string().url(), platform: LocalExecutorPlatformSchema, node: z.string().min(1).optional() });
 export type LocalExecutorConfig = z.infer<typeof LocalExecutorConfigSchema>;
 
 export const LOCAL_EXECUTOR_DOWNLOAD_ERRORS = {
