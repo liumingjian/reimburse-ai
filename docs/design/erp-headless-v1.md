@@ -279,7 +279,8 @@ Chrome 或 Edge；自动替换升级。
   要在那里重新签名得另装第三方签名工具，而且只能是临时签名。Mac 上 Node 的 Developer ID 签名已核实；
   浏览器下载后 Gatekeeper 是否直接放行（公证）、Windows 上的 Authenticode 签名都还没核实。
 - **运行时：** 部署时 operator 准备候选版本（`host` 阶段）从 Node 镜像下载三个平台的运行时，按 SHASUMS256.txt 核对，
-  放在 `cache/local-executor-runtime`，跨版本保留，`.nvmrc` 变了才重新下载。
+  放在 `cache/local-executor-runtime`，跨版本保留，`.nvmrc` 变了才重新下载。核对通过后记下取出的二进制自己的 sha256
+  （`node[.exe].sha256`），应用服务器公开提供运行时和这个值（`/api/local-executor/runtime/<平台>`、`…/<平台>/sha256`）。
 - **安装：** 员工解压后双击 `start-baox.cmd`（Windows）或 `start-baox.command`（Mac），输入设置页上的配对码。程序把自己复制到
   `~/.baox/local-executor/app`，登记随登录启动（Windows 的「启动」文件夹、Mac 的 LaunchAgent），随即在后台启动。不需要管理员权限。
   首次运行要过一次 SmartScreen 或 Gatekeeper，设置页写了怎么点。

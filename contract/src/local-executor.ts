@@ -23,6 +23,14 @@ export const localExecutorDownloadFilename = (platform: LocalExecutorPlatform) =
 export const LOCAL_EXECUTOR_RELEASE_PATH = '/api/local-executor/release';
 export const LOCAL_EXECUTOR_PROGRAM_PATH = '/api/local-executor/program';
 
+// Before the session gate and open to anyone, since the install script runs before any pairing: Node's own runtime for
+// a platform, for a PC without a usable Node of its own, and beside it that binary's sha256 as one line of hex (the
+// script and the executor check the download against it). An unknown platform is 404, a runtime the deploy has not
+// fetched 503.
+export const LOCAL_EXECUTOR_RUNTIME_PATH = '/api/local-executor/runtime';
+export const localExecutorRuntimePath = (platform: string) => `${LOCAL_EXECUTOR_RUNTIME_PATH}/${platform}`;
+export const localExecutorRuntimeSha256Path = (platform: string) => `${LOCAL_EXECUTOR_RUNTIME_PATH}/${platform}/sha256`;
+
 // The program is identified by its bytes (sha256): an executor runs exactly the program its server serves, older or
 // newer. `runtime` is the Node version the zips carry; a program for another runtime is not swapped in place.
 export const LocalExecutorReleaseSchema = z.object({ program: z.string().regex(/^[0-9a-f]{64}$/), runtime: z.string().min(1) });
@@ -37,4 +45,9 @@ export type LocalExecutorConfig = z.infer<typeof LocalExecutorConfigSchema>;
 export const LOCAL_EXECUTOR_DOWNLOAD_ERRORS = {
   unavailable: '这台服务器上还没有这个系统的本地执行器安装包，请联系管理员。',
   platform: '请选择 Windows 或 Mac 的安装包。',
+} as const;
+
+export const LOCAL_EXECUTOR_RUNTIME_ERRORS = {
+  unavailable: '这台服务器上还没有这个系统的运行环境，请联系管理员。',
+  platform: '没有这个系统的运行环境，只有 Windows 和 Mac 的。',
 } as const;

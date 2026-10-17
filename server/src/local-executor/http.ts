@@ -1,12 +1,12 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
-import { EXTENSION_PAIRING_ERRORS, LOCAL_EXECUTOR_DOWNLOAD_ERRORS, LOCAL_EXECUTOR_DOWNLOAD_PATH, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_PATH, LocalExecutorPlatformSchema, localExecutorDownloadFilename } from '@baox/contract';
+import { EXTENSION_PAIRING_ERRORS, LOCAL_EXECUTOR_DOWNLOAD_ERRORS, LOCAL_EXECUTOR_DOWNLOAD_PATH, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_PATH, LOCAL_EXECUTOR_RUNTIME_ERRORS, LOCAL_EXECUTOR_RUNTIME_PATH, LocalExecutorPlatformSchema, localExecutorDownloadFilename } from '@baox/contract';
 import type { Context, Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
 import { bearer } from '../extension/http';
 import type { PairingService } from '../extension/pairing';
 import { activeOrigin, type PublicOrigin } from '../public-origin';
-import { LocalExecutorUnavailable, packageLocalExecutor, releaseOf, type LocalExecutorDist } from './package';
+import { LocalExecutorUnavailable, packageLocalExecutor, releaseOf, runtimeOf, type LocalExecutorDist } from './package';
 
 // The 本地执行器's distribution over HTTP (ADR-0035), in the two halves pairing has (`extension/http.ts`).
 
@@ -60,4 +60,30 @@ export function mountLocalExecutorReleaseRoutes(app: Hono<AppEnv>, dist: LocalEx
     }
     return c.body(readFileSync(dist!.program), 200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   });
+}
+
+// Before the session gate and without a pairing: the install script runs before the PC is paired, on a PC without a
+// usable Node, so it downloads Node's own runtime from here and checks it against the sha256 served beside it. HTTPS
+// keeps the network out (ADR-0036); the sha256 catches a cut-off or corrupt download.
+export function mountLocalExecutorRuntimeRoutes(app: Hono<AppEnv>, dist: LocalExecutorDist | null): void {
+  const serve = (c: Context, answer: (runtime: { file: string; sha256: string }) => Response) => {
+    const platform = LocalExecutorPlatformSchema.safeParse(c.req.param('platform'));
+    if (!platform.success) return c.json({ error: { code: 'platform_invalid', message: LOCAL_EXECUTOR_RUNTIME_ERRORS.platform } }, 404);
+    let runtime: { file: string; sha256: string };
+    try {
+      runtime = runtimeOf(dist, platform.data);
+    } catch (error) {
+      if (!(error instanceof LocalExecutorUnavailable)) throw error;
+      console.error(error.message);
+      return c.json({ error: { code: 'local_executor_unavailable', message: LOCAL_EXECUTOR_RUNTIME_ERRORS.unavailable } }, 503);
+    }
+    return answer(runtime);
+  };
+  app.get(`${LOCAL_EXECUTOR_RUNTIME_PATH}/:platform`, (c) => serve(c, ({ file }) => c.body(Readable.toWeb(createReadStream(file)) as ReadableStream, 200, {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': String(statSync(file).size),
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  })));
+  app.get(`${LOCAL_EXECUTOR_RUNTIME_PATH}/:platform/sha256`, (c) => serve(c, ({ sha256 }) => c.text(`${sha256}\n`, 200, { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })));
 }
