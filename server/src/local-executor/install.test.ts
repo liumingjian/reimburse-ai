@@ -7,6 +7,7 @@ import {
 } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
+import { decodedLines } from '../test/powershell';
 import type { LocalExecutorDist } from './package';
 
 // The one-command install at the HTTP seam (spec #412 part C): the 设置页 issues a 配对码 with the employee's system,
@@ -37,6 +38,7 @@ const issue = async (body: unknown = { system: 'mac' }) => {
   expect(answer.status).toBe(200);
   return ExtensionPairingSchema.parse(await answer.json()).code!;
 };
+const POWERSHELL = { 'user-agent': 'Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.1' };
 const fetchScript = (code: string, headers: Record<string, string> = { 'user-agent': 'curl/8.7.1' }) => server.app.request(localExecutorInstallPath(code), { headers });
 const redeem = (code: string) => server.app.request(EXTENSION_PAIR_PATH, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, holder: 'local_executor', version: '9.9.9' }),
@@ -114,12 +116,44 @@ describe('the install script route', () => {
     }
   });
 
-  it('answers PowerShell its own error script for an unknown code', async () => {
-    const answer = await fetchScript('NOSUCHCODE', { 'user-agent': 'Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.1' });
+  it('answers the PowerShell script for a Windows code, with the app address, the code and the account in it', async () => {
+    const code = await issue({ system: 'windows' });
+    const answer = await fetchScript(code, POWERSHELL);
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get('content-type')).toBe('text/plain; charset=utf-8');
     const script = await answer.text();
-    expect(script).toContain(LOCAL_EXECUTOR_INSTALL_MESSAGES.expired);
+    expect(script).not.toContain('#!/bin/sh');
+    expect(script).toContain("$origin = 'http://localhost'");
+    expect(script).toContain(`$code = '${code}'`);
+    expect(script).toContain(`$account = '${alice.account.accountId}'`);
+    expect(script).toContain("$major = '24'");
+    expect(script).toContain('finish-install');
+    expect(script).toContain('win-x64');
+  });
+
+  it('answers the PowerShell script for a Windows code whatever fetched it, and the Mac script for a Mac code', async () => {
+    const windows = await issue({ system: 'windows' });
+    expect(await (await fetchScript(windows)).text()).toContain('finish-install --origin $origin --platform win-x64');
+    const mac = await issue({ system: 'mac' });
+    expect((await (await fetchScript(mac, POWERSHELL)).text()).startsWith('#!/bin/sh\n')).toBe(true);
+  });
+
+  it('answers the PowerShell error script for a Windows code that expired', async () => {
+    const code = await issue({ system: 'windows' });
+    server.clock.advance(EXTENSION_PAIRING_CODE_TTL_MS + 1);
+    const script = await (await fetchScript(code, POWERSHELL)).text();
+    expect(script).toContain('exit 1');
+    expect(script).not.toContain('#!/bin/sh');
+    expect(script).not.toContain('finish-install');
+    expect(decodedLines(script)).toEqual([LOCAL_EXECUTOR_INSTALL_MESSAGES.expired]);
+  });
+
+  it('answers PowerShell its own error script for an unknown code', async () => {
+    const answer = await fetchScript('NOSUCHCODE', POWERSHELL);
+    const script = await answer.text();
     expect(script).not.toContain('#!/bin/sh');
     expect(script).toMatch(/exit 1/);
+    expect(decodedLines(script)).toEqual([LOCAL_EXECUTOR_INSTALL_MESSAGES.expired]);
   });
 });
 
@@ -131,5 +165,16 @@ describe('the uninstall script route', () => {
     expect(script.startsWith('#!/bin/sh\n')).toBe(true);
     expect(script).toContain('launchctl bootout');
     expect(script).toContain(LOCAL_EXECUTOR_INSTALL_MESSAGES.uninstalled);
+  });
+
+  it('answers the Windows uninstall script without a code or a login', async () => {
+    const answer = await server.app.request(localExecutorUninstallPath('windows'));
+    expect(answer.status).toBe(200);
+    const script = await answer.text();
+    expect(script).not.toContain('#!/bin/sh');
+    expect(script).toContain('Stop-Process');
+    expect(script).toContain('baox-local-executor.cmd');
+    expect(script).not.toContain('finish-install');
+    expect(decodedLines(script)).toContain(LOCAL_EXECUTOR_INSTALL_MESSAGES.uninstalled);
   });
 });

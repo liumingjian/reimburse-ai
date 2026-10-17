@@ -24,16 +24,26 @@ const sh = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 const ps = (value: string) => `'${value.replace(/'/g, "''")}'`;
 const LAUNCH_AGENT = 'com.baox.local-executor';
 
+/**
+ * A fixed line as PowerShell builds it from its UTF-16 code units. The Windows scripts stay ASCII this way: `irm` on
+ * Windows PowerShell 5.1 decodes the script by a charset it may have to guess, and an ASCII script reads the same under
+ * any of them. Write-Host then hands the line to the console as Unicode.
+ */
+export const powershellText = (line: string) => `(-join [char[]]@(${line.split('').map((unit) => `0x${unit.charCodeAt(0).toString(16).padStart(4, '0')}`).join(',')}))`;
+const T = powershellText;
+/** A value the app wrote (its address, the code, the account), quoted for PowerShell; built like a fixed line if not ASCII. */
+const psValue = (value: string) => (/^[\x20-\x7e]*$/.test(value) ? ps(value) : powershellText(value));
+
 /** A script that prints one sentence and fails, in the shell the system's command pipes into. */
 function failingScript(system: InstallSystem, sentence: string): string {
-  if (system === 'windows') return `[Console]::Error.WriteLine(${ps(sentence)})\nexit 1\n`;
+  if (system === 'windows') return `$ProgressPreference = 'SilentlyContinue'\nWrite-Host ${T(sentence)}\nexit 1\n`;
   return `#!/bin/sh\nprintf '%s\\n' ${sh(sentence)} >&2\nexit 1\n`;
 }
 
 /** What the install answers for a code that cannot install: it is past, or it never was. */
 export const expiredScript = (system: InstallSystem) => failingScript(system, SAY.expired);
 
-/** What it answers when this server has no program or runtime to install, and for Windows until #426 lands. */
+/** What it answers when this server has no program or runtime to install. */
 export const unavailableScript = (system: InstallSystem) => failingScript(system, SAY.unavailable);
 
 /** The system an unknown code's error script is written for: `irm` says PowerShell in its User-Agent, curl does not. */
@@ -177,4 +187,221 @@ stop
 rm -f "$agent" && rm -rf "$home" || fail ${sh(SAY.disk)}
 say ${sh(SAY.uninstalled)}
 `;
+}
+
+// The Windows ones are Windows PowerShell 5.1 (on every Windows 10 and 11), piped from
+// `powershell -ExecutionPolicy Bypass -c "irm … | iex"`, in the Mac's steps for win-x64:
+//
+//   1. Windows, and its profile (USERPROFILE, APPDATA);
+//   2. a Node: the employee's own `node.exe` on PATH when it is the server's major version (the version only, no
+//      signature: spec #412 story 27a) at a path the ASCII start entry can name, else the server's runtime, checked by
+//      its sha256 (kept when the copy already installed matches);
+//   3. the program, from `/install/<配对码>/program`;
+//   4. stop the running 本地执行器: every process whose command line names its home (run-baox.cmd's loop first, then
+//      the program and the browser it drives), a zip install's copy included;
+//   5. into %USERPROFILE%\.baox\local-executor\app, overwriting;
+//   6-7. the program's own `finish-install`, which writes run-baox.cmd, node-path.txt and the Startup entry exactly as
+//      every start does, pairs unless this PC already holds that account's pairing, and starts it.
+//
+// Every line it prints is built from code units (`powershellText`), so the script itself is ASCII. The tools' own
+// output goes to the install log; anything unforeseen ends in SAY.failed.
+
+const WINDOWS_PRELUDE = String.raw`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+function Say([string]$line) { Write-Host $line }
+function Fail([string]$line) { Write-Host $line; exit 1 }
+function Under([string]$base) { foreach ($part in $args) { $base = [IO.Path]::Combine($base, $part) }; return $base }
+# Nothing the employee's shell set may make a Node load extra code, or move where the executor lives.
+foreach ($name in @(${[...CODE_LOADING_ENV, 'BAOX_LOCAL_EXECUTOR_HOME', 'BAOX_LOCAL_EXECUTOR_PORT'].map(ps).join(', ')})) { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
+if ($env:OS -ne 'Windows_NT') { Fail ${T(SAY.wrongSystemWindows)} }
+if (-not $env:USERPROFILE -or -not $env:APPDATA) { Fail ${T(SAY.disk)} }
+$baoxHome = Under $env:USERPROFILE '.baox' 'local-executor'
+# The Startup entry the program writes (local-executor/src/install.ts), and the one in the Startup folder Windows names.
+$startup = @(Under $env:APPDATA 'Microsoft' 'Windows' 'Start Menu' 'Programs' 'Startup' 'baox-local-executor.cmd')
+$folder = [Environment]::GetFolderPath('Startup')
+if ($folder) { $startup = @($startup + (Under $folder 'baox-local-executor.cmd') | Select-Object -Unique) }
+function Stop-Baox {
+  if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) { return }
+  $mark = $baoxHome + [IO.Path]::DirectorySeparatorChar
+  $found = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.IndexOf($mark, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+  # run-baox.cmd first: left running, it would start the program again.
+  $loops = @($found | Where-Object { $_.Name -eq 'cmd.exe' })
+  $rest = @($found | Where-Object { $_.Name -ne 'cmd.exe' })
+  foreach ($process in @($loops + $rest)) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
+  foreach ($process in $found) { Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue }
+}
+`;
+
+/** The Windows install for one 配对码: PowerShell, ASCII, run by `irm <应用地址>/install/<配对码> | iex`. */
+export function windowsInstallScript({ origin, code, accountId, major }: { origin: string; code: string; accountId: string; major: number }): string {
+  return `${WINDOWS_PRELUDE}${String.raw`
+# baox local executor install for one pairing code, written by the app for this PC.
+# Run as: powershell -ExecutionPolicy Bypass -c "irm <app>/install/<code> | iex"
+$origin = ${psValue(origin)}
+$code = ${psValue(code)}
+$account = ${psValue(accountId)}
+$major = ${ps(String(major))}
+$downloading = ${T(SAY.downloading(0).slice(0, -2))}
+$app = Under $baoxHome 'app'
+$logs = Under $baoxHome 'logs'
+$log = Under $logs 'install.log'
+$work = Under $baoxHome 'install.tmp'
+function Log([string]$line) { try { Add-Content -LiteralPath $log -Value $line -Encoding UTF8 } catch { } }
+function Sha([string]$file) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant() }
+
+# GET $path into $file: the HTTP status; 0 when the app did not answer, -1 when the answer was cut off.
+function Get-Baox([string]$path, [string]$file, [switch]$progress) {
+  try {
+    $request = [Net.WebRequest]::Create($origin + $path)
+    $request.Timeout = 20000
+    $request.ReadWriteTimeout = 60000
+    $response = $request.GetResponse()
+  } catch {
+    $e = $_.Exception
+    while ($e -and -not ($e -is [Net.WebException])) { $e = $e.InnerException }
+    if ($e -and $e.Response) { return [int]$e.Response.StatusCode }
+    Log ($_ | Out-String)
+    return 0
+  }
+  try {
+    $total = $response.ContentLength
+    $in = $response.GetResponseStream()
+    $out = [IO.File]::Create($file)
+    $size = 0
+    $shown = -1
+    try {
+      $buffer = New-Object byte[] 65536
+      while (($n = $in.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $out.Write($buffer, 0, $n)
+        $size += $n
+        if ($progress -and $total -gt 0) {
+          $percent = [Math]::Min(100, [int][Math]::Floor($size * 10 / $total) * 10)
+          if ($percent -gt $shown) { $shown = $percent; Say ($downloading + $percent + '%') }
+        }
+      }
+    } finally {
+      $out.Close()
+      $in.Close()
+    }
+    if ($total -gt 0 -and $size -ne $total) { return -1 }
+    if ($progress -and $shown -ne 100) { Say ($downloading + '100%') }
+    return [int]$response.StatusCode
+  } catch {
+    Log ($_ | Out-String)
+    return -1
+  } finally {
+    $response.Close()
+  }
+}
+
+# The employee's own Node: the server's major version, at a path the ASCII start entry can name (%USERPROFILE%\...).
+function Test-Node([string]$path) {
+  if (-not $path -or -not [IO.Path]::IsPathRooted($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+  $rest = $path
+  if ($path.StartsWith($env:USERPROFILE + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { $rest = $path.Substring($env:USERPROFILE.Length + 1) }
+  if ($rest -notmatch '^[\x20-\x7e]*$') { return $false }
+  try {
+    $version = & { $ErrorActionPreference = 'Continue'; & $path --version 2>$null | Select-Object -First 1 }
+  } catch {
+    return $false
+  }
+  if (-not $version) { return $false }
+  return (([string]$version).Trim().TrimStart('v').Split('.')[0] -eq $major)
+}
+
+try {
+  try {
+    New-Item -ItemType Directory -Force -Path $logs | Out-Null
+    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    Add-Content -LiteralPath $log -Value ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] install for win-x64') -Encoding UTF8
+  } catch {
+    Fail ${T(SAY.disk)}
+  }
+
+  Say ${T(SAY.checking)}
+  # 2. A Node: the employee's own when it is our major version, else the server's runtime.
+  $node = ''
+  $runtime = ''
+  $own = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($own -and (Test-Node $own.Path)) {
+    $node = $own.Path
+  } else {
+    $sum = Under $work 'node.sha256'
+    $status = Get-Baox '${localExecutorRuntimeSha256Path('win-x64')}' $sum
+    if ($status -le 0) { Fail ${T(SAY.unreachable)} }
+    if ($status -ne 200) { Fail ${T(SAY.unavailable)} }
+    $want = (Get-Content -LiteralPath $sum -Raw).Trim()
+    $installed = Under $app 'runtime' 'node.exe'
+    if ((Test-Path -LiteralPath $installed -PathType Leaf) -and ((Sha $installed) -eq $want)) {
+      $node = $installed
+    } else {
+      $runtime = Under $work 'node.exe'
+      $status = Get-Baox '${localExecutorRuntimePath('win-x64')}' $runtime -progress
+      if ($status -eq 0) { Fail ${T(SAY.unreachable)} }
+      if ($status -eq -1) { Fail ${T(SAY.download)} }
+      if ($status -ne 200) { Fail ${T(SAY.unavailable)} }
+      if ((Sha $runtime) -ne $want) { Fail ${T(SAY.download)} }
+    }
+  }
+
+  # 3. The program, served for this pairing code's ten minutes.
+  $program = Under $work 'program'
+  $status = Get-Baox '${localExecutorInstallProgramPath(code)}' $program
+  if ($status -le 0) { Fail ${T(SAY.unreachable)} }
+  if ($status -eq 404) { Fail ${T(SAY.expired)} }
+  if ($status -ne 200) { Fail ${T(SAY.unavailable)} }
+
+  # 4. Stop the one that runs now, so two never hold this PC at once and its files are free to overwrite.
+  Stop-Baox
+
+  # 5. Into its home, overwriting what is there.
+  try {
+    New-Item -ItemType Directory -Force -Path (Under $app 'runtime') | Out-Null
+    if ($runtime) {
+      $node = Under $app 'runtime' 'node.exe'
+      Move-Item -Force -LiteralPath $runtime -Destination $node
+    }
+    Move-Item -Force -LiteralPath $program -Destination (Under $app 'baox-local-executor.mjs')
+    # The program writes its config anew; an old one is not read on the way.
+    $config = Under $app 'baox-config.json'
+    if (Test-Path -LiteralPath $config) { Remove-Item -LiteralPath $config -Force }
+  } catch {
+    Log ($_ | Out-String)
+    Fail ${T(SAY.disk)}
+  }
+
+  # 6-7. Pair and start, by the program itself; its output goes to the log.
+  Say ${T(SAY.pairing)}
+  $global:LASTEXITCODE = 1
+  & { $ErrorActionPreference = 'Continue'; & $node --use-system-ca (Under $app 'baox-local-executor.mjs') finish-install --origin $origin --platform win-x64 --node $node --account $account --code $code 2>&1 | ForEach-Object { Log ([string]$_) } }
+  switch ($LASTEXITCODE) {
+    0 { Say ${T(SAY.installed)} }
+    ${EXIT.expired} { Fail ${T(SAY.expired)} }
+    ${EXIT.unreachable} { Fail ${T(SAY.unreachable)} }
+    ${EXIT.start} { Fail ${T(SAY.start)} }
+    default { Fail ${T(SAY.failed)} }
+  }
+} catch {
+  Log ($_ | Out-String)
+  Fail ${T(SAY.failed)}
+} finally {
+  Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
+`}`;
+}
+
+/** `/uninstall/windows`: stop it, drop its Startup entry and its home. The employee's Node and the pairing in the app stay. */
+export function windowsUninstallScript(): string {
+  return `${WINDOWS_PRELUDE}${String.raw`
+# baox local executor uninstall. Run as: powershell -ExecutionPolicy Bypass -c "irm <app>/uninstall/windows | iex"
+try {
+  Stop-Baox
+  foreach ($entry in $startup) { if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry -Force } }
+  if (Test-Path -LiteralPath $baoxHome) { Remove-Item -LiteralPath $baoxHome -Recurse -Force }
+} catch {
+  Fail ${T(SAY.disk)}
+}
+Say ${T(SAY.uninstalled)}
+`}`;
 }

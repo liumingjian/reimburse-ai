@@ -9,7 +9,7 @@ import type { AppEnv } from '../accounts/http';
 import { bearer } from '../extension/http';
 import type { PairingService } from '../extension/pairing';
 import { activeOrigin, type PublicOrigin } from '../public-origin';
-import { expiredScript, macInstallScript, macUninstallScript, systemOfAgent, unavailableScript } from './install-script';
+import { expiredScript, macInstallScript, macUninstallScript, systemOfAgent, unavailableScript, windowsInstallScript, windowsUninstallScript } from './install-script';
 import { LocalExecutorUnavailable, packageLocalExecutor, releaseOf, runtimeOf, type LocalExecutorDist } from './package';
 
 // The 本地执行器's distribution over HTTP (ADR-0035), in the two halves pairing has (`extension/http.ts`).
@@ -105,8 +105,6 @@ export function mountLocalExecutorInstallRoutes(app: Hono<AppEnv>, dist: LocalEx
     const code = canonical(c.req.param('code'));
     const found = code ? await pairings.installCode(code) : null;
     if (!found) return script(c, expiredScript(systemOfAgent(c.req.header('user-agent'))));
-    // The Windows script is #426.
-    if (found.system === 'windows') return script(c, unavailableScript('windows'));
     let runtime: string;
     try {
       runtime = releaseOf(dist).runtime;
@@ -117,7 +115,8 @@ export function mountLocalExecutorInstallRoutes(app: Hono<AppEnv>, dist: LocalEx
     }
     // The major version of the runtime it serves, which is what an executor compares its own Node with (`update.ts`).
     const major = Number(runtime.split('.')[0]);
-    return script(c, macInstallScript({ origin: activeOrigin(publicOrigin, c.req.url), code, accountId: found.accountId, major }));
+    const install = found.system === 'windows' ? windowsInstallScript : macInstallScript;
+    return script(c, install({ origin: activeOrigin(publicOrigin, c.req.url), code, accountId: found.accountId, major }));
   });
   app.get(`${LOCAL_EXECUTOR_INSTALL_PATH}/:code/program`, async (c) => {
     if (!(await pairings.installCode(canonical(c.req.param('code'))))) return c.json({ error: { code: 'pairing_code_invalid', message: LOCAL_EXECUTOR_INSTALL_MESSAGES.expired } }, 404);
@@ -129,4 +128,5 @@ export function mountLocalExecutorInstallRoutes(app: Hono<AppEnv>, dist: LocalEx
     return c.body(readFileSync(dist!.program), 200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   });
   app.get(localExecutorUninstallPath('mac'), (c) => script(c, macUninstallScript()));
+  app.get(localExecutorUninstallPath('windows'), (c) => script(c, windowsUninstallScript()));
 }
