@@ -599,6 +599,10 @@
       }
     ],
     "currentStage": "navigate",
+    "progress": {
+      "label": "打开空白报销单",
+      "percent": 37
+    },
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [

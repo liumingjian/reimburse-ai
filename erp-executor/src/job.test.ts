@@ -93,6 +93,21 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
   });
 
+  // 去报销进度 (#420): the 填写明细 step carries `{ done, total }` so the page can show 「填写明细 3/8」. `total` goes out
+  // with the step's start, before the first row is written; then one event per row written.
+  it('reports 填写明细 progress once per 明细 row, with the total known before the first row', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
+    const result = await run(fake);
+    expect(result).toMatchObject({ status: 'handed_over' });
+    const total = approvedPreview(taskId).lines.length;
+    const fill = server.events.flatMap((e) => (e.type === 'step' && e.step === 'fill' ? [[e.status, e.progress ?? null]] : []));
+    expect(fill).toEqual([
+      ['running', { done: 0, total }],
+      ...Array.from({ length: total }, (_, i) => ['running', { done: i + 1, total }]),
+      ['done', null],
+    ]);
+  });
+
   it('writes every confirmed ERP invoice type through the simulated ERP dropdown and reads it back', async () => {
     for (const invoiceType of ERP_INVOICE_TYPES) {
       const selected = erpInvoiceTypeOf('定额发票', invoiceType);

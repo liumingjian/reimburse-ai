@@ -1,7 +1,7 @@
 // The snapshot's `erp`, `readback`, `reconcile` and `catalog` sections, worded from the task's ERP record
 // (`erp/fill-state.ts`). Which actions are on offer is the task policy's (`task-policy.ts`); these views only word them.
 
-import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_DRAFT_PROGRESS_LABELS, ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgress, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
@@ -25,10 +25,19 @@ const DISPLAY_EVENT_STEPS: Readonly<Record<ErpProgressStage, readonly string[]>>
 const DISPLAY_STEPS: ReadonlyArray<{ key: ErpProgressStage; title: string; description: string; from: readonly string[] }> =
   ERP_PROGRESS_STEPS.map((step) => ({ ...step, from: DISPLAY_EVENT_STEPS[step.key] }));
 
+type StepStatus = 'running' | 'done' | 'failed';
+const FINISHED_PHASES: ReadonlySet<ErpPhase> = new Set(['handed_over', 'drafted', 'saved']);
+
+/** Each executor step's latest status in the job's events. */
+function latestSteps(record: ErpRecord): Map<string, StepStatus> {
+  const latest = new Map<string, StepStatus>();
+  for (const event of record.events) if (event.type === 'step') latest.set(event.step, event.status);
+  return latest;
+}
+
 function stepsOf(record: ErpRecord): ErpStep[] {
   const phase = record.facts?.phase;
-  const latest = new Map<string, 'running' | 'done' | 'failed'>();
-  for (const event of record.events) if (event.type === 'step') latest.set(event.step, event.status);
+  const latest = latestSteps(record);
   const steps = DISPLAY_STEPS.map(({ key, title, description, from }): ErpStep => {
     let status: ErpStep['status'] = 'todo';
     for (const step of from) {
@@ -37,12 +46,56 @@ function stepsOf(record: ErpRecord): ErpStep[] {
       else if (seen === 'running' && status !== 'failed') status = 'running';
       else if (seen === 'done' && status === 'todo') status = 'done';
     }
-    if (phase === 'handed_over' || phase === 'drafted' || phase === 'saved') status = 'done';
+    if (phase && FINISHED_PHASES.has(phase)) status = 'done';
     if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
   });
   if (phase === 'running' && steps.every((step) => step.status === 'todo')) steps[0] = { ...steps[0]!, status: 'running' };
   return steps;
+}
+
+// 去报销进度 (#420): what the bar counts. Each unit is one shown step, except 填写明细, which weighs one per 明细 row
+// when the executor reports rows; 暂存 and 核对暂存单 follow 交接单据 on the path that 暂存s. Without row progress (an
+// executor or 浏览器扩展 from before it) each shown step is one unit, whatever ran under it.
+type ProgressUnit = { label: string; weight: number; done: number; status: ErpStep['status'] };
+
+function progressUnits(record: ErpRecord, steps: readonly ErpStep[]): ProgressUnit[] {
+  const fills = record.events.flatMap((event) => (event.type === 'step' && event.step === 'fill' ? [event] : []));
+  const rowProgress = [...fills].reverse().find((event) => event.progress)?.progress ?? null;
+  const whole = (step: Pick<ErpStep, 'title' | 'status'>, label = step.title): ProgressUnit =>
+    ({ label, weight: 1, done: step.status === 'done' ? 1 : 0, status: step.status });
+  if (fills.length > 0 && !rowProgress) return steps.map((step) => whole(step));
+
+  // Before 填写明细 starts, the job's own 明细 count stands in for the total the executor will report.
+  const finished = FINISHED_PHASES.has(record.facts!.phase);
+  const latest = latestSteps(record);
+  const raw = (name: string): ErpStep['status'] => (finished ? 'done' : (latest.get(name) ?? 'todo'));
+  const rowsTotal = Math.max(1, rowProgress?.total ?? record.preview?.lines.length ?? record.frozen?.judge.lines.length ?? 1);
+  const units = steps.map((step): ProgressUnit => {
+    if (step.key === 'handover') return whole({ title: step.title, status: raw('handover') });
+    if (step.key !== 'fill') return whole(step);
+    const rowsDone = step.status === 'done' ? rowsTotal : Math.min(rowsTotal, rowProgress?.done ?? 0);
+    return { label: step.status === 'todo' ? step.title : `${step.title} ${rowsDone}/${rowsTotal}`, weight: rowsTotal, done: rowsDone, status: step.status };
+  });
+  if (record.frozen?.plan.draft) {
+    units.push(whole({ title: ERP_DRAFT_PROGRESS_LABELS.save, status: raw('save') }));
+    units.push(whole({ title: ERP_DRAFT_PROGRESS_LABELS.draftCheck, status: raw('draft_check') }));
+  }
+  return units;
+}
+
+/** The bar: the current step's words and the share of steps done. 100 only once the job has finished. */
+function progressOf(record: ErpRecord, steps: readonly ErpStep[]): ErpProgress {
+  const units = progressUnits(record, steps);
+  const finished = FINISHED_PHASES.has(record.facts!.phase);
+  const current = finished
+    ? units.at(-1)!
+    : units.find((unit) => unit.status === 'running' || unit.status === 'waiting' || unit.status === 'failed')
+      ?? units.find((unit) => unit.done < unit.weight)
+      ?? units.at(-1)!;
+  const total = units.reduce((sum, unit) => sum + unit.weight, 0);
+  const done = units.reduce((sum, unit) => sum + unit.done, 0);
+  return { label: current.label, percent: finished ? 100 : Math.min(99, Math.floor((done * 100) / total)) };
 }
 
 function currentStageOf(steps: readonly ErpStep[]): Erp['currentStage'] {
@@ -117,6 +170,7 @@ export function erpView(record: ErpRecord): Erp {
     status: 'idle',
     steps: [],
     currentStage: null,
+    progress: null,
     externalWait: 'none',
     outcome: 'none',
     allowedActions: [],
@@ -133,6 +187,7 @@ export function erpView(record: ErpRecord): Erp {
   const readState = {
     steps,
     currentStage: currentStageOf(steps),
+    progress: progressOf(record, steps),
     externalWait: externalWaitOf(record),
     allowedActions: erpActionsOf(facts.phase),
     review: reviewOf(record),
@@ -412,6 +467,7 @@ export function legacyErpView(legacy: LegacyTaskTable): Erp {
     status: saved ? 'done' : 'idle',
     steps: [],
     currentStage: saved ? 'handover' : null,
+    progress: null,
     externalWait: 'none',
     outcome: saved ? 'saved' : 'none',
     allowedActions: saved ? erpActionsOf('saved') : [],

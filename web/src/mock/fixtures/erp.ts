@@ -17,13 +17,29 @@ import {
 } from '@baox/contract';
 
 // Mock execution reuses the contract's factual stage list. Its timers only advance the simulated server; no duration
-// or percentage is presented as ERP progress.
+// is presented as ERP progress, and the percentage counts steps the way the server does.
 export const ERP_STEP_DEFS: ReadonlyArray<Pick<ErpStep, 'key' | 'title' | 'description'>> = ERP_PROGRESS_STEPS;
 
 export const ERP_STEP_INDEX = { chromium: 0, login: 1, catalog: 2, navigate: 3, import: 4, receipt: 5, fill: 6, handover: 7 } as const;
 
 export function erpStageAt(active: number): Erp['currentStage'] {
   return (ERP_PROGRESS_STEPS[active]?.key ?? null) as Erp['currentStage'];
+}
+
+/**
+ * 去报销进度 as the server counts it (server/src/task-snapshot/erp.ts `progressOf`) on the 浏览器扩展 path the mock
+ * plays: every shown step once, 填写明细 once per 明细 row. Step `active` is current with `rowsDone` rows written (when
+ * it is 填写明细); everything before it is done. `active` past the last step is a finished job, at 100.
+ */
+export function erpProgress(active: number, rowCount: number, rowsDone = 0): NonNullable<Erp['progress']> {
+  const rows = Math.max(1, rowCount);
+  if (active >= ERP_STEP_DEFS.length) return { label: ERP_STEP_DEFS.at(-1)!.title, percent: 100 };
+  const weight = (index: number) => (index === ERP_STEP_INDEX.fill ? rows : 1);
+  const total = ERP_STEP_DEFS.reduce((sum, _def, index) => sum + weight(index), 0);
+  const before = ERP_STEP_DEFS.slice(0, active).reduce((sum, _def, index) => sum + weight(index), 0);
+  const done = before + (active === ERP_STEP_INDEX.fill ? Math.min(rows, rowsDone) : 0);
+  const title = ERP_STEP_DEFS[active]!.title;
+  return { label: active === ERP_STEP_INDEX.fill ? `${title} ${Math.min(rows, rowsDone)}/${rows}` : title, percent: Math.min(99, Math.floor((done * 100) / total)) };
 }
 
 // 第 active 步处于 status，之前的都已完成，之后的待开始；active 超出范围即全部完成。
@@ -39,6 +55,7 @@ export function idleErp(): Erp {
     status: 'idle',
     steps: [],
     currentStage: null,
+    progress: null,
     externalWait: 'none',
     outcome: 'none',
     allowedActions: [],
@@ -51,21 +68,23 @@ export function idleErp(): Erp {
   };
 }
 
-export function erpRunning(active: number = ERP_STEP_INDEX.chromium): Erp {
+// `rowCount`: the task's 明细 rows, which 填写明细 counts one by one (去报销进度).
+export function erpRunning(active: number, rowCount: number): Erp {
   return {
     ...idleErp(),
     status: 'running',
     steps: erpSteps(active),
     currentStage: erpStageAt(active),
+    progress: erpProgress(active, rowCount),
     externalWait: 'erp_response',
     allowedActions: ['refresh'],
   };
 }
 
 // 「去报销」之后浏览器已启动、登录步等待（`?seed=erp` 的状态）。
-export function erpWaitingLogin(): Erp {
+export function erpWaitingLogin(rowCount: number): Erp {
   return {
-    ...erpRunning(ERP_STEP_INDEX.login),
+    ...erpRunning(ERP_STEP_INDEX.login, rowCount),
     status: 'waiting_login',
     steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'),
     currentStage: 'login',
@@ -202,10 +221,11 @@ export function reconcileVerdict(
 // 再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
 export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null): void {
   snapshot.erp = {
-    ...erpRunning(ERP_STEP_INDEX.handover),
+    ...erpRunning(ERP_STEP_INDEX.handover, snapshot.lines.length),
     status: 'done',
     steps: erpSteps(ERP_STEP_DEFS.length),
     currentStage: 'handover',
+    progress: erpProgress(ERP_STEP_DEFS.length, snapshot.lines.length),
     externalWait: 'none',
     outcome: draftNo === null ? 'filled' : 'saved',
     draftNo,
@@ -251,13 +271,15 @@ export function unjudgedReconcile(reasons: readonly string[]): Reconcile {
   };
 }
 
-// 写入在 stage 这一步停下、结果不确定：停在对账，等第一次对账。
+// 写入在 stage 这一步停下、结果不确定：停在对账，等第一次对账。进度条停在这一步（填写明细停在写完的最后一行）。
 function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', abortReason: string, reason: string, capture: Reconcile['capture'] = null): void {
+  const rows = snapshot.lines.length;
   snapshot.erp = {
-    ...erpRunning(ERP_STEP_INDEX[stage]),
+    ...erpRunning(ERP_STEP_INDEX[stage], rows),
     status: 'aborted',
     steps: erpSteps(ERP_STEP_INDEX[stage], 'failed'),
     currentStage: stage,
+    progress: erpProgress(ERP_STEP_INDEX[stage], rows, rows),
     externalWait: 'none',
     outcome: 'none',
     abortReason,
@@ -284,6 +306,7 @@ export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
     ...idleErp(),
     steps: erpSteps(ERP_STEP_INDEX.navigate, 'failed'),
     currentStage: 'navigate',
+    progress: erpProgress(ERP_STEP_INDEX.navigate, snapshot.lines.length),
     abortReason: BEFORE_WRITE_ABORT_REASON,
     allowedActions: ['refresh'],
   };

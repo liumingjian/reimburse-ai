@@ -1,6 +1,6 @@
 import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
-import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyReadbackStop, applyStopBeforeWrite, emptyReconcile, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp, loginNotDetected } from '../fixtures/erp';
+import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyReadbackStop, applyStopBeforeWrite, emptyReconcile, erpProgress, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp, loginNotDetected } from '../fixtures/erp';
 import { catalogMismatch } from '../fixtures/preparation';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
@@ -36,6 +36,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     current.erp.status = 'waiting_login';
     current.erp.steps = erpSteps(ERP_STEP_INDEX.login, 'waiting');
     current.erp.currentStage = 'login';
+    current.erp.progress = erpProgress(ERP_STEP_INDEX.login, current.lines.length);
     current.erp.externalWait = 'employee_login';
     current.erp.outcome = 'none';
     current.erp.allowedActions = ['refresh', 'confirm_login', 'cancel'];
@@ -57,6 +58,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     snapshot.erp.loginNotice = null;
     snapshot.erp.steps = erpSteps(ERP_STEP_INDEX.catalog, 'running');
     snapshot.erp.currentStage = 'catalog';
+    snapshot.erp.progress = erpProgress(ERP_STEP_INDEX.catalog, snapshot.lines.length);
     snapshot.erp.externalWait = 'erp_response';
     snapshot.erp.outcome = 'none';
     snapshot.erp.allowedActions = ['refresh'];
@@ -105,11 +107,26 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     }
     current.erp.steps = erpSteps(index + 1, 'running');
     current.erp.currentStage = erpStageAt(index + 1);
+    current.erp.progress = erpProgress(index + 1, current.lines.length);
     current.erp.externalWait = 'erp_response';
     current.erp.outcome = 'none';
     current.erp.allowedActions = ['refresh'];
     bus.push(current);
-    setTimeout(() => finishErpStep(taskId, run, index + 1), erpStepMs);
+    if (index + 1 === ERP_STEP_INDEX.fill) setTimeout(() => fillRow(taskId, run, 1), rowMs(current));
+    else setTimeout(() => finishErpStep(taskId, run, index + 1), erpStepMs);
+  };
+
+  // 填写明细逐行推进（去报销进度）：每写完一行，进度条的「填写明细 n/m」与百分比前进一格，像真实的执行器那样。
+  // 整步仍只用一个 erpStepMs，行数多也不拖慢。
+  const rowMs = (snapshot: TaskSnapshot) => erpStepMs / Math.max(1, snapshot.lines.length);
+  const fillRow = (taskId: string, run: number, rowsDone: number) => {
+    const current = bus.draft(taskId);
+    if (!erpRunLive(current, run, 'running')) return;
+    const rows = Math.max(1, current.lines.length);
+    current.erp.progress = erpProgress(ERP_STEP_INDEX.fill, rows, rowsDone);
+    bus.push(current);
+    if (rowsDone >= rows) setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.fill), rowMs(current));
+    else setTimeout(() => fillRow(taskId, run, rowsDone + 1), rowMs(current));
   };
 
   const newRun = (taskId: string) => {
@@ -130,7 +147,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         }
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium);
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length);
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
         setTimeout(() => reachLogin(taskId, run), erpStepMs);
@@ -196,7 +213,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         if (!snapshot.reconcile.allowedActions.includes('refill')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium);
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length);
         snapshot.reconcile = emptyReconcile();
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();

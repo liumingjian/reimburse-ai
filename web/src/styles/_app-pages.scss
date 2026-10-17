@@ -405,6 +405,18 @@ $gutter: $spacing-06;
   margin-block-end: $spacing-05;
 }
 
+// 去报销进度条：当前这一步在左、百分比在右，下面是条。
+.app-erp-progress {
+  margin-block-end: $spacing-05;
+}
+
+.app-erp-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: $spacing-04;
+  margin-block-end: $spacing-03;
+}
+
 .app-login-prompt {
   display: grid;
   gap: $spacing-03;

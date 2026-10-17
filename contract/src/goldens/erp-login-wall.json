@@ -599,6 +599,10 @@
       }
     ],
     "currentStage": "login",
+    "progress": {
+      "label": "登录",
+      "percent": 12
+    },
     "externalWait": "employee_login",
     "outcome": "none",
     "allowedActions": [
