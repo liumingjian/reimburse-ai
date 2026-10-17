@@ -19,7 +19,7 @@ const client = api(() => alice);
 
 // A task inventoried up to `stage` (the hotel e-invoice plus a rail ticket by default, so it has two lines), with the
 // project book as the test entered it: these tests are about the book, so the builder's own projects stay out of it.
-async function taskAt(stage: 'project' | 'pending' = 'project', materials: readonly string[] = ['m01', 'm07'], homeCity = '杭州'): Promise<TaskSnapshot> {
+async function taskAt(stage: 'project' | 'pending' = 'project', materials: readonly string[] = ['m01', 'm02', 'm07'], homeCity = '杭州'): Promise<TaskSnapshot> {
   return (await scenario(server, alice).at(stage, { materials, homeCity, projectBook: 'as_is', stayTrio: 'answered' })).reached;
 }
 
@@ -237,7 +237,7 @@ describe('project deadline advisories', () => {
 describe('home city', () => {
   it('is snapshotted per task, remembered per account as the next default, and editable on the current task', async () => {
     expect(TaskListSchema.parse(await (await alice.request('/api/tasks')).json()).homeCity).toBeNull();
-    const start = await taskAt('project', ['m01'], '杭州');
+    const start = await taskAt('project', ['m01', 'm02'], '杭州');
     expect(start.task.homeCity).toBe('杭州');
     expect(TaskListSchema.parse(await (await alice.request('/api/tasks')).json()).homeCity).toEqual({ value: '杭州', source: 'remembered' });
 
@@ -253,7 +253,7 @@ describe('home city', () => {
   });
 
   it('editing it after an ERP action attempt is refused', async () => {
-    const start = await taskAt('project', ['m01']);
+    const start = await taskAt('project', ['m01', 'm02']);
     // Seeded: a bare attempt row, with no fill job behind it, pins the refusal to the erp_attempt check itself rather
     // than to whatever the ERP phase gate says about a real job.
     await server.db
@@ -320,7 +320,7 @@ describe('the personal book', () => {
 
   it('is per account, and resetAll clears this account’s book and home city only', async () => {
     await book('intake', { number: 'P-2307' });
-    await taskAt('project', ['m01'], '杭州');
+    await taskAt('project', ['m01', 'm02'], '杭州');
     const bob = await server.signIn('bob');
     await bob.post('/api/project-book/intake', { number: 'P-3312', name: '产品调研' });
     expect(ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json()).projects.map((p) => p.number)).toEqual(['P-3312']);

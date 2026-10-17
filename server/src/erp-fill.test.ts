@@ -241,14 +241,15 @@ describe('去报销 on a fake executor', () => {
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
-  // A 住宿 line needs its 离店日期, which only the folio carries; the hotel invoice on its own cannot be written.
-  it('refuses to start when a confirmed line cannot be written to ERP, before any job', async () => {
-    const scene = await scenario(server).at('actions', { materials: ['m01'] });
+  // A 住宿 line needs its 离店日期, which only the folio carries. The hotel invoice on its own never gets that far: its
+  // missing 结账单 blocks the list at 待确认项, so 去报销 is refused before any job.
+  it('refuses to start for a hotel invoice without its folio, which never leaves 待确认项', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m01'], stayTrio: 'answered' });
+    expect(scene.reached).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
     const response = await scene.act('start-erp-write');
     expect(response.status).toBe(400);
-    const body = (await response.json()) as { error: { code: string; message: string } };
-    expect(body.error.code).toBe('erp_preflight');
-    expect(body.error.message).toContain('离店日期');
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('not_ready');
     expect(executor.runs()).toEqual([]);
   });
 

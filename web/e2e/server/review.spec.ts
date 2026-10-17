@@ -8,7 +8,7 @@ import { answerStayGaps, expect, signIn, test } from './fixture';
 // Slice 10 (#189) on the real server: 整单明细确认 (whole-list detail confirmation). The task is brought to review
 // through the API (upload, inventory, project book, assignment); the page then confirms and offers 去打印 / 去报销.
 
-const samples = ['m01', 'm07'].map((prefix) => {
+const samples = ['m01', 'm02', 'm07'].map((prefix) => {
   const found = SAMPLE_MATERIALS.find((sample) => sample.file.startsWith(prefix));
   if (!found) throw new Error(`fixture ${prefix} is missing from @baox/fixtures`);
   return found;

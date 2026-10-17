@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect as baseExpect, test as base, type Page } from '@playwright/test';
 import { AccountListSchema, SessionSchema, STAY_TRIO_CONFIRM_NONE, stayTrioElementOf, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 
 // Every server-project test gets its own built server on its own throwaway data directory and a free port, so
 // tests never share tasks or accounts. `baseURL` points at it: `page.goto('/#/tasks')`.
@@ -94,8 +95,9 @@ export async function signIn(page: Page, username = 'admin'): Promise<void> {
 
 // The 住宿 (accommodation) trio check (#213) runs at 盘点 (inventory): a 住宿 invoice missing its 结账单 (hotel folio)
 // or its 支付截图 (payment screenshot) gets one 待确认项 (pending item) per missing element, and the task waits at
-// `answer_pending` until they are answered. A spec whose subject lies further down the flow uploads the invoice
-// without those two, so it calls this to answer every open trio item with 确认没有 (confirm none) and move on; the
+// `answer_pending` until they are answered. A spec whose subject lies further down the flow uploads the invoice with
+// its folio (a missing 结账单 cannot be confirmed away) but without screenshots, so it calls this to answer every other
+// open trio item with 确认没有 (confirm none) and move on; the
 // check itself is covered by server/src/stay-trio.test.ts and, on the page, by hotel.spec.ts.
 // Waits for the inventory run to finish first, so every item is derived. Returns the snapshot after the last answer.
 export async function answerStayGaps(page: Page, taskId: string): Promise<TaskSnapshot> {
@@ -103,7 +105,7 @@ export async function answerStayGaps(page: Page, taskId: string): Promise<TaskSn
   await baseExpect.poll(async () => (await read()).inventory.status, { timeout: 60_000 }).toBe('done');
   let snapshot = await read();
   for (const item of snapshot.pendingItems) {
-    if (item.status !== 'open' || stayTrioElementOf(item.itemId) === null) continue;
+    if (item.status !== 'open' || [null, 'folio'].includes(stayTrioElementOf(item.itemId))) continue;
     const answered = await page.request.post(`/api/tasks/${taskId}/actions/answer-pending`, {
       data: { itemId: item.itemId, answer: { choice: STAY_TRIO_CONFIRM_NONE }, stepToken: snapshot.step.stepToken },
     });
@@ -127,4 +129,12 @@ export async function paymentScreenshot(page: Page, { amount, paidAt, payee, num
   const png = await shot.screenshot({ type: 'png' });
   await shot.close();
   return png;
+}
+
+// The 全季 结账单 (m02) that pairs with the hotel invoice m01. A 住宿 invoice without its folio blocks at 待确认项, so a
+// spec that uploads m01 uploads this with it.
+export function hotelFolio(): { name: string; mimeType: string; buffer: Buffer } {
+  const found = SAMPLE_MATERIALS.find((candidate) => candidate.file.startsWith('m02'));
+  if (!found) throw new Error('fixture m02 is missing from @baox/fixtures');
+  return { name: found.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, found.file)) };
 }
