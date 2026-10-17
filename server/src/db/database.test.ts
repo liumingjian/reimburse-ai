@@ -10,6 +10,7 @@ import { databasePath, writeBlob } from '../data-dir';
 import { readBook } from '../books';
 import { startServer } from '../server';
 import { createTaskService } from '../tasks';
+import { BACKSTOP_MS } from '../test/deadlines';
 import { tempDataDir } from '../test/harness';
 import { DatabaseTooNewError, openDatabase } from './database';
 import { MIGRATIONS } from './migrations';
@@ -130,7 +131,11 @@ describe('migrations on an existing database', () => {
     try {
       expect(backups()).toEqual([expect.stringMatching(/-0002_180_inventory\.sqlite$/)]);
       const outcomes = reader.prepare<[string], { n: number }>('SELECT count(*) AS n FROM parse_result WHERE task_id = ?');
-      for (let attempt = 0; (outcomes.get('old-task')?.n ?? 0) === 0 && attempt < 500; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      const deadline = Date.now() + BACKSTOP_MS;
+      while ((outcomes.get('old-task')?.n ?? 0) === 0) {
+        if (Date.now() > deadline) throw new Error(`the resumed parser job wrote no parse_result for old-task within ${BACKSTOP_MS} ms`);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
     } finally {
       reader.close();
       await server.close();
