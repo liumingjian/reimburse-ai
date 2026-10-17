@@ -46,6 +46,10 @@ existing employees have migrated from a successful service health probe.
 
 ## Not protected in phase 1
 
+> 2026-10-17: [ADR-0036](../adr/0036-https-with-a-name-constrained-private-ca.md) moves 222 to HTTPS only
+> (`https://10.250.0.222:8443`, private name-constrained CA, 8888 closed), which closes the first gap below once it
+> is deployed. Until then it stands.
+
 This instance is fit for trying the core flow with made-up data only. Three things are knowingly missing:
 
 - **Traffic is in clear on the LAN.** Plain HTTP: app passwords, 配对码 (pairing code) and 配对凭据 (pairing token),

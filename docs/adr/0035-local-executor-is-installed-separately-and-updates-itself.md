@@ -22,8 +22,10 @@ entry; 47319 names the account it is paired to. Each is in the decision it belon
   - An employee on the headless path needs no extension at all.
 - **Installing is one pasted command (amended 2026-10-16).**
   - On the 设置页 the employee picks Mac or Windows (neither is pre-selected) and clicks 「生成安装命令」:
-    - Mac: `curl -fsSL http://<应用地址>/install/<配对码> | sh`
-    - Windows: `powershell -ExecutionPolicy Bypass -c "irm http://<应用地址>/install/<配对码> | iex"`
+    - Mac: `curl -fsSL https://<应用地址>/install/<配对码> | sh`
+    - Windows: `powershell -ExecutionPolicy Bypass -c "irm https://<应用地址>/install/<配对码> | iex"`
+    - The app is HTTPS-only under a private CA each PC trusts beforehand (ADR-0036), so neither command skips
+      certificate checks.
   - The system chosen is stored with the pending 配对码, and `GET /install/<配对码>` returns the shell or PowerShell
     script for it. Fetching does not consume the code; pairing does (one-time, 10 minutes, one per account). An unknown
     or expired code still gets a script, one that prints 「配对码已过期，请回设置页重新生成」 and exits non-zero.
@@ -117,9 +119,9 @@ entry; 47319 names the account it is paired to. Each is in the decision it belon
   arrived whole, not who wrote them. Whoever controls the app's server, or the network path to it, controls the program
   on every employee's PC, and those PCs receive ERP 凭据 per job. The same now holds for the install script and the
   downloaded runtime. While the app is reached over plain http that path is the intranet. HTTPS on the app server is
-  what closes it, and is a release prerequisite: employees get the command only after the server serves HTTPS (the
-  内网主机 may serve it over http for testing). Which certificate, and the move of the stored origin, is
-  [#413](https://github.com/liumingjian/reimburse-ai/issues/413). Signing the program with a key the executor pins would close the server
+  what closes it, and is a release prerequisite: employees get the command only after the server serves HTTPS.
+  ADR-0036 decides how (a name-constrained private CA, 222 on HTTPS only; #413). Development instances and e2e stay
+  on http. Signing the program with a key the executor pins would close the server
   half too, and is not done.
 - **The executor may hold the 报销系统 password on a Node the app did not ship.** Accepted by the owner on 2026-10-16
   to skip a 100 MB download for employees who already have Node. Bounded by: Node 24.x only; the code-injecting
@@ -137,6 +139,7 @@ entry; 47319 names the account it is paired to. Each is in the decision it belon
 - The deploy downloads three runtimes, about 100 MB each, once per Node version, and keeps them across releases. No
   install package is assembled or offered any more.
 - **Existing installs.** Executors installed from the zip keep their home and receive the new program through
-  self-update. Nothing is reinstalled. On its first start the new program rewrites its own start entry (LaunchAgent,
+  self-update. Nothing is reinstalled while the app stays on its http origin; once 222 moves to HTTPS (ADR-0036) the
+  stored origin is gone, and those test PCs reinstall with the command. On its first start the new program rewrites its own start entry (LaunchAgent,
   `run-baox.cmd`) into the recorded-path, cleared-environment form (2026-10-17); otherwise those entries would keep
   starting `runtime/node` with whatever `NODE_OPTIONS` the PC has.
