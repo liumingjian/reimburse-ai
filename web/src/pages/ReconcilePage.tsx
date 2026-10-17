@@ -6,6 +6,7 @@ import { ActionBar } from '../shell/ActionBar';
 import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { useAction } from '../shell/useAction';
+import { UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
 
@@ -64,6 +65,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
             {...(erp.abortReason ? { subtitle: erp.abortReason } : {})}
           />
           {erp.rerunNotice ? <p className="app-caption" data-testid="erp-rerun-notice">{erp.rerunNotice}</p> : null}
+          {erp.review ? <UnverifiedDraftReview review={erp.review} /> : null}
         </section>
       ) : null}
 

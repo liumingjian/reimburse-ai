@@ -8,6 +8,7 @@ import { ActionGroup } from '../shell/ActionGroup';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
+import { DraftReview, UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 
 // The page renders the server's recorded ERP read state. Refresh reads that state only; it never dispatches another
@@ -148,6 +149,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <span data-testid={erp.outcome === 'saved' ? 'saved-outcome' : 'handover-completed'}>{completedNotice}</span>
               </InlineNotification>
             ) : null}
+            {erp.review ? <DraftReview review={erp.review} /> : null}
             <ActionGroup>
               <Button size="md" href={taskHash(taskId, 'done')}>
                 查看完成结果
@@ -157,6 +159,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : erp.status === 'aborted' ? (
           <>
             <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={`写入报销系统已停止：${erp.abortReason ?? ''}`} />
+            {erp.review ? <UnverifiedDraftReview review={erp.review} /> : null}
             {stage === 'reconcile' || stage === 'done' ? (
               <ActionGroup>
                 <Button size="md" href={taskHash(taskId, stage)}>

@@ -1,12 +1,13 @@
 // The snapshot's `erp`, `readback`, `reconcile` and `catalog` sections, worded from the task's ERP record
 // (`erp/fill-state.ts`). Which actions are on offer is the task policy's (`task-policy.ts`); these views only word them.
 
-import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_PROGRESS_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { erpEntryOf } from '@baox/erp-executor/probe';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
 import type { DraftOutcome, ErpRecord, ReconcileJudgement } from '../erp/fill-state';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from '../extension/channel';
-import { erpActionsOf, reconcileActionsOf, reconcileReading } from '../task-policy';
+import { erpActionsOf, reconcileActionsOf, reconcileReading, type ErpPhase } from '../task-policy';
 
 // Executor events are only interpreted here. The client receives the resulting stage and never infers progress from
 // event names or event order.
@@ -83,6 +84,34 @@ const RERUN_STOPPED = /^rerun_/;
 
 const LOGIN_NOT_DETECTED = '还没有检测到登录。请在为这次报销打开的报销系统标签页里登录本人账号（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
 
+// 去报销系统查看 (spec #406): the one rule for when the page offers the 报销系统 and the 暂存单's 内码. The phases in
+// which a 暂存单 the employee should check may exist: `drafted`, and `unknown` when its 内码 is known (暂存 landed but
+// its 回读 did not match, ticket #408, or 对账 found the task's one 暂存单 and could not prove it). `saved` is a bill
+// now, `aborted` wrote nothing, and `handed_over` (the 浏览器扩展 path) never 暂存s: its form is already open in the
+// employee's own tab.
+const REVIEWABLE_PHASES: ReadonlySet<ErpPhase> = new Set(['drafted', 'unknown']);
+
+// What 对账 by the ownership marker found that is still a 暂存单 needing the employee's eyes. `saved` is a bill now:
+// 对账 leaves the phase `unknown` (the bill is 转人工), but there is no draft left to check.
+const UNPROVED_DRAFT: ReadonlySet<DraftOutcome> = new Set(['mismatch', 'unproved']);
+
+/**
+ * Where the employee reviews the task's 暂存单, or null. The 内码 is the one the executor reported in its result, or
+ * else the one 对账 found under the task's own marker; the address is built from the `erpOrigin` frozen in this
+ * task's fill plan, never the server's current configuration, so the button opens the 报销系统 the draft was written
+ * to. Today it is that 报销系统's entry page (where the executor signs in); a direct link to the bill would change only
+ * this function.
+ */
+function reviewOf(record: ErpRecord): ErpReview | null {
+  const phase = record.facts?.phase;
+  const found = record.reconcile?.judged?.draft ?? null;
+  if (found?.outcome === 'saved') return null;
+  const draftId = record.result?.draftId ?? (found && UNPROVED_DRAFT.has(found.outcome) ? found.draftId : null);
+  const origin = record.frozen?.plan.erpOrigin ?? null;
+  if (!phase || !REVIEWABLE_PHASES.has(phase) || !draftId || !origin) return null;
+  return { url: erpEntryOf(origin), draftId };
+}
+
 export function erpView(record: ErpRecord): Erp {
   const idle: Erp = {
     status: 'idle',
@@ -96,6 +125,7 @@ export function erpView(record: ErpRecord): Erp {
     loginNotice: null,
     rerunNotice: null,
     erpAccount: record.erpAccount,
+    review: null,
   };
   const facts = record.facts;
   if (!facts) return idle;
@@ -105,6 +135,7 @@ export function erpView(record: ErpRecord): Erp {
     currentStage: currentStageOf(steps),
     externalWait: externalWaitOf(record),
     allowedActions: erpActionsOf(facts.phase),
+    review: reviewOf(record),
   };
   const reason = record.result?.message ?? record.result?.code ?? '';
   const rerunNo = facts.trigger === 'rerun' ? (record.frozen?.rerunOf?.no ?? 1) : null;
@@ -389,6 +420,7 @@ export function legacyErpView(legacy: LegacyTaskTable): Erp {
     loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
 }
 

@@ -22,3 +22,7 @@ export const PAGE_COPY: Readonly<Record<TaskPage, { title: string; lead: string 
 
 // 整单明细确认页「说明」展开区里的排序说明（DESIGN.md「版式规则」：标题下最多一句话，其余放进展开区）。
 export const REVIEW_ORDER_NOTE = '明细按费用分类排序（本地市内交通、外地市内交通、长途交通、住宿），打印稿页序与报销系统明细行共用这个序号。';
+
+// 去报销卡片在本地执行器路径上、去报销按钮旁的一句话（#406）：本地执行器每次开始都用员工的账号登录报销系统，
+// 同一账号在别处的登录随之退出。只是提醒，不拦着去报销；浏览器扩展路径不说。
+export const ERP_RUN_LOGS_OUT = '去报销期间你在报销系统里的登录会被退出。';

@@ -19,7 +19,6 @@ import {
   CATALOG_PREPARATION_COPY,
   CONFIRMATION_NO_COLUMN,
   CONFIRMATION_TABLE_COLUMNS,
-  ERP_SIGN_IN_KNOCKS_OFF,
   PREPARATION_PROBLEM_COLUMNS,
   PROJECT_DEADLINE_WARNING_COPY,
   type Line,
@@ -38,7 +37,7 @@ import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
-import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
+import { ERP_RUN_LOGS_OUT, PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 import { DeadlineWarningList } from './DeadlineWarningList';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
@@ -293,6 +292,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </Card>
             <Card
               title="去报销"
+              label="去报销"
               actions={
                 erpDone ? (
                   <Button href={taskHash(taskId, 'done')}>查看结果</Button>
@@ -313,8 +313,8 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 {erpDone ? '已交接，去完成页查看回读结果。' : ''}
               </p>
               {hostedSignIn && !erpStarted ? (
-                <p className="app-caption" data-testid="erp-knocks-off">
-                  {ERP_SIGN_IN_KNOCKS_OFF}
+                <p className="app-caption" data-testid="erp-logs-out">
+                  {ERP_RUN_LOGS_OUT}
                 </p>
               ) : null}
               {!erpStarted && erp.abortReason ? (
