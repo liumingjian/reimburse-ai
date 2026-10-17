@@ -5,7 +5,9 @@ import { runOperatorCli } from './cli.js';
 import type { SourceRepository } from './source.js';
 import { IsolatedBootstrapTarget } from './testing/isolated-bootstrap-target.js';
 
-const REAL_SUBPROCESS_TIMEOUT_MS = 30_000;
+// The direct transaction takes about 15 s of real subprocesses alone on the Mac mini, and outlasted 30 s while
+// `pnpm -r test` ran every package alongside it (2026-10-17). 60 s matches the server suite (server/src/test/deadlines.ts).
+const REAL_SUBPROCESS_TIMEOUT_MS = 60_000;
 const targets: IsolatedBootstrapTarget[] = [];
 
 afterEach(() => {
