@@ -31,8 +31,6 @@ export interface ErpLease {
   releaseTask(taskId: string): void;
 }
 
-export type InMemoryErpLease = ErpLease;
-
 export function createInMemoryErpLease(): ErpLease {
   const byAccount = new Map<string, LeaseHolder>();
   const forget = (match: (held: LeaseHolder) => boolean) => {

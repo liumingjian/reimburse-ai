@@ -1,5 +1,4 @@
-import type { Blocker } from '@baox/contract';
-import { occupancyClash, type OccupancyLedger } from './accounts/occupancy';
+import { OCCUPANCY_COPY, type Blocker } from '@baox/contract';
 import type { Claim } from './inventory-view';
 
 // 发票占用 (invoice occupancy) over real facts: every other task that still holds invoices (open, or handed off
@@ -17,17 +16,13 @@ export type Holding = { accountId: string; taskId: string; taskName: string; han
 // never to the random material id.
 const precedes = (a: Claim, b: Claim) => a.at < b.at || (a.at === b.at && a.seq < b.seq);
 
-// The ledger as one of the viewer's claims sees it: an occupant only if its hold precedes that claim.
-export function ledgerFor(holdings: readonly Holding[], mine: Claim): OccupancyLedger {
-  return {
-    occupant(invoiceKey) {
-      for (const holding of holdings) {
-        const claim = holding.claims.find((candidate) => candidate.key === invoiceKey);
-        if (claim && (holding.handedOff || precedes(claim, mine))) return { accountId: holding.accountId, taskId: holding.taskId, taskName: holding.taskName };
-      }
-      return null;
-    },
-  };
+// The holding that occupies `mine`, as the claim sees it: a holding counts only if its hold precedes the claim, or it
+// was handed off.
+function occupantOf(holdings: readonly Holding[], mine: Claim): Holding | undefined {
+  return holdings.find((holding) => {
+    const claim = holding.claims.find((candidate) => candidate.key === mine.key);
+    return claim && (holding.handedOff || precedes(claim, mine));
+  });
 }
 
 export const OCCUPANCY_REASON = {
@@ -40,14 +35,18 @@ export const OCCUPANCY_REASON = {
 // An occupancy the importing task owns is not a blocker on that task: re-importing invoices this same 报销任务
 // already holds is permitted, which is what keeps a recovery after an import that was never saved reachable
 // (ADR-0026). An occupancy owned by any other task stays a hard block, unchanged from ADR-0007.
+// 发票占用 is global across accounts (ADR-0018): the owner sees their own task, any other account learns only that
+// another account's task holds the invoice.
 export async function occupancyBlockers(holdings: readonly Holding[], viewerAccountId: string, importingTaskId: string, claims: readonly Claim[]): Promise<Blocker[]> {
   const others = holdings.filter((holding) => holding.taskId !== importingTaskId);
   const blockers: Blocker[] = [];
   for (const claim of claims) {
-    const clash = await occupancyClash(ledgerFor(others, claim), viewerAccountId, claim.key);
-    if (!clash) continue;
+    const occupant = occupantOf(others, claim);
+    if (!occupant) continue;
     const base = { kind: 'duplicate_across_tasks' as const, materialId: claim.materialId, fileName: claim.fileName, resolver: '要你处理' as const };
-    blockers.push(clash.scope === 'own_task' ? { ...base, reason: OCCUPANCY_REASON.ownTask(clash.task.name), tasks: [clash.task] } : { ...base, reason: clash.reason, tasks: [] });
+    blockers.push(occupant.accountId === viewerAccountId
+      ? { ...base, reason: OCCUPANCY_REASON.ownTask(occupant.taskName), tasks: [{ taskId: occupant.taskId, name: occupant.taskName }] }
+      : { ...base, reason: OCCUPANCY_COPY.otherAccount, tasks: [] });
   }
   return blockers;
 }

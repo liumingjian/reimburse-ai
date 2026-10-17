@@ -1,5 +1,4 @@
 import { ProjectBookSchema, type Line, type TaskSnapshot, type TaskStage } from '@baox/contract';
-import { fixtureCatalog } from '../catalog/project-catalog';
 import { handedOver, scripted, type Script, type ScriptedExecutor } from '../erp/testing/fake-executor';
 import { api, sample, type Upload } from './api';
 import { BACKSTOP_MS } from './deadlines';
@@ -40,7 +39,7 @@ export type ScenarioServer = TestServer & {
   presets: PresetParser | null;
 };
 
-// `createTestServer` with the scenario defaults: preset parsing, a catalog that knows SCENARIO_PROJECTS, and a scripted
+// `createTestServer` with the scenario defaults: preset parsing and a scripted
 // fill executor that hands the form over. Any option overrides its default; `erpExecutor: 'extension'` keeps the
 // production wiring, where 去报销 runs in the account's paired browser extension (a `fakeExtension` in tests).
 export type ScenarioServerOptions = Omit<TestServerOptions, 'erpExecutor'> & { erpExecutor?: TestServerOptions['erpExecutor'] | 'extension' };
@@ -50,7 +49,6 @@ export async function scenarioServer(options: ScenarioServerOptions = {}): Promi
   const erp = options.erpExecutor ? null : scripted(handedOver());
   const { erpExecutor, ...rest } = options;
   const server = await createTestServer({
-    projectCatalog: fixtureCatalog(SCENARIO_PROJECTS.map((project) => ({ ...project, audited: true, forbidden: false }))),
     ...rest,
     parser: options.parser ?? presets!,
     ...(erpExecutor === 'extension' ? {} : { erpExecutor: erpExecutor ?? erp! }),

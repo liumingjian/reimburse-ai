@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
 import { PROJECT_BOOK_NOTES, type ProjectBook, type ProjectBookEditInput, type ProjectBookEntry, type ProjectBookIntakeInput, type ProjectBookLifecycleInput, type ProjectBookResult, type PublicProjectConversionInput } from '@baox/contract';
-import { isSafeProjectNumber } from './catalog/project-catalog';
 import type { Db } from './db/database';
 import type { ProjectBookEventTable, Schema } from './db/schema';
 
 // Project books (项目簿) fold append-only facts. A manual `admitted` fact carries `admission_source = manual`; it is
 // usable locally without pretending that an ERP catalog check happened. Older facts retain their original fold rules.
+
+// Project numbers go into an ERP filter string, so only characters that cannot change its meaning pass.
+const SAFE_PROJECT_NUMBER = /^[A-Za-z0-9_-]{1,64}$/;
+const isSafeProjectNumber = (value: string): boolean => SAFE_PROJECT_NUMBER.test(value);
 
 export type BookRef = { scope: 'personal'; ownerAccountId: string } | { scope: 'public' };
 export type ProjectSource = BookRef['scope'];

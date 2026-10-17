@@ -1,27 +1,19 @@
 import { ProjectBookResultSchema, ProjectBookSchema, TaskListSchema, type TaskSnapshot } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureCatalog, type ProjectCatalog } from './catalog/project-catalog';
 import { databasePath } from './data-dir';
 import { api } from './test/api';
 import { createTestServer, tempDataDir, testClient, type TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Personal project intake, home city, and project assignment through `app.request()`. Project-book intake is local:
-// the catalog seam remains for ERP pre-submit behavior, but this test never relies on it for admission.
-
-const CATALOG = fixtureCatalog([
-  { number: 'P-2307', name: '华东客户交付', audited: true, forbidden: false },
-  { number: 'P-3312', name: '产品调研', audited: true, forbidden: false },
-  { number: 'P-9001', name: '已停用项目', audited: true, forbidden: true },
-]);
+// no ERP catalog is consulted for admission.
 
 let server: ScenarioServer;
 let alice: TestClient;
-async function boot(projectCatalog: ProjectCatalog = CATALOG) {
-  server = await scenarioServer({ projectCatalog });
+beforeEach(async () => {
+  server = await scenarioServer();
   alice = await server.signIn('alice');
-}
-beforeEach(() => boot());
+});
 afterEach(() => server.close());
 const client = api(() => alice);
 
@@ -283,9 +275,7 @@ describe('home city', () => {
 });
 
 describe('the personal book', () => {
-  it('admits a trimmed arbitrary safe number without calling an unavailable ERP catalog', async () => {
-    await server.close();
-    await boot(fixtureCatalog([], { unavailable: true }));
+  it('admits a trimmed arbitrary safe number without any ERP catalog check', async () => {
     const admitted = await book('intake', { number: '  LOCAL-0000 ', name: '  不在 ERP 目录中的本地项目  ' });
     expect(admitted).toMatchObject({
       status: 'admitted',
@@ -311,7 +301,7 @@ describe('the personal book', () => {
   it('persists a manual admission across an application restart', async () => {
     const dataDir = tempDataDir();
     const database = databasePath(dataDir);
-    const first = await createTestServer({ database, dataDir, projectCatalog: fixtureCatalog([], { unavailable: true }) });
+    const first = await createTestServer({ database, dataDir });
     const owner = await first.signIn('restart-owner');
     const admitted = ProjectBookResultSchema.parse(await (await owner.post('/api/project-book/intake', { number: 'RESTART-1', name: '重启后仍在' })).json());
     expect(admitted.status).toBe('admitted');
@@ -319,7 +309,7 @@ describe('the personal book', () => {
     // A process restart closes only the server and database; the data directory remains for the replacement process.
     await first.app.close();
     await first.db.destroy();
-    const second = await createTestServer({ database, dataDir, projectCatalog: fixtureCatalog([], { unavailable: true }) });
+    const second = await createTestServer({ database, dataDir });
     try {
       const restored = ProjectBookSchema.parse(await (await testClient(second.app, owner.account, owner.cookie).request('/api/project-book')).json());
       expect(restored.projects).toEqual([expect.objectContaining({ number: 'RESTART-1', name: '重启后仍在', lastCheckedAt: null, selectable: true })]);

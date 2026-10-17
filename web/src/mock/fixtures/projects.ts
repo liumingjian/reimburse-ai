@@ -1,6 +1,6 @@
 import { isRealDate, type ProjectBookEntry, type Line, type ProjectAssignment, type ProjectDeadlineWarning, type ProjectLineAssignment, type ProjectOption, type Step, type TaskSnapshot } from '@baox/contract';
 
-// 个人项目簿夹具：虚构的项目号与名称，以及 mock「报销系统项目目录」。
+// 个人项目簿夹具：虚构的项目号与名称。
 // 可选判定、状态标签与说明照内核 projects.mjs annotateProjects 移植（「ERP」写作「报销系统」），由 mock 服务端给出。
 
 // 夹具员工的常驻城市，也是 mock 位置 Adapter 第一次给出的城市级网络位置候选（见 mock-adapter 的 homeCityDefault）。
@@ -31,31 +31,6 @@ export const INITIAL_BOOK: readonly StoredProject[] = [
   { number: 'P-4420', name: '南京客户培训', expiresOn: '2026-08-31', lastCheckedAt: '2026-09-01T09:30:00', lastVerdict: 'confirmed' },
   { number: 'P-0917', name: '旧版对账工具', expiresOn: null, lastCheckedAt: '2026-09-01T09:30:00', lastVerdict: 'unusable' },
 ];
-
-// mock 报销系统项目目录：录入与复检按这张表给出核验结论；表里没有的安全项目号一律「查不到」（missing）。
-export type DirectoryVerdict =
-  | { verdict: 'confirmed'; name: string }
-  | { verdict: 'unusable'; name: string }
-  | { verdict: 'ambiguous'; count: number }
-  // 查询没有完成（内核 verifyProject ok:false，重试后仍失败）。
-  | { verdict: 'failed'; reason: string };
-
-export const ERP_PROJECT_DIRECTORY: Readonly<Record<string, DirectoryVerdict>> = {
-  'P-2307': { verdict: 'confirmed', name: '华东客户交付' },
-  'P-2311': { verdict: 'confirmed', name: '华东客户交付二期' },
-  'P-3312': { verdict: 'confirmed', name: '产品调研' },
-  'P-1180': { verdict: 'confirmed', name: '内部培训' },
-  'P-4420': { verdict: 'confirmed', name: '南京客户培训' },
-  'P-5108': { verdict: 'confirmed', name: '苏州门店巡检' },
-  'P-6021': { verdict: 'confirmed', name: '年度预算评审' },
-  'P-0917': { verdict: 'unusable', name: '旧版对账工具' },
-  'P-7700': { verdict: 'ambiguous', count: 2 },
-  'P-9000': { verdict: 'failed', reason: '项目目录查询超时' },
-};
-
-export function verifyProjectNumber(number: string): DirectoryVerdict | { verdict: 'missing' } {
-  return ERP_PROJECT_DIRECTORY[number] ?? { verdict: 'missing' };
-}
 
 // 内核 projects.mjs：安全项目号是 1-64 个字母、数字、下划线或连字符。
 const SAFE_PROJECT_NUMBER = /^[A-Za-z0-9_-]{1,64}$/;

@@ -11,9 +11,9 @@ import { createTaskService } from '../tasks';
 import { createTestServer, type TestServer } from '../test/harness';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { createFakeErp, type FakeErp } from '@baox/erp-executor/testing/fake-erp';
-import { createErpJobs } from './jobs';
-import type { ApprovedPreview, ReadbackEvent } from '@baox/erp-executor/protocol';
-import { reconcileFromEvents, runReconcile } from './reconcile-job';
+import { createErpJobs, serverChannel } from './jobs';
+import { ReconcilePlanSchema, type ApprovedPreview, type ReadbackEvent } from '@baox/erp-executor/protocol';
+import { reconcileFromEvents, type ReconcileExecutor } from './reconcile-job';
 import { driveTo, RECONCILE_STATES, type ReconcileState } from '@baox/erp-executor/testing/reconcile-states';
 import { FAST_PACE, fakeErpOptions, reconcilePlan, withoutLayout } from '@baox/erp-executor/testing/scenario';
 
@@ -41,9 +41,18 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
+/** Drive one reconcile job through an executor and classify its read-back. A reconcile read-back is acknowledged, never judged live. */
+async function runReconcile({ plan: rawPlan, expectedPreview, execute }: { plan: unknown; expectedPreview: unknown; execute: ReconcileExecutor }) {
+  const plan = ReconcilePlanSchema.parse(rawPlan);
+  const jobs = createErpJobs(db);
+  const result = await execute(plan, serverChannel({ jobs, jobId: plan.jobId, taskId: plan.taskId, judge: () => ({ ok: true }) }));
+  const events = await jobs.events(plan.jobId);
+  return { result, events, attempts: await jobs.attempts(plan.jobId), reconcile: reconcileFromEvents(events, expectedPreview) };
+}
+
 /** Run one reconcile job on the fake as it stands. */
 const reconcile = (fake: FakeErp, expectedPreview: ApprovedPreview | null) => runReconcile({
-  db, plan: reconcilePlan(taskId), expectedPreview,
+  plan: reconcilePlan(taskId), expectedPreview,
   execute: (plan, channel) => runReconcileJob(plan, { browser: fake.browser, channel, pace: FAST_PACE, probeWaitMs: 0 }),
 });
 

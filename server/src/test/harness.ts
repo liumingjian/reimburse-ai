@@ -8,10 +8,9 @@ import type { AppEnv } from '../accounts/http';
 import { createApp, type App } from '../app';
 import { ensureDataDir } from '../data-dir';
 import { openDatabase, type Db } from '../db/database';
-import { createInMemoryErpLease, type InMemoryErpLease } from '../erp-lease';
+import { createInMemoryErpLease, type ErpLease } from '../erp-lease';
 import { parsePublicOrigin } from '../public-origin';
 import type { ParseExecutor } from '../parse/executor';
-import type { ProjectCatalog } from '../catalog/project-catalog';
 import type { ErpConfig } from '../erp/config';
 import type { FillExecutor } from '../erp/fill-jobs';
 import type { ReconcileExecutor } from '../erp/reconcile-job';
@@ -43,7 +42,7 @@ export type TestServer = {
   // Drives session expiry; starts at the real time.
   clock: TestClock;
   // The ERP lease the app consults; tests hold it to simulate another task's ERP job.
-  erpLease: InMemoryErpLease;
+  erpLease: ErpLease;
   signIn: (username?: string) => Promise<TestClient>;
   close: () => Promise<void>;
 };
@@ -81,14 +80,14 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // `extensionTemplate`: a built extension template (`extension/scripts/build.mjs <dir>`) for the settings page's download.
 // `schedule`: the extension channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
 // `erpCredentialKey`: the key the hosted ERP 凭据 are sealed with; without it they cannot be saved.
-export type TestServerOptions = { parser?: ParseExecutor; projectCatalog?: ProjectCatalog; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string; erpCredentialKey?: Buffer | null; autoRerun?: boolean; localExecutor?: LocalExecutorDist | null };
+export type TestServerOptions = { parser?: ParseExecutor; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string; erpCredentialKey?: Buffer | null; autoRerun?: boolean; localExecutor?: LocalExecutorDist | null };
 
-export async function createTestServer({ parser, projectCatalog, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir(), erpCredentialKey = null, autoRerun, localExecutor = null }: TestServerOptions = {}): Promise<TestServer> {
+export async function createTestServer({ parser, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir(), erpCredentialKey = null, autoRerun, localExecutor = null }: TestServerOptions = {}): Promise<TestServer> {
   const db = await openDatabase(database);
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, erpCredentialKey, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, extensionTemplate, localExecutor, ...(parser ? { parser } : {}), ...(projectCatalog ? { projectCatalog } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}), ...(autoRerun !== undefined ? { autoRerun } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, erpCredentialKey, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, extensionTemplate, localExecutor, ...(parser ? { parser } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}), ...(autoRerun !== undefined ? { autoRerun } : {}) });
   await app.ready;
   let accounts = 0;
   let administrator: TestClient | null = null;
