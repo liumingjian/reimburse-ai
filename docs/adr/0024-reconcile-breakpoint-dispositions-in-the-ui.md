@@ -16,7 +16,7 @@ Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
 
 ## Decisions
 
-- **One 对账结果 page with six sets of copy**, and buttons driven by the disposition. CONTEXT.md defines a breakpoint
+- **One 对账结果 page with six sets of copy**, and buttons driven by the disposition. GLOSSARY.md defines a breakpoint
   as "不是一个「全绿/不全绿」的判断，正常停下与异常停下都各有自己的格" — collapsing the six into the two
   dispositions would throw away exactly the part the employee needs.
 - **Every breakpoint's copy answers three questions**: are my invoices occupied, what is on the ERP right now, what do
@@ -36,7 +36,7 @@ Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
 - **「重新去报销」 is not a third disposition.** The disposition remains 原地等待: baox issues no further ERP write
   for this attempt. Starting a fresh 报销任务 afterwards is the user's own action. It is not a replay either —
   ADR-0016 forbids replay only *after* `attempt_started` is persisted, and ADR-0020 already states that aborting
-  before it means the job "can simply be run again". CONTEXT.md's 仅有的两种处置 stands unchanged.
+  before it means the job "can simply be run again". GLOSSARY.md's 仅有的两种处置 stands unchanged.
 - **Because that distinction is easy to misread, it is pinned in the interface**: the button is labelled 重新去报销,
   never 重试, and sits next to the sentence saying no invoice was occupied.
 
@@ -66,4 +66,4 @@ Decided in [#232](https://github.com/liumingjian/reimburse-ai/issues/232).
 - 未保存·导入前 needs a path back into a fresh 去报销 for the same materials, distinct from the recovery paths that
   exist after an attempt.
 - 已保存 with a holding identity must project as ERP 草稿已交接 rather than routing through the reconcile page at all.
-- CONTEXT.md is unchanged: 原地等待 and 转人工 remain the only two 处置.
+- GLOSSARY.md is unchanged: 原地等待 and 转人工 remain the only two 处置.

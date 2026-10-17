@@ -6,7 +6,7 @@
 `@carbon/react` 组件与 `@carbon/styles`，主题 **Gray 10（g10）**，颜色、直角、间距、行高、字阶都照 Carbon 原样；
 上一版的 Linear 品牌层（强调色 #5e6ad2、8/12px 圆角、pill 标签）已删除。
 
-本文件不再有 front matter，也不再生成任何文件：原先把 front matter 生成为 `tokens.css` 的 `scripts/build-tokens.mjs`、
+本文件不再有 front matter，也不再生成任何文件：原先把 front matter 生成为 `tokens.css` 的 `scripts/build-tokens.mjs`、 <!-- check-doc-refs: ignore -->
 `tokens.css` 与它的测试随迁移删除。颜色与尺寸一律取 Carbon 的 token（Sass 变量，输出为 `var(--cds-…)`），不写字面颜色。
 
 - 样式入口 `src/styles/carbon.scss`：Carbon 配置（不输出 IBM Plex 字体）、系统字体、Gray 10 主题、reset、布局 token，

@@ -61,6 +61,6 @@ The new baox local app runs 去报销 (fill ERP) as a long background job: the p
 ## Consequences
 
 - Supersedes ADR-0002's "foreground-blocking, no daemon" and its identity gate. Exclusive CDP control returns for the app's dedicated Chromium profile.
-- Revises #24's identity precondition and CONTEXT.md's ERP 自动化授权 (ERP automation authorisation).
+- Revises #24's identity precondition and GLOSSARY.md's ERP 自动化授权 (ERP automation authorisation).
 - Amends ADR-0014's home-city snapshot: 常驻城市 (home city) is remembered per app account. The current task's snapshot may be changed until its first ERP action attempt. A change re-derives expense categories, invalidates the whole-list confirmation, and becomes the default for later tasks.
 - The contract gains `cancel-erp-write`, a `failed` step with verbatim ERP text and screenshot on drift aborts, and the ERP account on the done page.

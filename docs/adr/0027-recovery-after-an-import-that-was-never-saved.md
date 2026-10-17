@@ -40,7 +40,7 @@ reconcile page may offer afterwards.
 - **`未保存·已导入未写明细` moves from 转人工 to 原地等待.** Nothing was persisted: the form carries no
   单据编号 and is in 新增 mode, so there is no ERP document to hand anyone. The exits are 重新去报销 (gated,
   below) and 转人工 (always available). As in ADR-0024, 重新去报销 is **not a third disposition** — the
-  disposition stays 原地等待 and CONTEXT.md's 仅有的两种处置 stands.
+  disposition stays 原地等待 and GLOSSARY.md's 仅有的两种处置 stands.
 
 - **The gate is the absence of a save attempt**: 重新去报销 is offered only when this job has **no
   `erp_attempt` row with `action = 'save'`**. Import and fill leave observable, non-persistent traces on an
@@ -115,5 +115,5 @@ and the label is where that distinction is pinned.
   decision of its own.
 - ADR-0016 is refined, not overturned: its guard is restated per action, which is the granularity its own
   protocol already records at. `afterAttempts` keeps its job-level rule for deciding a result status.
-- CONTEXT.md's 收票占用 entry gains the task owner, and 未保存·已导入未写明细 stops being described as a state
+- GLOSSARY.md's 收票占用 entry gains the task owner, and 未保存·已导入未写明细 stops being described as a state
   with no way back.
