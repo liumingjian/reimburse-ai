@@ -1565,7 +1565,7 @@ async function reconcileOwnedLock(request, paths, lease) {
   }
   if (journal.phase === 'prepared' && await preparedManifestMatches(paths, request)) {
     await release(paths, lease);
-    return { kind: 'prepared', result: preparedResult(request, paths) };
+    return { kind: 'prepared', result: preparedResult(request, paths, journal) };
   }
   if (journal.phase === 'receiving') {
     await requireLease(paths, lease);
@@ -1665,15 +1665,17 @@ async function waitForTerminal(request, paths) {
   for (;;) {
     const journal = await readJson(paths.journal);
     if (!isJournalFor(journal, request)) return { state: 'reconcile-needed', code: 'journal-changed' };
-    if (journal.phase === 'prepared') return { ...preparedResult(request, paths), ...phaseTimingsField(journal) };
+    if (journal.phase === 'prepared') return preparedResult(request, paths, journal);
     if (journal.phase === 'failed') return { state: 'failed', code: journal.failure || 'build-failed', ...(journal.readinessIssues ? { issues: journal.readinessIssues } : {}) };
     if (journal.phase === 'recovery-required') return recoveryResult(request);
     await delay(100);
   }
 }
 
-function preparedResult(request, paths) {
-  return { state: 'prepared', candidateId: request.candidateId, manifest: paths.manifest };
+// Whichever way a prepare learns that its candidate is prepared (it waited for the worker, or the worker had already
+// finished when it reconciled the lock), it reports the journal's phase timings.
+function preparedResult(request, paths, journal) {
+  return { state: 'prepared', candidateId: request.candidateId, manifest: paths.manifest, ...phaseTimingsField(journal) };
 }
 
 function recoveryResult(request) {

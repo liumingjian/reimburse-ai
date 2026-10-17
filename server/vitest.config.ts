@@ -13,7 +13,9 @@ if (TEST_TIMEOUT_MS <= BACKSTOP_MS) {
 // Test files that run the real OCR (an image through the real parser, or print's paper straightening). Each OCR engine
 // is an onnxruntime session whose thread pool spans every core, so several of these files in parallel forks saturate
 // the machine and starve the timing-sensitive web tests that root `pnpm test` runs alongside. They run as their own
-// project in a single fork, one file after another; everything else keeps full file parallelism.
+// project in a single fork, one file after another; everything else keeps full file parallelism. Even one OCR file
+// spans every core, so the project also runs after the rest of the server suite (`groupOrder`), not alongside it:
+// alongside, src/parse.test.ts outlasted BACKSTOP_MS on the Mac mini (2026-10-17) and passed in 4 s once it ran alone.
 // Found by tracing which files load the OCR models. A new test that parses an image for real belongs on this list.
 const OCR_TESTS = [
   'src/hotel-stay.test.ts',
@@ -30,8 +32,8 @@ export default defineConfig({
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,
     projects: [
-      { extends: true, test: { name: 'server', include: ['src/**/*.test.ts'], exclude: OCR_TESTS } },
-      { extends: true, test: { name: 'server-ocr', include: OCR_TESTS, poolOptions: { forks: { singleFork: true } } } },
+      { extends: true, test: { name: 'server', include: ['src/**/*.test.ts'], exclude: OCR_TESTS, sequence: { groupOrder: 0 } } },
+      { extends: true, test: { name: 'server-ocr', include: OCR_TESTS, poolOptions: { forks: { singleFork: true } }, sequence: { groupOrder: 1 } } },
     ],
   },
 });

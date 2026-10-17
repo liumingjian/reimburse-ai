@@ -66,4 +66,8 @@ limit; and it starts the job with the `node_modules` of the last successful job 
 only reconciles against the lockfile. Install first, as above.
 
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
-in a rexec workspace synced from a worktree.
+in a rexec workspace synced from a worktree. Those two tests are the only red a `pnpm test` on an idle Mac should show.
+
+GitHub CI (`.github/workflows/ci.yml`) runs neither `@baox/operator` nor the `server-ocr` project, so a green CI says
+nothing about them: the Mac's `pnpm test` is their only run. When the Mac is red and CI is green, read the red file
+first; it may be one CI never ran.
