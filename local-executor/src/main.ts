@@ -3,8 +3,9 @@
 //
 //   setup                                        the launcher's: ask for the 配对码, install into the executor's own
 //                                                directory, start with the login, start now (packaged only)
-//   run                                          hold the channel and run each 去报销 headless; keep to the
-//                                                program the app ships
+//   run [--origin http://<app>]                  hold the channel and run each 去报销 headless; keep to the
+//                                                program the app ships. Unpaired, or once its pairing is gone,
+//                                                it stays up and waits on 47319 for a 配对码 from the 设置页
 //   pair --origin http://<app> <配对码>          pair with the 应用账号 that issued the code
 //   unpair                                       撤销配对, on the app and here
 //   uninstall                                    stop starting with the login, and 撤销配对
@@ -24,10 +25,11 @@ import { channelWatch, createChannelClient, type ClientSocket } from '@baox/exte
 import { serverBlobs } from '@baox/extension/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
 import { launchHeadless } from './headless';
-import { claimInstance } from './instance';
+import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
 import { autostartFiles, installApp, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, writeInstallFiles, type InstallFile } from './install';
+import { createPairingHolder, pairingListener } from './pairing-port';
 import { createLocalRunner } from './runner';
-import { openStore } from './store';
+import { openStore, type StoredPairing } from './store';
 import { checkForUpdate, SELF_CHECK_ANSWER, sha256 } from './update';
 
 const store = openStore();
@@ -155,33 +157,27 @@ async function uninstall() {
   say('不会再随登录启动。');
 }
 
-async function run() {
-  const pairing = store.readPairing();
-  if (!pairing) {
-    // Started by the login after the pairing was undone: nothing to do, and nothing to restart for.
-    if (config) { say('这台电脑还没有配对：请双击安装包里的启动文件。'); process.exit(0); }
-    return fail('这台电脑还没有配对：先运行 pair。');
-  }
+async function run(args: string[]) {
+  // The app this executor belongs to: the one its install was for, else the one it was paired with from the repo.
+  const at = args.indexOf('--origin');
+  const stored = store.readPairing();
+  const appOrigin = (config?.origin ?? (at >= 0 ? args[at + 1] : undefined) ?? stored?.origin)?.replace(/\/+$/, '');
+  if (!appOrigin) return fail('这台电脑还没有配对：先运行 pair，或用 run --origin http://<应用地址> 等设置页来连接。');
   store.prepare();
-  const instance = await claimInstance();
-  if (!instance) {
-    say('本地执行器已经在运行。');
-    process.exit(0);
-  }
   const log = join(store.logsDir, 'executor.log');
   try { if (existsSync(log) && statSync(log).size > LOG_LIMIT_BYTES) truncateSync(log, 0); } catch { /* held by the launcher: next time */ }
 
-  let client: ReturnType<typeof createChannelClient> | null = null;
-  let timer: ReturnType<typeof setInterval> | null = null;
+  let runner: ReturnType<typeof createLocalRunner> | null = null;
+  let instance: Instance | null = null;
+  let stopLoop: (() => void) | null = null;
   const leave = (code: number): never => {
-    if (timer) clearInterval(timer);
-    client?.stop();
-    instance.release();
+    stopLoop?.();
+    instance?.release();
     process.exit(code);
   };
   // Packaged only: from the repo there is no release to follow.
   const running = sha256(readFileSync(programPath));
-  const update = async (why: string) => {
+  const update = async (pairing: StoredPairing, why: string) => {
     if (!config) return;
     const check = await checkForUpdate({ origin: pairing.origin, token: pairing.token, programPath, running });
     if (check.kind === 'restart') {
@@ -193,42 +189,73 @@ async function run() {
     if (check.kind === 'runtime') say(`应用发布的版本要用新的运行环境（Node ${check.wants}），请到应用的设置页重新下载本地执行器安装包。`);
     if (check.kind === 'failed') say(`检查新版本没有成功：${check.reason}`);
   };
-  let runner: ReturnType<typeof createLocalRunner> | null = null;
-  await update('启动时');
 
-  const connection = channelWatch();
-  runner = createLocalRunner({
-    request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('channel_closed'))),
-    connection,
-    blobs: serverBlobs({ origin: pairing.origin, token: async () => pairing.token, fetch: (url, init) => fetch(url, init) }),
-    launch: (erpOrigin) => launchHeadless({ profileDir: store.profileDir, erpOrigin }),
-    stagingRoot: store.stagingRoot,
-    log: say,
-  });
-  // Never under a job: a restart there would cut it off mid-write.
-  timer = setInterval(() => { if (!runner?.busy()) void update('定期检查'); }, UPDATE_EVERY_MS);
-  client = createChannelClient({
-    origin: pairing.origin,
-    token: pairing.token,
-    // Node's own WebSocket has the browser's shape, which is what the channel client was written against.
-    open: (url) => new WebSocket(url) as unknown as ClientSocket,
-    onRequest: runner,
-    onStatus: (status) => {
-      connection.status(status);
-      say(status.state === 'ready' ? `已连上应用（账号 ${status.accountId}）` : status.state === 'refused' ? `应用拒绝了连接：${status.message}` : status.state);
-      // A pairing that is gone stops it until the employee pairs again (exit 0: the launcher leaves it stopped).
-      // Anything else, a version the app no longer talks to above all, is what a new program fixes; failing that,
-      // it waits and lets the launcher start it again.
-      if (status.state === 'refused') {
-        void (async () => {
-          await update('应用拒绝了连接');
-          if (status.code === 'not_paired') leave(0);
-          await sleep(REFUSED_BACKOFF_MS);
-          leave(1);
-        })();
-      }
-    },
-  });
+  // One job loop per pairing: the channel to the app, the runner behind it, and the periodic update check.
+  const connect = (pairing: StoredPairing, lost: () => void) => {
+    let stopped = false;
+    let client: ReturnType<typeof createChannelClient> | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      stopped = true;
+      if (timer) clearInterval(timer);
+      client?.stop();
+    };
+    void (async () => {
+      await update(pairing, '启动时');
+      if (stopped) return;
+      const connection = channelWatch();
+      runner = createLocalRunner({
+        request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('channel_closed'))),
+        connection,
+        blobs: serverBlobs({ origin: pairing.origin, token: async () => pairing.token, fetch: (url, init) => fetch(url, init) }),
+        launch: (erpOrigin) => launchHeadless({ profileDir: store.profileDir, erpOrigin }),
+        stagingRoot: store.stagingRoot,
+        log: say,
+      });
+      // Never under a job: a restart there would cut it off mid-write.
+      timer = setInterval(() => { if (!runner?.busy()) void update(pairing, '定期检查'); }, UPDATE_EVERY_MS);
+      client = createChannelClient({
+        origin: pairing.origin,
+        token: pairing.token,
+        // Node's own WebSocket has the browser's shape, which is what the channel client was written against.
+        open: (url) => new WebSocket(url) as unknown as ClientSocket,
+        onRequest: runner,
+        onStatus: (status) => {
+          if (stopped) return;
+          connection.status(status);
+          say(status.state === 'ready' ? `已连上应用（账号 ${status.accountId}）` : status.state === 'refused' ? `应用拒绝了连接：${status.message}` : status.state);
+          // A pairing that is gone leaves it running unpaired, waiting on 47319 for a new 配对码 (ADR-0035,
+          // 2026-10-17). Anything else, a version the app no longer talks to above all, is what a new program fixes;
+          // failing that, it waits and lets the launcher start it again.
+          if (status.state === 'refused') {
+            void (async () => {
+              if (status.code === 'not_paired') {
+                lost();
+                say('配对已经作废：在应用的设置页点「连接这台电脑的执行器」重新连接。');
+                return;
+              }
+              await update(pairing, '应用拒绝了连接');
+              await sleep(REFUSED_BACKOFF_MS);
+              if (!stopped) leave(1);
+            })();
+          }
+        },
+      });
+    })();
+    stopLoop = stop;
+    return stop;
+  };
+
+  const holder = createPairingHolder({ origin: appOrigin, store, redeem: (code) => redeem(appOrigin, code), connect, busy: () => runner?.busy() ?? false });
+  // The 设置页 only looks on 47319; another port is for a second executor beside an installed one (tests, demos).
+  const port = Number(process.env['BAOX_LOCAL_EXECUTOR_PORT'] ?? INSTANCE_PORT);
+  instance = await claimInstance(port, pairingListener({ appOrigin, holder }));
+  if (!instance) {
+    say('本地执行器已经在运行。');
+    process.exit(0);
+  }
+  holder.start();
+  if (!holder.current()) say('这台电脑还没有配对：在应用的设置页点「连接这台电脑的执行器」。');
   process.once('SIGINT', () => leave(0));
   process.once('SIGTERM', () => leave(0));
 }
@@ -239,5 +266,5 @@ else if (command === 'setup' || (command === undefined && config)) await setup()
 else if (command === 'pair') await pair(rest);
 else if (command === 'unpair') await unpair();
 else if (command === 'uninstall') await uninstall();
-else if (command === 'run') await run();
-else fail('用法：setup | run | pair --origin http://<应用地址> <配对码> | unpair | uninstall');
+else if (command === 'run') await run(rest);
+else fail('用法：setup | run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair | uninstall');
