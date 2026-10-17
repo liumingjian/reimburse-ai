@@ -16,6 +16,16 @@ The host holds made-up data only (ADR-0022); it is not production.
 
 Run every `operator` command on the maintainer's mac: it holds the VPN route and the `root@10.250.0.222` SSH key.
 The operator reads git history (`git archive`, `git rev-parse`), so the mac's copy of this checkout must include `.git`.
+From a linked worktree, `rexec --with-git` gives no usable git root (the worktree's `.git` is a file pointing at a
+server path). Clone instead, into your job's tmp directory, and sync the clone; write its path out literally in the
+rexec call. The operator never reads the clone's remote, so leave `origin` as the clone sets it.
+
+```bash
+git clone -q --no-hardlinks /home/agent/repos/reimburse-ai <job tmp>/deploy-src
+git -C <job tmp>/deploy-src checkout -q <sha>
+rexec --with-git --sync <job tmp>/deploy-src --label deploy 'pnpm install --frozen-lockfile && pnpm --filter @baox/operator operator status --json'
+```
+
 If `node_modules` is missing there, run `pnpm install --frozen-lockfile` first. Append `--json` to any operator
 command when you need to parse its result.
 

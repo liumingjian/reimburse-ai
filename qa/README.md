@@ -34,8 +34,8 @@ rexec 'qa/dev.sh down'            # when the maintainer is done
 
 `up` returns as soon as the page answers: the instance runs in a process group of its own with its output in log files,
 so the rexec job ends and does not hold the workspace. The first `up` in a fresh checkout installs dependencies, which
-can take minutes; give that Bash call a long timeout, or split it as `rexec --detach 'qa/dev.sh up'` then
-`rexec --wait <ID>`.
+can take minutes; give that Bash call a long timeout, or split it as `rexec --background 'qa/dev.sh up'` then
+`rexec wait <ID>`.
 
 **The dev instance drives the ERP differently from production.** `dev-main.ts` sends ERP write (去报销) jobs through
 the CDP executor into a dedicated Chromium it launches itself (`BAOX_ERP_CHROMIUM`). The production build (`main.ts`,
@@ -43,6 +43,12 @@ the CDP executor into a dedicated Chromium it launches itself (`BAOX_ERP_CHROMIU
 The fill steps are the same executor code, but pairing, the extension's confirmation prompts, the employee browser's
 session and cookies, and the extension transport are not exercised in dev mode. QA of those goes through the
 production-build launch in §1 with the extension loaded and paired.
+
+**Dev mode never reaches the 本地执行器 either.** `dev-main.ts` wires only the CDP executor, and the server adds the
+暂存 step (`draft`, `server/src/erp/remote-executor.ts`) only to jobs it sends to a paired 本地执行器. So in dev mode a
+去报销 never 暂存s and never ends in ERP 草稿已交接, and the 本地执行器's pairing, hosted ERP 凭据, install command
+and self-update are not exercised. QA of those needs the production build with a 本地执行器 paired to it (ADR-0033,
+ADR-0035). Say so before the maintainer starts a QA round on one of them.
 
 - Hand the maintainer the Vite URL (`:5173`). The server's own `:4319` also serves `web/dist` when one was built, and that copy is stale.
 - A pushed web file hot-reloads the page; a pushed server file restarts only the server (`tsx watch`), which re-opens the
@@ -52,7 +58,7 @@ production-build launch in §1 with the extension loaded and paired.
   only files whose bytes changed.
 - Logs: `~/.baox-qa-dev/server.log`, `~/.baox-qa-dev/web.log`; `qa/dev.sh status` says what runs. The instance is not a
   rexec job, so `rexec --cancel` cannot stop it; `qa/dev.sh down` does, and `up` replaces whichever instance is running.
-- Server env passes through at `up`, e.g. `rexec --detach 'BAOX_ERP_STOP_BEFORE_IMPORT=1 qa/dev.sh up'`. Overrides are listed at the top of `qa/dev.sh`.
+- Server env passes through at `up`, e.g. `rexec --background 'BAOX_ERP_STOP_BEFORE_IMPORT=1 qa/dev.sh up'`. Overrides are listed at the top of `qa/dev.sh`.
 
 The project-book section enters explicit numbers and names offline, including `P-2307` and `P-3312`, and checks duplicate and unsafe-number feedback. No ERP session or catalog fixture is needed to reach project assignment and whole-list confirmation. The administrator section uses a separate `QA-PUBLIC` number so it does not silently convert a member's personal entry.
 
