@@ -45,7 +45,7 @@ Node、隔离 GCC、构建 Python、pnpm、Caddy、`baox` 服务账号、受控�
 `host` 阶段只在候选的 `deploy/intranet/baox.service` 写明这些文件时执行，路径必须在 `/opt/tools/baox` 之下，否则准备以 `host-path-outside-deploy-root` 停止：
 
 - `BAOX_ERP_CREDENTIAL_KEY_FILE`：托管 ERP 凭据的加密密钥（ADR-0033）。缺失时生成 32 字节随机数（十六进制），设为 `root:baox 0640`；已经存在就绝不改写内容（丢了它所有已保存的 ERP 凭据都失效），只把属主和权限设回 `root:baox 0640`。新密钥先落盘再取名，断电不会留下空密钥。现有文件不是合法密钥时，准备以 `erp-credential-key-invalid` 停止，内容保持原样。
-- `BAOX_LOCAL_EXECUTOR_RUNTIMES`：本地执行器安装命令在员工没有合格 Node 时下载的 Node 运行时（ADR-0035）。以服务账号身份运行候选里的 `local-executor/scripts/fetch-runtimes.mjs`，经 `build.env` 的镜像和代理下载 Windows 与两种 Mac 的运行时，按 SHASUMS256.txt 核对；同一 Node 版本只下载一次，已经下载过时不联网；所以镜像不可用只会挡住改了 `.nvmrc` 的部署。失败时准备以 `local-executor-runtime-fetch-failed` 停止。
+- `BAOX_LOCAL_EXECUTOR_RUNTIMES`：本地执行器安装命令在员工没有合格 Node 时下载的 Node 运行时（ADR-0035）。以服务账号身份运行候选里的 `local-executor/scripts/fetch-runtimes.mjs`，经 `build.env` 的镜像和代理下载 Windows 与两种 Mac 的运行时，按 SHASUMS256.txt 核对压缩包；核对通过后只取出 node 二进制，再算出它自己的 sha256 写在旁边的 `node.sha256`（Windows 是 `node.exe.sha256`），应用服务器在公开的 `/api/local-executor/runtime/<平台>` 提供运行时、在 `/api/local-executor/runtime/<平台>/sha256` 提供这个值（官方校验值只覆盖压缩包，而压缩包核对后就删掉了）。同一 Node 版本只下载一次，二进制和它的 sha256 都在时不联网；只有二进制、没有 sha256 的（这项记录加上之前下载的）会重新下载一次，不对没核对过的文件补记 sha256。所以镜像不可用只会挡住改了 `.nvmrc` 或第一次补记 sha256 的部署。失败时准备以 `local-executor-runtime-fetch-failed` 停止。
 
 这个目录第一次下载后归服务账号所有，所以 root 只对真实目录改属主，不跟随符号链接；密钥所在目录和运行时目录是符号链接时，准备以 `host-path-not-plain` 停止。这两样都放在任何发布之外，切换和回滚都保留它们，丢弃候选也不会删除它们。候选含 `local-executor` 时，构建输出检查还要求 `local-executor/dist/baox-local-executor.mjs`。
 

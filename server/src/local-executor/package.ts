@@ -57,6 +57,20 @@ export function releaseOf(dist: LocalExecutorDist | null): LocalExecutorRelease 
   return { program: digestOf(dist.program), runtime };
 }
 
+/**
+ * The runtime the install script and the executor download for `platform`, and the sha256 the deploy recorded for that
+ * binary after its archive passed SHASUMS256.txt (`node[.exe].sha256` beside it). A runtime without one, cached before
+ * the deploy recorded them, is not served: nothing would vouch for it.
+ */
+export function runtimeOf(dist: LocalExecutorDist | null, platform: LocalExecutorPlatform): { file: string; sha256: string } {
+  const release = releaseOf(dist);
+  const file = join(dist!.runtimes, release.runtime, platform, binaryOf(platform));
+  const sumFile = `${file}.sha256`;
+  const sha256 = existsSync(sumFile) ? readFileSync(sumFile, 'utf8').trim() : '';
+  if (!existsSync(file) || !/^[0-9a-f]{64}$/.test(sha256)) throw new LocalExecutorUnavailable(`no checked ${platform} runtime at ${file}; run the local-executor fetch-runtimes`);
+  return { file, sha256 };
+}
+
 /** The zip for `platform` and `origin`, assembled on first ask; its path. */
 export async function packageLocalExecutor(dist: LocalExecutorDist | null, platform: LocalExecutorPlatform, origin: string, cacheDir: string): Promise<string> {
   const release = releaseOf(dist);
