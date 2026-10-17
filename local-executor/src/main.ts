@@ -11,18 +11,20 @@
 //   pair --origin http://<app> <配对码>          pair with the 应用账号 that issued the code
 //   unpair                                       撤销配对, on the app and here
 //   uninstall                                    stop starting with the login, and 撤销配对
+//   finish-install --origin <app> --platform <p> the install script's last step: record the Node, write the start
+//     --node <path> --account <id> --code <码>   entry, pair (unless already paired to that account), start
 //   self-check                                   load and answer: what an update asks of a new program first
 //
 // The ERP 凭据 are the app's to keep (ADR-0033): the employee saves them on the settings page, and each job brings
 // them down with it. This program never asks for them and never writes them anywhere.
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync, truncateSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync, truncateSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, type LocalExecutorPlatform } from '@baox/contract';
+import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
 import { serverBlobs } from '@baox/extension/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
@@ -32,7 +34,7 @@ import { autostartFiles, downloadedRuntimePath, installApp, LAUNCH_AGENT, remove
 import { createPairingHolder, pairingListener } from './pairing-port';
 import { createLocalRunner } from './runner';
 import { ensureDownloaded, NODE_MAJOR, nodeProbe } from './runtime';
-import { prepareStart, readConfig, recordNode } from './start';
+import { prepareStart, readConfig, recordNode, writeConfig } from './start';
 import { openStore, type StoredPairing } from './store';
 import { checkForUpdate, SELF_CHECK_ANSWER, sha256 } from './update';
 
@@ -49,7 +51,10 @@ const programDir = dirname(programPath);
 const configFile = join(programDir, LOCAL_EXECUTOR_CONFIG_FILE);
 const config = existsSync(configFile) ? readConfig(configFile) : null;
 // Installed: the program runs from the executor's own directory, whose start entry it keeps (`start.ts`).
-const installed = config !== null && resolve(programDir) === resolve(store.appDir);
+// Compared as real paths: a HOME reached through a symlink (/tmp, /var on macOS) still names the same directory.
+const real = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
+const inAppDir = () => real(programDir) === real(store.appDir);
+const installed = config !== null && inAppDir();
 const UPDATE_EVERY_MS = 30 * 60_000;
 // After a refusal that a new program did not fix: wait before the launcher starts it again, so a server that keeps
 // refusing is asked every few minutes, not every ten seconds.
@@ -148,7 +153,7 @@ async function setup() {
     }
     if (!pairing) return fail('没有配对成功。请在应用的设置页重新生成配对码，再双击启动文件。');
     store.prepare();
-    if (resolve(programDir) !== resolve(store.appDir)) installApp({ sourceDir: programDir, appDir: store.appDir, platform: process.platform });
+    if (!inAppDir()) installApp({ sourceDir: programDir, appDir: store.appDir, platform: process.platform });
     // The copy came out of a downloaded zip; Node's own signature is what macOS checks, the download flag is not needed.
     if (process.platform === 'darwin') { try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', store.appDir], { stdio: 'ignore' }); } catch { /* not set */ } }
     // The zip's own runtime is the downloaded one; each start rechecks it (`start.ts`).
@@ -159,6 +164,45 @@ async function setup() {
     if (process.stdin.isTTY) await prompt.question('按回车键关闭这个窗口。');
   } finally {
     prompt.close();
+  }
+}
+
+// The one-command install's last step (spec #412 part C), run by the script from the executor's own directory once
+// it has put the program there and stopped the running copy (`server/src/local-executor/install-script.ts`). It
+// records the Node the script chose and writes the start entry for it as every start does, pairs with the code unless
+// this PC already holds that account's pairing (a run that paired and then failed, run again with the same code), and
+// starts it. It prints nothing for the terminal: the script prints the sentence its exit code stands for, and this
+// output goes to the install log.
+async function finishInstall(args: string[]) {
+  const option = (name: string) => {
+    const at = args.indexOf(`--${name}`);
+    return at >= 0 ? args[at + 1] : undefined;
+  };
+  try {
+    const parsed = LocalExecutorConfigSchema.safeParse({ origin: option('origin')?.replace(/\/+$/, ''), platform: option('platform'), node: option('node') });
+    const code = option('code');
+    const account = option('account');
+    if (!parsed.success || !parsed.data.node || !code || !account) throw new Error('finish-install: missing --origin, --platform, --node, --account or --code');
+    if (!inAppDir()) throw new Error(`finish-install runs from ${store.appDir}, not ${programDir}`);
+    const { origin, node } = parsed.data;
+    store.prepare();
+    writeConfig(installedConfig(), parsed.data);
+    recordNode({ configFile: installedConfig(), node, ...where });
+    const held = store.readPairing();
+    if (held && held.origin === origin && held.accountId === account && (await stillPaired(held))) {
+      console.error('finish-install: this PC already holds the pairing; not pairing again');
+    } else {
+      const outcome = await redeem(origin, code);
+      if (!outcome.ok) {
+        console.error(`finish-install: pairing refused: ${outcome.code} ${outcome.message}`);
+        process.exit(outcome.code === 'network_error' ? LOCAL_EXECUTOR_INSTALL_EXIT.unreachable : outcome.code === 'pairing_code_invalid' ? LOCAL_EXECUTOR_INSTALL_EXIT.expired : 1);
+      }
+      store.writePairing({ origin, token: outcome.token, accountId: outcome.accountId });
+    }
+    if (!startInBackground(installFiles())) process.exit(LOCAL_EXECUTOR_INSTALL_EXIT.start);
+  } catch (error) {
+    console.error(error);
+    process.exit(1);
   }
 }
 
@@ -300,5 +344,6 @@ else if (command === 'setup' || (command === undefined && config)) await setup()
 else if (command === 'pair') await pair(rest);
 else if (command === 'unpair') await unpair();
 else if (command === 'uninstall') await uninstall();
+else if (command === 'finish-install') await finishInstall(rest);
 else if (command === 'run') await run(rest);
 else fail('用法：setup | run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair | uninstall');

@@ -754,6 +754,17 @@ const erpJobRoute423: Migration = {
   },
 };
 
+// Spec #412 part C (#425): the one-command install. The 配对码 is issued with the system the employee picked, and the
+// install route answers that system's script for the code's ten minutes even after it paired, so a run cut off after
+// pairing can be run again. Redeeming clears `code_sha256`; the install keeps its own copy of the hash. Its ten
+// minutes are counted from `created_at`, which issuing sets.
+const installCode412: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('extension_pairing').addColumn('install_system', 'text').execute();
+    await db.schema.alterTable('extension_pairing').addColumn('install_code_sha256', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -786,4 +797,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0021_line2_erp_credentials': erpCredentials,
   '0022_line2_rerun_trigger': rerunTrigger,
   '0023_412_erp_job_route': erpJobRoute423,
+  '0024_412_install_code': installCode412,
 };

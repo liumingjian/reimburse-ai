@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, win32 } from 'node:path';
-import { localExecutorRuntimePath, localExecutorRuntimeSha256Path, type LocalExecutorPlatform } from '@baox/contract';
+import { CODE_LOADING_ENV, localExecutorRuntimePath, localExecutorRuntimeSha256Path, NODE_SIGNATURE_REQUIREMENT, type LocalExecutorPlatform } from '@baox/contract';
 
 // The server's Node major version, baked in by the build from `.nvmrc` (scripts/build.mjs). The executor always runs
 // the program its server ships, so this is the server's. From the repo (tsx) it is the Node running it.
@@ -19,31 +19,14 @@ declare const __BAOX_NODE_MAJOR__: string | undefined;
 export const majorOf = (version: string): number => Number(/^v?(\d+)\./.exec(version.trim())?.[1] ?? Number.NaN);
 export const NODE_MAJOR = typeof __BAOX_NODE_MAJOR__ === 'string' ? Number(__BAOX_NODE_MAJOR__) : majorOf(process.versions.node);
 
-// Variables that make Node load code the program did not bring, or trust a certificate the system does not: cleared
-// at every start, so a PC's Node setup cannot reach the 报销系统 password the executor holds (story 26). The app's
-// private CA is trusted through the system store (`--use-system-ca`, ADR-0036), so NODE_EXTRA_CA_CERTS is not needed.
-export const CODE_LOADING_ENV = [
-  'NODE_OPTIONS',
-  'NODE_PATH',
-  'NODE_REPL_EXTERNAL_MODULE',
-  'NODE_EXTRA_CA_CERTS',
-  'NODE_TLS_REJECT_UNAUTHORIZED',
-  'DYLD_INSERT_LIBRARIES',
-  'DYLD_LIBRARY_PATH',
-  'DYLD_FRAMEWORK_PATH',
-  'LD_PRELOAD',
-  'LD_LIBRARY_PATH',
-] as const;
-
 export function cleanEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const clean = { ...env };
   for (const name of CODE_LOADING_ENV) delete clean[name];
   return clean;
 }
 
-// Node.js's own Developer ID (checked 2026-10-15): "Developer ID Application: Node.js Foundation (HX7739G8FX)".
-export const NODE_SIGNER_TEAM = 'HX7739G8FX';
-export const NODE_SIGNATURE_REQUIREMENT = `=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = ${NODE_SIGNER_TEAM}`;
+// In the contract because the install script the server writes clears and checks the same (`server/src/local-executor/install-script.ts`).
+export { CODE_LOADING_ENV, NODE_SIGNATURE_REQUIREMENT, NODE_SIGNER_TEAM } from '@baox/contract';
 
 export type NodeProbe = {
   exists(path: string): boolean;
