@@ -1,7 +1,7 @@
 # Invoice consumption begins at the import click, not at upload
 
 For months the corpus held that sending an invoice into the 发票助手 (invoice assistant) consumes it.
-`CONTEXT.md` said so directly — "上传这一步消耗发票" — and the fill-detail issue set repeated it. The
+`GLOSSARY.md` said so directly — "上传这一步消耗发票" — and the fill-detail issue set repeated it. The
 consequence was expensive: a 排练 (rehearsal) that exercised the `DataTransfer` upload route would need
 "an invoice nobody cares about", and no such invoice exists. That unmet requirement blocked the rehearsal
 harness, and the harness is in turn a precondition for ever spending the one real sample on a live save-run.

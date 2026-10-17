@@ -43,7 +43,7 @@ general case, and generalised from the wrong row.
 ## Decisions
 
 - **收票占用 is not terminal for invoices bound to a bill we abandoned unsaved.** Re-import overwrites.
-  `CONTEXT.md`'s 收票占用 entry is corrected accordingly.
+  `GLOSSARY.md`'s 收票占用 entry is corrected accordingly.
 - **ADR-0024's `未保存·已导入未写明细` disposition must be revisited.** It was set to 转人工 as a terminal
   state on the premise that the invoice was gone. The premise is false for the case that breakpoint
   describes: the bill was, by definition, not saved. Whether the recovery should be automatic is a separate

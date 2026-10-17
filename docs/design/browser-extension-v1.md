@@ -147,6 +147,6 @@ OCR worker concurrency and rate limiting (#227).
 
 ## Written down already
 
-`CONTEXT.md` gained 浏览器扩展 and 扩展配对, and ERP 自动化控制权 now expires when the account's
+`GLOSSARY.md` gained 浏览器扩展 and 扩展配对, and ERP 自动化控制权 now expires when the account's
 **paired extension** loses its connection. The ADR-0021 amendment waits for the spike. Phase-1 plain
 HTTP gets no ADR: it is a config change away from reversible, so it belongs in the deployment doc.

@@ -23,5 +23,5 @@ The ERP browser moves out of the server and into each employee's own browser, dr
 
 - `server/src/erp-lease.ts` becomes partitioned by app account id.
 - New endpoints to issue and redeem pairing codes, and to revoke a token.
-- `CONTEXT.md` is updated: 「ERP 自动化控制权」 is per app account and expires on connection loss; 「ERP 自动化授权」 happens in the user's own browser's ERP session.
+- `GLOSSARY.md` is updated: 「ERP 自动化控制权」 is per app account and expires on connection loss; 「ERP 自动化授权」 happens in the user's own browser's ERP session.
 - ADR-0018's "a second user's 去报销 gets a 409" clause no longer holds.
