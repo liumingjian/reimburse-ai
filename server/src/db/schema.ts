@@ -334,6 +334,9 @@ export interface ErpJobTable {
   plan: string;
   revision: number;
   started_at: string;
+  // The 去报销 route the job ran on: the pairing holder when it started (#423), 'local_executor' or 'extension'. Null
+  // for a job from before the column existed; the snapshot then asks the current pairing.
+  route: 'local_executor' | 'extension' | null;
 }
 
 export interface ErpJobCancelTable {

@@ -9,6 +9,8 @@ import type { ErpFacts, ErpPhase } from '../task-policy';
 import type { FrozenJob } from './fill-plan';
 import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import type { DraftLookup } from '@baox/erp-executor/draft';
+import type { ErpRoute } from '@baox/contract';
+import { holderOf } from '../extension/pairing';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
@@ -38,6 +40,9 @@ export type ReconcileState = { jobId: string; result: ResultEvent | null; judged
 export type ErpRecord = {
   // null when the task never started 去报销.
   facts: ErpFacts | null;
+  // The 去报销 route whose step list the snapshot shows (#423): the one the latest job recorded when it started, else
+  // (no job yet, or a job from before routes were recorded) the current pairing's holder.
+  route: ErpRoute;
   // Any ERP action attempt of the task (from any job): the freeze point of ADR-0014.
   attempted: boolean;
   job: ErpJobTable | null;
@@ -57,7 +62,7 @@ export type ErpRecord = {
   handOff: ErpHandOffTable | null;
 };
 
-export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
+export const NO_ERP: ErpRecord = { facts: null, route: 'extension', attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
 
 const eventsOf = async (tx: Db, jobId: string): Promise<ExecutorEvent[]> =>
   (await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', jobId).orderBy('seq').execute()).map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
@@ -140,12 +145,22 @@ export function attemptDraftMark(attempt: { action: string; expected_postconditi
   return typeof mark === 'string' ? mark : null;
 }
 
+/**
+ * The route a job starting now runs on (#423): the pairing holder at this moment, recorded with the job. With no
+ * pairing the job goes out on the extension channel without 凭据 or a 暂存 (`remote-executor.ts`), the extension route.
+ */
+export async function jobRouteOf(tx: Db, accountId: string): Promise<ErpRoute> {
+  return (await holderOf(tx, accountId)) ?? 'extension';
+}
+
 export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   const attempt = await tx.selectFrom('erp_attempt').select(['erp_account', 'erp_tenant', 'erp_display_name']).where('task_id', '=', taskId).orderBy('started_at', 'desc').executeTakeFirst();
   const erpAccount = attempt ? { displayName: attempt.erp_display_name, account: attempt.erp_account, tenant: attempt.erp_tenant } : null;
   const handOff = (await tx.selectFrom('erp_hand_off').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst()) ?? null;
   const job = await tx.selectFrom('erp_job').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
-  if (!job) return { ...NO_ERP, attempted: attempt !== undefined, erpAccount, handOff };
+  const accountId = job?.account_id ?? (await tx.selectFrom('task').select('account_id').where('task_id', '=', taskId).executeTakeFirstOrThrow()).account_id;
+  const route = job?.route ?? (await jobRouteOf(tx, accountId));
+  if (!job) return { ...NO_ERP, route, attempted: attempt !== undefined, erpAccount, handOff };
   const events = await eventsOf(tx, job.job_id);
   let result = lastResult(events);
   const cancelled = (await tx.selectFrom('erp_job_cancel').select('cancel_id').where('job_id', '=', job.job_id).executeTakeFirst()) !== undefined;
@@ -201,6 +216,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   const reconciling = phase === 'unknown' && reconcile !== null && reconcile.result === null;
   return {
     facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign, reconciling, drafting: mark !== null },
+    route,
     attempted: attempt !== undefined,
     job,
     frozen: JSON.parse(job.plan) as FrozenJob,

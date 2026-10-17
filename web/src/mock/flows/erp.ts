@@ -18,6 +18,10 @@ export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'confirmLogin' | 'cance
 
 export function createErpFlow(bus: MockBus): ErpFlow {
   const { options } = bus;
+  // 去报销的方式 the mock plays (#423): the 浏览器扩展 by default, or `?route=local_executor`, which shows its own steps,
+  // signs in by itself (no login wait) and ends with the bill 暂存'd.
+  const route = options.erpRoute ?? 'extension';
+  const local = route === 'local_executor';
   const erpStepMs = options.erpStepMs ?? DEFAULT_ERP_STEP_MS;
   const erpLoginAutoMs = options.erpLoginAutoMs ?? DEFAULT_ERP_LOGIN_AUTO_MS;
   // 每个任务当前这一轮 ERP 写入的编号、登录探测次数与重新对账次数；定时器只推进自己那一轮。
@@ -87,27 +91,27 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     // 写入前就停下：报销系统没有被改动，阶段退回整单确认页，这一轮结束。
     if (index === ERP_STEP_INDEX.navigate && options.fault === 'erp-stopped-before-write') {
       erpRuns.delete(taskId);
-      applyStopBeforeWrite(current);
+      applyStopBeforeWrite(current, route);
       current.step = { kind: 'choose_action', stepToken: bus.rotateToken(`tok-${taskId}-actions`) };
       bus.push(current);
       return;
     }
     if (index === ERP_STEP_INDEX.fill && options.fault === 'readback-mismatch') {
       erpRuns.delete(taskId);
-      applyReadbackStop(current);
+      applyReadbackStop(current, route);
       bus.push(current);
       return;
     }
     if (index === ERP_STEP_INDEX.handover) {
-      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
-      // 交接：单据填好了但没有保存，所以没有单据编号（服务端 handed_over 同此）。
-      else applyErpDone(current);
+      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current, route);
+      // 交接：单据填好了但没有保存，所以没有单据编号（服务端 handed_over 同此）。本地执行器暂存后结束（drafted）。
+      else applyErpDone(current, null, route);
       bus.push(current);
       return;
     }
-    current.erp.steps = erpSteps(index + 1, 'running');
+    current.erp.steps = erpSteps(index + 1, 'running', route);
     current.erp.currentStage = erpStageAt(index + 1);
-    current.erp.progress = erpProgress(index + 1, current.lines.length);
+    current.erp.progress = erpProgress(index + 1, current.lines.length, 0, route);
     current.erp.externalWait = 'erp_response';
     current.erp.outcome = 'none';
     current.erp.allowedActions = ['refresh'];
@@ -123,7 +127,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     const rows = Math.max(1, current.lines.length);
-    current.erp.progress = erpProgress(ERP_STEP_INDEX.fill, rows, rowsDone);
+    current.erp.progress = erpProgress(ERP_STEP_INDEX.fill, rows, rowsDone, route);
     bus.push(current);
     if (rowsDone >= rows) setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.fill), rowMs(current));
     else setTimeout(() => fillRow(taskId, run, rowsDone + 1), rowMs(current));
@@ -147,10 +151,10 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         }
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length);
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length, route);
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
-        setTimeout(() => reachLogin(taskId, run), erpStepMs);
+        setTimeout(() => (local ? finishErpStep(taskId, run, ERP_STEP_INDEX.chromium) : reachLogin(taskId, run)), erpStepMs);
         return snapshot;
       }),
     // 「我已登录，继续」= 请服务端再探测一次。探测不到：留在登录步，给出说明并换新凭据（摆给用户看的内容变了）。
@@ -213,11 +217,11 @@ export function createErpFlow(bus: MockBus): ErpFlow {
         if (!snapshot.reconcile.allowedActions.includes('refill')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length);
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length, route);
         snapshot.reconcile = emptyReconcile();
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
-        setTimeout(() => reachLogin(taskId, run), erpStepMs);
+        setTimeout(() => (local ? finishErpStep(taskId, run, ERP_STEP_INDEX.chromium) : reachLogin(taskId, run)), erpStepMs);
         return snapshot;
       }),
     // 转人工：终止后续写入，只在对账结果允许转人工时接受；任务停在原阶段（对账页或回读不一致的完成页）并标记为已转人工（终态）。
