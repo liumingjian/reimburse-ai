@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 import { App } from '../App';
@@ -388,7 +388,8 @@ describe('去报销进度条', () => {
       if (event.type === 'snapshot' && event.snapshot.erp.progress) pushed.push({ ...event.snapshot.erp.progress, status: event.snapshot.erp.status });
     });
     fireEvent.click(await waitingLogin());
-    await vi.waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
+    // testing-library 的 waitFor 用 setup.ts 配的 5 秒上限；vi.waitFor 默认只等 1 秒，Mac 忙时走不完 mock 流程。
+    await waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
     const rows = (await adapter.getSnapshot('T1')).lines.length;
     const filling = pushed.map((p) => p.label).filter((label) => label.startsWith('填写明细'));
     expect([...new Set(filling)]).toEqual(Array.from({ length: rows + 1 }, (_, n) => `填写明细 ${n}/${rows}`));
@@ -408,9 +409,9 @@ describe('去报销进度条', () => {
       return { ...snapshot, erp: { ...snapshot.erp, status: 'running', externalWait: 'erp_response', progress: { label: '填写明细 3/8', percent: 60 } } };
     });
     render(<App adapter={adapter} />);
-    await vi.waitFor(() => expect(screen.getByTestId('erp-progress-label').textContent).toBe('填写明细 3/8'));
+    await waitFor(() => expect(screen.getByTestId('erp-progress-label').textContent).toBe('填写明细 3/8'));
     expect(screen.getByTestId('erp-progress-percent').textContent).toBe('60%');
-    expect(bar().textContent).not.toMatch(/剩余|预计|分钟|秒|ERP|重试|[–—]/);
+    expect(bar().textContent).not.toMatch(/剩余|预计|分钟|秒|ERP|重试|[\u2013\u2014]/);
   });
 
   test('没有去报销作业时不显示进度条', async () => {
