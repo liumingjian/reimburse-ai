@@ -745,6 +745,15 @@ const rerunTrigger: Migration = {
   },
 };
 
+// Spec #412 part B (#423): each 去报销 route has its own step list, and a job keeps the list of the route it ran on.
+// `erp_job.route` records the pairing holder when the job started. Nullable: the jobs already stored never recorded
+// it, and inventing one for them would rewrite their history either way. ADD COLUMN keeps the append-only triggers.
+const erpJobRoute423: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.alterTable('erp_job').addColumn('route', 'text', (c) => c.check(sql`route IN ('local_executor', 'extension')`)).execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -776,4 +785,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0020_331_screenshot_group': screenshotGroup331,
   '0021_line2_erp_credentials': erpCredentials,
   '0022_line2_rerun_trigger': rerunTrigger,
+  '0023_412_erp_job_route': erpJobRoute423,
 };

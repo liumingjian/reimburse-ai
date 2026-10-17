@@ -53,7 +53,7 @@ import { draftMarkOf, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
 import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
-import { loadErp, type ErpRecord } from './erp/fill-state';
+import { jobRouteOf, loadErp, type ErpRecord } from './erp/fill-state';
 import { printFileShas } from './print/facts';
 import * as printActions from './print/service';
 import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
@@ -305,7 +305,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             return ERP_IN_USE;
           }
           started.run = { jobId, accountId, taskId, trigger, frozen: job, maintenance };
-          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at, route: await jobRouteOf(tx, accountId) }).execute();
         },
       );
       if (started.run) erp?.run(started.run);
@@ -691,7 +691,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             return ERP_IN_USE;
           }
           started.run = { jobId, accountId, taskId, trigger: 'rerun', frozen: job, maintenance };
-          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger: 'rerun', confirmation_digest: ended.confirmation_digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger: 'rerun', confirmation_digest: ended.confirmation_digest, plan: JSON.stringify(job), revision, started_at: at, route: await jobRouteOf(tx, accountId) }).execute();
         });
       } catch (error) {
         if (started.run) {

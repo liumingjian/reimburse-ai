@@ -1,4 +1,4 @@
-import { TASK_STAGES, type TaskStage } from '@baox/contract';
+import { EXTENSION_HOLDERS, TASK_STAGES, type ErpRoute, type TaskStage } from '@baox/contract';
 
 // Stages a task can be seeded at. The server never projects `catalog` or `preparation` (it checks the catalog inside
 // the ERP job), so the mock has no snapshot for them either.
@@ -61,6 +61,9 @@ export type MockOptions = {
   extensionConnected?: boolean;
   // `?extensionOrigin=<origin>` sets the active application address for extension download and pairing.
   extensionOrigin?: string;
+  // `?route=local_executor` plays 去报销 on the 本地执行器 (its own step list, no login wait, ends 暂存'd); the default
+  // is the 浏览器扩展 route.
+  erpRoute?: ErpRoute;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -138,6 +141,11 @@ export function readMockOptions(search: string): MockOptions {
     } catch {
       console.warn(`未知的 extensionOrigin「${extensionOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
     }
+  }
+  const route = params.get('route');
+  if (route !== null) {
+    if ((EXTENSION_HOLDERS as readonly string[]).includes(route)) options.erpRoute = route as ErpRoute;
+    else console.warn(`未知的 route「${route}」，可用值：${EXTENSION_HOLDERS.join(', ')}`);
   }
   const auth = params.get('auth');
   if (auth !== null) {

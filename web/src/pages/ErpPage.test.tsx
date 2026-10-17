@@ -424,3 +424,42 @@ describe('去报销进度条', () => {
     expect(screen.queryByTestId('erp-progress')).toBeNull();
   });
 });
+
+// 按路线的步骤文案 (#423): the page shows the step list of the route the job ran on, as the snapshot words it. The
+// 本地执行器 starts a background browser, signs in with the saved account and ends 暂存'd; the 浏览器扩展 keeps its list.
+describe('按路线的步骤文案', () => {
+  const steps = () => within(progress()).getAllByRole('listitem').map((item) => [item.querySelector('.step-title')?.textContent, item.querySelector('.desc')?.textContent]);
+  const MIDDLE = ['报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细'];
+
+  test('本地执行器：第一步「启动后台浏览器」，登录用设置页保存的账号，最后一步「暂存到报销系统」，到 100% 时是核对暂存单', async () => {
+    window.location.hash = '#/task/T1/review';
+    render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, erpStepMs: 5, erpRoute: 'local_executor' })} />);
+    fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
+    await screen.findByRole('heading', { name: '填写报销单' });
+
+    const shown = steps();
+    expect(shown.map(([title]) => title)).toEqual(['启动后台浏览器', '登录', ...MIDDLE, '暂存到报销系统']);
+    expect(shown[0]![1]).toBe('在你的电脑上启动一个看不见的浏览器，专门用于这次报销。');
+    expect(shown[1]![1]).toBe('用你在设置页保存的报销系统账号登录。');
+    expect(shown.at(-1)![1]).toBe('你检查后自己提交');
+    expect(progress().textContent).not.toMatch(/浏览器扩展|标签页|交接单据|ERP|重试|[\u2013\u2014]/);
+
+    // No login wait on this route: it runs through to the 暂存单.
+    await waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('核对暂存单');
+    expect(screen.queryByRole('button', { name: '我已登录，继续' })).toBeNull();
+    expect(steps().map(([title]) => title)).toEqual(['启动后台浏览器', '登录', ...MIDDLE, '暂存到报销系统']);
+  });
+
+  test('浏览器扩展：步骤清单不变，第一步打开报销系统标签页，最后一步交接单据', async () => {
+    renderErp();
+    await waitingLogin();
+
+    const shown = steps();
+    expect(shown.map(([title]) => title)).toEqual(STEP_TITLES);
+    expect(shown[0]![1]).toBe('通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。');
+    expect(shown[1]![1]).toBe('在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。');
+    expect(shown.at(-1)![1]).toBe('不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。');
+    expect(progress().textContent).not.toMatch(/启动后台浏览器|暂存到报销系统/);
+  });
+});

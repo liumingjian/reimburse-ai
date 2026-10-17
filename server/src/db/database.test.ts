@@ -247,6 +247,30 @@ describe('migrations on an existing database', () => {
     }
   });
 
+  // 0023_412 (#423): a fill job records the route it ran on. Jobs from before it ran on an unrecorded route and keep
+  // null (the snapshot then asks the current pairing); the column takes the two holders only, and erp_job stays
+  // append-only.
+  it('migrates 0022 → latest: past ERP jobs keep a null route, and a new job records its own', async () => {
+    const owner = await priorVersionFixture('0022_line2_rerun_trigger');
+    const at = '2026-09-01T10:00:00Z';
+    const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
+    await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+              VALUES ('old-job', 'old-task', ${owner}, 'fill', 'start', 'digest', '{}', 3, ${at})`.execute(db);
+    await db.destroy();
+
+    const migrated = await openDatabase(databasePath(dataDir));
+    try {
+      expect(await migrated.selectFrom('erp_job').select(['job_id', 'route']).execute()).toEqual([{ job_id: 'old-job', route: null }]);
+      await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at, route)
+                VALUES ('new-job', 'old-task', ${owner}, 'fill', 'start', 'digest', '{}', 4, ${at}, 'local_executor')`.execute(migrated);
+      await expect(sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at, route)
+                       VALUES ('bogus', 'old-task', ${owner}, 'fill', 'start', 'digest', '{}', 5, ${at}, 'carrier_pigeon')`.execute(migrated)).rejects.toThrow();
+      await expect(sql`UPDATE erp_job SET route = 'extension' WHERE job_id = 'new-job'`.execute(migrated)).rejects.toThrow();
+    } finally {
+      await migrated.destroy();
+    }
+  });
+
   it('keeps only the last 5 backups', async () => {
     await priorVersionFixture('0001_initial');
     for (const stamp of ['20260101T000000Z', '20260102T000000Z', '20260103T000000Z', '20260104T000000Z', '20260105T000000Z']) {
