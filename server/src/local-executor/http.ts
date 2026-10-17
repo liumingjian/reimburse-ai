@@ -1,8 +1,8 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import {
-  EXTENSION_PAIRING_ERRORS, LOCAL_EXECUTOR_DOWNLOAD_ERRORS, LOCAL_EXECUTOR_DOWNLOAD_PATH, LOCAL_EXECUTOR_INSTALL_MESSAGES, LOCAL_EXECUTOR_INSTALL_PATH, LOCAL_EXECUTOR_PROGRAM_PATH,
-  LOCAL_EXECUTOR_RELEASE_PATH, LOCAL_EXECUTOR_RUNTIME_ERRORS, LOCAL_EXECUTOR_RUNTIME_PATH, LocalExecutorPlatformSchema, localExecutorDownloadFilename, localExecutorUninstallPath,
+  EXTENSION_PAIRING_ERRORS, LOCAL_EXECUTOR_INSTALL_MESSAGES, LOCAL_EXECUTOR_INSTALL_PATH, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_ERRORS,
+  LOCAL_EXECUTOR_RELEASE_PATH, LOCAL_EXECUTOR_RUNTIME_ERRORS, LOCAL_EXECUTOR_RUNTIME_PATH, LocalExecutorPlatformSchema, localExecutorUninstallPath,
 } from '@baox/contract';
 import type { Context, Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
@@ -10,37 +10,16 @@ import { bearer } from '../extension/http';
 import type { PairingService } from '../extension/pairing';
 import { activeOrigin, type PublicOrigin } from '../public-origin';
 import { expiredScript, macInstallScript, macUninstallScript, systemOfAgent, unavailableScript, windowsInstallScript, windowsUninstallScript } from './install-script';
-import { LocalExecutorUnavailable, packageLocalExecutor, releaseOf, runtimeOf, type LocalExecutorDist } from './package';
+import { LocalExecutorUnavailable, releaseOf, runtimeOf, type LocalExecutorDist } from './release';
 
-// The 本地执行器's distribution over HTTP (ADR-0035), in the two halves pairing has (`extension/http.ts`).
+// The 本地执行器's distribution over HTTP (ADR-0035): the install and uninstall scripts and what they download, and the
+// executor's own update checks. There is no install package: the 设置页 shows the one command instead.
 
 const unavailable = (c: Context, error: unknown) => {
   if (!(error instanceof LocalExecutorUnavailable)) throw error;
   console.error(error.message);
-  return c.json({ error: { code: 'local_executor_unavailable', message: LOCAL_EXECUTOR_DOWNLOAD_ERRORS.unavailable } }, 503);
+  return c.json({ error: { code: 'local_executor_unavailable', message: LOCAL_EXECUTOR_RELEASE_ERRORS.unavailable } }, 503);
 };
-
-// Behind the session gate: the settings page's download, one zip per platform, stamped with the address it was served
-// from. `dist` null (tests, `pnpm dev`) answers 503.
-export function mountLocalExecutorDownloadRoute(app: Hono<AppEnv>, dist: LocalExecutorDist | null, cacheDir: string, publicOrigin: PublicOrigin | null): void {
-  app.get(LOCAL_EXECUTOR_DOWNLOAD_PATH, async (c) => {
-    const platform = LocalExecutorPlatformSchema.safeParse(c.req.query('platform'));
-    if (!platform.success) return c.json({ error: { code: 'platform_invalid', message: LOCAL_EXECUTOR_DOWNLOAD_ERRORS.platform } }, 400);
-    let zip: string;
-    try {
-      zip = await packageLocalExecutor(dist, platform.data, activeOrigin(publicOrigin, c.req.url), cacheDir);
-    } catch (error) {
-      return unavailable(c, error);
-    }
-    return c.body(Readable.toWeb(createReadStream(zip)) as ReadableStream, 200, {
-      'Content-Type': 'application/zip',
-      'Content-Length': String(statSync(zip).size),
-      'Content-Disposition': `attachment; filename="${localExecutorDownloadFilename(platform.data)}"`,
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    });
-  });
-}
 
 // Before the session gate: the executor has no session, only its pairing token. It asks what the server ships, and
 // fetches the program when that is not what it runs (`local-executor/src/update.ts`).

@@ -151,7 +151,7 @@ try {
       if (p.archive.endsWith('.zip')) await fromZip(archive, p.member, partial);
       else await fromTarGz(archive, p.member, partial);
       chmodSync(partial, 0o755);
-      // The binary's own sha256, which the server serves beside it (`server/src/local-executor/package.ts`): the
+      // The binary's own sha256, which the server serves beside it (`server/src/local-executor/release.ts`): the
       // official sums cover the archive, which is discarded. The binary is named before its sha256, so a run cut off
       // in between leaves a binary without one, which the next run fetches again.
       writeFileSync(join(dir, `${p.binary}.sha256.partial`), `${await sha256Of(partial)}\n`);

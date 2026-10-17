@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { SILENT_EXTENSION_BRIDGE, type ExtensionBridge } from './extension-bridge';
+import { SILENT_LOCAL_EXECUTOR_PORT, type LocalExecutorPort } from './local-executor-port';
 import type { AccountsState, AppState, AppStore, BookScope, ExtensionPairingState, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
@@ -7,13 +8,21 @@ import type { AccountsState, AppState, AppStore, BookScope, ExtensionPairingStat
 const StoreContext = createContext<AppStore | null>(null);
 // The page bridge to the 浏览器扩展 (browser extension) is injected the same way; without one, nothing ever answers.
 const BridgeContext = createContext<ExtensionBridge>(SILENT_EXTENSION_BRIDGE);
+// So is the 本地执行器 on this PC (its loopback port 47319); without one, nothing answers there either.
+const LocalExecutorContext = createContext<LocalExecutorPort>(SILENT_LOCAL_EXECUTOR_PORT);
 
-export function AppProvider({ store, bridge = SILENT_EXTENSION_BRIDGE, children }: { store: AppStore; bridge?: ExtensionBridge; children: ReactNode }) {
+export function AppProvider({ store, bridge = SILENT_EXTENSION_BRIDGE, localExecutor = SILENT_LOCAL_EXECUTOR_PORT, children }: { store: AppStore; bridge?: ExtensionBridge; localExecutor?: LocalExecutorPort; children: ReactNode }) {
   return (
     <StoreContext.Provider value={store}>
-      <BridgeContext.Provider value={bridge}>{children}</BridgeContext.Provider>
+      <BridgeContext.Provider value={bridge}>
+        <LocalExecutorContext.Provider value={localExecutor}>{children}</LocalExecutorContext.Provider>
+      </BridgeContext.Provider>
     </StoreContext.Provider>
   );
+}
+
+export function useLocalExecutorPort(): LocalExecutorPort {
+  return useContext(LocalExecutorContext);
 }
 
 export function useExtensionBridge(): ExtensionBridge {

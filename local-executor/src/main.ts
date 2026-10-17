@@ -1,8 +1,6 @@
-// The local executor's command line. Packaged (ADR-0035: the zip from the settings page, run by its launcher) it starts
-// with `setup`; from the repo it runs as `pnpm --filter @baox/local-executor start <command>`.
+// The local executor's command line. Installed (ADR-0035: by the one command from the 设置页) its start entry runs
+// `run`; from the repo it runs as `pnpm --filter @baox/local-executor start <command>`.
 //
-//   setup                                        the launcher's: ask for the 配对码, install into the executor's own
-//                                                directory, start with the login, start now (packaged only)
 //   run [--origin http://<app>]                  hold the channel and run each 去报销 headless; keep to the
 //                                                program the app ships. Installed, it first rechecks the Node
 //                                                its config records and keeps its start entry to it (start.ts).
@@ -22,7 +20,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync, truncateSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
@@ -30,7 +27,7 @@ import { serverBlobs } from '@baox/extension/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
 import { launchHeadless } from './headless';
 import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
-import { autostartFiles, downloadedRuntimePath, installApp, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, type InstallFile } from './install';
+import { autostartFiles, downloadedRuntimePath, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, type InstallFile } from './install';
 import { createPairingHolder, pairingListener } from './pairing-port';
 import { createLocalRunner } from './runner';
 import { ensureDownloaded, NODE_MAJOR, nodeProbe } from './runtime';
@@ -45,7 +42,7 @@ const fail = (line: string): never => {
   process.exit(1);
 };
 
-// Packaged, the program sits next to the config the server wrote into the zip; from the repo it does not.
+// Installed, the program sits next to the config its install wrote; from the repo it does not.
 const programPath = fileURLToPath(import.meta.url);
 const programDir = dirname(programPath);
 const configFile = join(programDir, LOCAL_EXECUTOR_CONFIG_FILE);
@@ -128,42 +125,6 @@ async function stillPaired(pairing: { origin: string; token: string }): Promise<
     return answer.status !== 401;
   } catch {
     return true;
-  }
-}
-
-async function setup() {
-  if (!config) return fail('setup 只能从设置页下载的安装包里运行。');
-  const prompt = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    let pairing = store.readPairing();
-    if (pairing && (pairing.origin !== config.origin || !(await stillPaired(pairing)))) {
-      store.clearPairing();
-      pairing = null;
-    }
-    for (let tries = 0; !pairing && tries < 3; tries += 1) {
-      const code = (await prompt.question('请输入应用设置页上显示的配对码：')).trim();
-      if (!code) continue;
-      const outcome = await redeem(config.origin, code);
-      if (!outcome.ok) {
-        say(`配对没有成功：${outcome.message}`);
-        continue;
-      }
-      pairing = { origin: config.origin, token: outcome.token, accountId: outcome.accountId };
-      store.writePairing(pairing);
-    }
-    if (!pairing) return fail('没有配对成功。请在应用的设置页重新生成配对码，再双击启动文件。');
-    store.prepare();
-    if (!inAppDir()) installApp({ sourceDir: programDir, appDir: store.appDir, platform: process.platform });
-    // The copy came out of a downloaded zip; Node's own signature is what macOS checks, the download flag is not needed.
-    if (process.platform === 'darwin') { try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', store.appDir], { stdio: 'ignore' }); } catch { /* not set */ } }
-    // The zip's own runtime is the downloaded one; each start rechecks it (`start.ts`).
-    recordNode({ configFile: installedConfig(), node: downloadedRuntime, ...where });
-    const files = installFiles();
-    if (startInBackground(files)) say('已安装：本地执行器正在后台运行，以后每次登录电脑都会自动运行。现在可以关掉这个窗口，回到应用去报销。');
-    else say('已安装，但这次没能马上在后台启动。请退出登录再登录一次电脑，它会自动运行。');
-    if (process.stdin.isTTY) await prompt.question('按回车键关闭这个窗口。');
-  } finally {
-    prompt.close();
   }
 }
 
@@ -340,10 +301,9 @@ async function run(args: string[]) {
 
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'self-check') process.stdout.write(`${SELF_CHECK_ANSWER}\n`);
-else if (command === 'setup' || (command === undefined && config)) await setup();
 else if (command === 'pair') await pair(rest);
 else if (command === 'unpair') await unpair();
 else if (command === 'uninstall') await uninstall();
 else if (command === 'finish-install') await finishInstall(rest);
 else if (command === 'run') await run(rest);
-else fail('用法：setup | run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair | uninstall');
+else fail('用法：run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair | uninstall');

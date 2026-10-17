@@ -8,7 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
 import { decodedLines } from '../test/powershell';
-import type { LocalExecutorDist } from './package';
+import type { LocalExecutorDist } from './release';
 
 // The one-command install at the HTTP seam (spec #412 part C): the 设置页 issues a 配对码 with the employee's system,
 // and the public `/install/<配对码>` answers the script for that system. Fetching never spends the code; pairing does.

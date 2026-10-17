@@ -3,42 +3,11 @@ import { Button, InlineNotification } from '@carbon/react';
 import { Copy, Launch } from '@carbon/icons-react';
 import { DRAFT_UNVERIFIED_NOTICE, type ErpReview } from '@baox/contract';
 import { ActionGroup } from '../shell/ActionGroup';
+import { copyText } from '../shell/clipboard';
 
 const HINT = '在新标签页打开报销系统，用你自己的账号登录后，到「我的费用报销」里按内码找到这张暂存单。';
 const COPIED = '内码已复制，可以粘贴到报销系统里查找这张暂存单。';
 const COPY_BY_HAND = '没能复制，请选中上面的内码手动复制。';
-
-// The deployed app is served over plain http (docs/deployment/intranet-phase-1.md), which is no secure context: there
-// `navigator.clipboard` is undefined. The older selection copy still works there; false when neither does.
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // Refused (no permission, say): try the selection copy.
-  }
-  return copyBySelection(text);
-}
-
-function copyBySelection(text: string): boolean {
-  if (typeof document.execCommand !== 'function') return false;
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.position = 'fixed';
-  area.style.opacity = '0';
-  document.body.appendChild(area);
-  try {
-    area.select();
-    return document.execCommand('copy');
-  } catch {
-    return false;
-  } finally {
-    area.remove();
-  }
-}
 
 // 去报销系统查看 (spec #406): the 暂存单's 内码 with a copy button, and a button that opens the 报销系统 in a new tab. Both
 // come from the snapshot's `erp.review`; the page never works out the address. The employee signs in there themselves.

@@ -38,6 +38,7 @@ import { createErpCredentialsFlow } from './erp-credentials';
 import { createExtensionPairingFlow } from './extension';
 import { createLegacyImportFlow } from './legacy-import';
 import type { MockOptions } from './options';
+import type { LocalExecutorPort } from '../adapter/local-executor-port';
 
 export { SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE } from './bus';
 export { FAULTS, readMockOptions, type Fault, type MockOptions, type MockStorage } from './options';
@@ -58,7 +59,8 @@ declare global {
   }
 }
 
-export type MockAdapter = AppAdapter & MockHooks;
+// `localExecutor`: the 本地执行器 the mock plays on this PC (`./extension.ts`), for `App`'s `localExecutor`.
+export type MockAdapter = AppAdapter & MockHooks & { localExecutor: LocalExecutorPort };
 
 export function installMockHooks(target: Window, adapter: MockAdapter): void {
   target.__baoxMock = { advanceElsewhere: (taskId) => adapter.advanceElsewhere(taskId) };
@@ -144,6 +146,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     return { value: HOME_CITY, source: 'network' };
   };
 
+  const pairing = createExtensionPairingFlow(options);
   const adapter: AppAdapter = {
     // The session reads memory, like snapshots: a disconnect shows up on the task list (banner), not at the gate.
     getSession: async () => auth.session(),
@@ -257,7 +260,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       });
     },
     ...createLegacyImportFlow(options),
-    ...createExtensionPairingFlow(options),
+    ...pairing.flow,
     ...createErpCredentialsFlow(),
     ...createPrintFlow(bus),
     ...createErpFlow(bus),
@@ -287,5 +290,5 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
           : bus.fail(SERVICE_UNAVAILABLE_CODE, SERVICE_UNAVAILABLE_MESSAGE);
     guarded[key] = async (...args: unknown[]) => (bus.isConnected() ? original(...args) : down());
   }
-  return Object.assign(guarded as unknown as AppAdapter, { advanceElsewhere: pending.advanceElsewhere });
+  return Object.assign(guarded as unknown as AppAdapter, { advanceElsewhere: pending.advanceElsewhere, localExecutor: pairing.localExecutor });
 }

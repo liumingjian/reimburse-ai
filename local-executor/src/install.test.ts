@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { LOCAL_EXECUTOR_CONFIG_FILE, localExecutorRuntimePath, localExecutorRuntimeSha256Path } from '@baox/contract';
 import { afterEach, describe, expect, it } from 'vitest';
 import { claimInstance } from './instance';
-import { autostartFiles, installApp, LAUNCH_AGENT, PROGRAM_FILE, writeInstallFiles, type InstallFile } from './install';
+import { autostartFiles, LAUNCH_AGENT, PROGRAM_FILE, writeInstallFiles, type InstallFile } from './install';
 import { CODE_LOADING_ENV, type NodeProbe } from './runtime';
 import { prepareStart } from './start';
 
@@ -208,23 +208,6 @@ describe('a zip install on its first start under this program', () => {
     expect(started).toMatchObject({ node: join(appDir, 'runtime', 'node'), restart: true, rewrote: true });
     expect(readFileSync(own, 'utf8')).toBe('mine');
     expect((JSON.parse(readFileSync(config, 'utf8')) as { node: string }).node).toBe(join(appDir, 'runtime', 'node'));
-  });
-});
-
-describe('installApp', () => {
-  it('copies the runtime, the program and the config into the executor\'s own directory', () => {
-    const source = scratch();
-    const app = join(scratch(), 'app');
-    mkdirSync(join(source, 'runtime'));
-    writeFileSync(join(source, 'runtime', 'node'), 'node');
-    writeFileSync(join(source, PROGRAM_FILE), 'program');
-    writeFileSync(join(source, 'baox-config.json'), '{}');
-    installApp({ sourceDir: source, appDir: app, platform: 'darwin' });
-    expect(readFileSync(join(app, 'runtime', 'node'), 'utf8')).toBe('node');
-    expect(readFileSync(join(app, PROGRAM_FILE), 'utf8')).toBe('program');
-    writeFileSync(join(source, PROGRAM_FILE), 'program 2');
-    installApp({ sourceDir: source, appDir: app, platform: 'darwin' });
-    expect(readFileSync(join(app, PROGRAM_FILE), 'utf8')).toBe('program 2');
   });
 });
 

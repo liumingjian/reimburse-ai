@@ -1418,6 +1418,25 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
+// The 本地执行器's install command: one line to copy whole, wrapped rather than scrolled.
+.app-install-command {
+  display: grid;
+  gap: $spacing-03;
+  inline-size: 100%;
+
+  p {
+    margin: 0;
+  }
+
+  pre {
+    margin: 0;
+    padding: $spacing-04;
+    background: $layer-01;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
 .app-settings-advanced {
   margin-block-start: $spacing-06;
   border-block: 1px solid $border-subtle-01;

@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import type { LocalExecutorDist } from './local-executor/package';
+import type { LocalExecutorDist } from './local-executor/release';
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
 import type { ErpConfig } from './erp/config';
