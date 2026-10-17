@@ -110,6 +110,7 @@ export const LOCAL_EXECUTOR_INSTALL_MESSAGES = {
   uninstalled: '已卸载，可以关掉这个窗口',
   expired: '配对码已过期，请回设置页重新生成',
   wrongSystem: '这条命令只能在 Mac 上运行，请回设置页选择你的系统',
+  wrongSystemWindows: '这条命令只能在 Windows 上运行，请回设置页选择你的系统',
   unreachable: '连不上应用，请检查网络后再运行一次这条命令',
   unavailable: '应用服务器上还没有本地执行器，请联系管理员',
   download: '运行环境没有下载完整，请再运行一次这条命令',
