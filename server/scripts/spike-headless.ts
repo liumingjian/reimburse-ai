@@ -1,5 +1,6 @@
-// The ADR-0033 / ADR-0034 spike: can 去报销 run in a headless Chromium on the intranet host, signed in with hosted ERP
-// credentials? It runs S1–S7 of docs/design/erp-headless-v1.md §验证计划 and prints one PASS / FAIL / SKIP line each.
+// The ADR-0033 / ADR-0034 spike: can 去报销 run in a headless Chromium, signed in with hosted ERP credentials? The
+// browser runs on the employee's PC (ADR-0033, amended 2026-10-12), not on the intranet host. It runs S1–S7 of
+// docs/design/erp-headless-v1.md §验证计划 and prints one PASS / FAIL / SKIP line each.
 //
 // It runs on the test environment, the Mac mini, with the test ERP account (10.250.0.222 only hosts the server and
 // never drives ERP); S3 needs the account's owner at their own browser. It is READ-ONLY by default:

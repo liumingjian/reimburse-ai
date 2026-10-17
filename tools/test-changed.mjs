@@ -20,7 +20,7 @@
 // `--gate` prints which merge gate the change needs (docs/agents/merge-conditions.md) and runs nothing:
 // - docs: every file is documentation or agent configuration (*.md, docs/, .claude/, .agents/); no test can see it.
 // - standard: everything else. A file the whole app rests on (FULL_GATE) is named as a journey foundation: it does not
-//   raise the PR's gate, but it is why the next full gate (integration landing, deploy) matters.
+//   raise the PR's gate, but it is why the next full gate (before a deploy) matters.
 //
 // Flags: --base <ref>  --gate  --e2e (run the reached specs)  --no-e2e (run none)  --no-build (reuse the existing e2e
 // builds)  --dry-run (print the plan)

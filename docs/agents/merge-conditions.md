@@ -6,17 +6,18 @@ subagent, or maintainer) picks the gate and runs it; a PR description names the 
 
 ## Pick the gate
 
-Compute the changed files on the agent server and let the tool classify them (it runs nothing):
+List the changed files on the agent server, then pass the printed paths to the tool as literal arguments (it runs
+nothing). Keep the two steps separate: the worktree guard refuses a `git` call nested in `$(...)` inside the rexec
+command.
 
 ```bash
-rexec "pnpm test:changed --gate $(git diff --name-only $(git merge-base HEAD origin/main))"
+git diff --name-only --merge-base origin/main
+rexec "pnpm test:changed --gate server/src/a.ts web/src/b.tsx"   # the paths printed above
 ```
 
-It prints `docs` or `standard`, and names any journey foundation the change touches. Two moments, not files, call for
-**full**:
-
-- a spec's integration branch merging into `main` (a feature or major change landing as a whole);
-- the build about to be deployed (`/deploy-intranet`), unless that commit already has a green full run.
+It prints `docs` or `standard`, and names any journey foundation the change touches. One moment, not a file, calls
+for **full**: the build about to be deployed (`/deploy-intranet`), unless that commit already has a green full run.
+Otherwise run e2e only when the maintainer asks for it.
 
 | Gate | What runs on the merge result |
 |---|---|
@@ -25,7 +26,7 @@ It prints `docs` or `standard`, and names any journey foundation the change touc
 | `full` | `standard`, plus the whole Playwright suite (`pnpm test:e2e`, both the `mock` and `server` projects). |
 
 A journey foundation is a file every journey rests on: the HTTP contract (`contract/src`), the database schema
-(`server/src/db`), the e2e harness (Playwright config, `e2e/server/fixture.ts`, `e2e-main.ts`), or a repository-root
+(`server/src/db`), the e2e harness (Playwright config, `web/e2e/server/fixture.ts`, `server/src/e2e-main.ts`), or a repository-root
 config such as the lockfile. `FULL_GATE` in `tools/test-changed.mjs` is the list. Touching one does not raise a PR's
 gate; name it in the PR description so the next full run is read against it.
 
@@ -41,7 +42,7 @@ into the next PR's branch and let its CI pass again before merging that PR.
 The full suite takes over 20 minutes on the Mac and is the slowest, most timing-sensitive layer. A behaviour belongs
 at the cheapest level that can see it (`docs/agents/coding-standards.md`): taskPolicy rows, the scenario builder,
 recognition snapshots and the recorded-ERP executor catch most regressions in seconds. e2e proves that the pieces
-still join up, which matters where many changes converge: an integration landing and a deploy.
+still join up, which matters most right before a deploy, when every change since the last one goes out together.
 
 ## Keep main green
 

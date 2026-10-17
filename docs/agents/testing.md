@@ -9,7 +9,7 @@ Run after every edit. It runs only the tests related to the files you pass
 
 - vitest `related` in each workspace package that owns a changed file or depends on one. A change to a package's own
   config (`package.json`, `tsconfig*.json`, `vite(st).config.*`) runs that package's whole suite.
-- Playwright only when you changed something under `web/e2e` (a spec, `e2e/server/fixture.ts`): the specs whose
+- Playwright only when you changed something under `web/e2e` (a spec, `web/e2e/server/fixture.ts`): the specs whose
   imports reach the changed files, after building only what those specs need. Any other change prints the specs it
   reaches and leaves them to the full gate; `--e2e` runs them when a journey is what you are actually fixing.
 - A changed repository-root file (`pnpm-lock.yaml`, `pnpm-workspace.yaml`, root `package.json`/`tsconfig*.json`,
@@ -23,11 +23,15 @@ the list on the agent server, where git works. The Mac workspace has no usable h
 default, and a worktree's `.git` file points at a path that exists only on the server, so `--base <ref>` and
 Playwright's own `--only-changed` fail there.
 
+List them first, then paste the printed paths into the rexec command as literal arguments. A `git` call nested in
+`$(...)` inside the rexec command is refused by the worktree guard.
+
 ```bash
-rexec "set -o pipefail; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm test:changed $(git diff --name-only HEAD; git ls-files -o --exclude-standard) 2>&1 | tail -40"
+git diff --name-only HEAD; git ls-files -o --exclude-standard
+rexec "set -o pipefail; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm test:changed server/src/a.ts web/src/b.tsx 2>&1 | tail -40"
 ```
 
-The `$(...)` expands on the server before rexec sends the command. Flags: `--e2e`, `--no-e2e`, `--no-build` (reuse the
+Flags: `--e2e`, `--no-e2e`, `--no-build` (reuse the
 existing `server/dist`, `web/dist`, `web/dist-mock`), `--dry-run` (print what would run).
 
 Its reach is the module graph: a spec that drives the built app without importing the changed file is not selected, and
@@ -45,9 +49,10 @@ rexec --background --timeout 3600 'set -o pipefail; pnpm install --frozen-lockfi
 ```
 
 The Mac is shared with the maintainer's desktop apps, and the web, extension and e2e suites have timing-sensitive
-tests: on a loaded Mac they fail by the dozen while the code is fine. Before a merge gate, read the load with
-`rexec --no-sync uptime`; when the 1-minute average is above 4, wait for it to drop rather than reading a red run as
-a red `main`. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`web/src/test/setup.ts`), and the
+tests: on a busy Mac they fail by the dozen while the code is fine. The Mac mini has 12 cores and 64 GB, so a load
+average of 5 to 15 is normal: judge "busy" by CPU use (`rexec --no-sync 'top -l 2 -o cpu -n 10'`), never by load
+average. Before calling a red file noise, rerun that file alone, on the branch and on an `origin/main` snapshot; the
+same failure on both is a flaky test, not load. The web suite already waits up to 5 s per `findBy*`/`waitFor` (`web/src/test/setup.ts`), and the
 web suite and Playwright cap their own parallelism (`maxWorkers` in `web/vite.config.ts`, `workers` in
 `web/playwright.config.ts`, one at a time for the server specs) so they don't load the Mac by themselves.
 

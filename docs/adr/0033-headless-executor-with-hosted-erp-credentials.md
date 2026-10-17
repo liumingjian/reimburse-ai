@@ -1,4 +1,7 @@
-# 去报销 runs in a headless browser on the server, logged in with hosted ERP credentials, and ends at a 暂存 draft
+# 去报销 runs in a headless browser on the employee's PC (本地执行器), logged in with server-hosted ERP credentials, and ends at a 暂存 draft
+
+Title updated 2026-10-17 to match the amendments below; it used to say "on the server". `10.250.0.222` hosts only the
+server and never drives ERP.
 
 **Status: proposed (2026-10-11).** Accepted once the spike in
 [erp-headless-v1.md](../design/erp-headless-v1.md#验证计划) passes. Until then the browser extension (ADR-0019, ADR-0021)
