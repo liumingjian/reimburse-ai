@@ -389,7 +389,8 @@ const confirmation189: Migration = {
 
 // Slice #190: 打印稿 (print sheet). All append-only. `print_setting` holds the per-material print settings (rotation,
 // four crop corners; latest per material wins, so they survive a regeneration). `payment_screenshot` +
-// `payment_screenshot_removal` hold the 支付截图 (payment screenshots; the latest unremoved one per voucher is current).
+// `payment_screenshot_removal` hold the 支付截图 (payment screenshots; until #331 the latest unremoved one per voucher was
+// current, since 0020_331 every unremoved one is, as a group).
 // `print_render` is one composed sheet (merged PDF + page images, both content-addressed blobs) bound to the
 // confirmation it was made from: a sheet whose `confirmation_revision` is not the standing confirmation is stale.
 const print190: Migration = {
@@ -648,6 +649,102 @@ const maintenanceGate265: Migration = {
   },
 };
 
+// #331: a 住宿 invoice takes a group of 支付截图 (payment screenshots) in upload order, and the filer declares it complete
+// (「已传齐」). `payment_screenshot_group_complete` holds those declarations, append-only; whether a group stands complete
+// is replayed from uploads, removals and declarations in revision order (`print/facts.ts`).
+//
+// Before #331 only the latest unremoved screenshot per invoice counted, and its upload alone settled the item. So that
+// every row still in the table is a member of the group, each screenshot a later upload replaced is recorded as removed
+// at the replacing upload's revision; and each invoice's surviving screenshot is declared complete at its own revision,
+// so an existing task reads as a resolved group of one and never reopens. Before #330 the print page took a screenshot
+// for any voucher; which vouchers are 住宿 invoices is an inventory judgement SQL cannot make, so those get the same rows
+// and are left out on read: a screenshot on a voucher that is not a 住宿 invoice forms no group (`stayGroupsOnly`).
+const screenshotGroup331: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('payment_screenshot_group_complete')
+      .addColumn('declaration_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('voucher_material_id', 'text', (c) => c.notNull().references('material.material_id'))
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .execute();
+    await appendOnly(db, 'payment_screenshot_group_complete');
+    await settleLegacyScreenshots331(db);
+  },
+};
+
+// The backfill of 0020_331, part of that migration (never edit it once landed). Exported so a scenario test can turn
+// screenshots stored the pre-#331 way into what the migration leaves of them.
+export async function settleLegacyScreenshots331(db: Kysely<unknown>): Promise<void> {
+  await sql`
+    INSERT INTO payment_screenshot_removal (removal_id, screenshot_id, task_id, account_id, revision, created_at)
+    SELECT lower(hex(randomblob(16))), s.screenshot_id, s.task_id, s.account_id, n.revision, n.created_at
+    FROM payment_screenshot s
+    JOIN payment_screenshot n ON n.screenshot_id = (
+      SELECT screenshot_id FROM payment_screenshot
+      WHERE task_id = s.task_id AND voucher_material_id = s.voucher_material_id AND revision > s.revision
+      ORDER BY revision LIMIT 1
+    )
+    WHERE NOT EXISTS (SELECT 1 FROM payment_screenshot_removal r WHERE r.screenshot_id = s.screenshot_id)
+  `.execute(db);
+  await sql`
+    INSERT INTO payment_screenshot_group_complete (declaration_id, task_id, account_id, voucher_material_id, revision, created_at)
+    SELECT lower(hex(randomblob(16))), s.task_id, s.account_id, s.voucher_material_id, s.revision, s.created_at
+    FROM payment_screenshot s
+    WHERE NOT EXISTS (SELECT 1 FROM payment_screenshot_removal r WHERE r.screenshot_id = s.screenshot_id)
+  `.execute(db);
+}
+
+// Line 2 of erp-headless-v1.md, item 1: ERP 凭据 hosted for the baox 本地执行器 (ADR-0033). One row per 应用账号, the
+// password sealed with the server's key; and the pairing learns what paired, so the 凭据 go only to a 本地执行器.
+const erpCredentials: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('erp_credential')
+      .addColumn('account_id', 'text', (c) => c.primaryKey().references('account.account_id'))
+      .addColumn('erp_account', 'text', (c) => c.notNull())
+      .addColumn('password_sealed', 'text')
+      .addColumn('status', 'text', (c) => c.notNull())
+      .addColumn('message', 'text')
+      .addColumn('saved_at', 'text', (c) => c.notNull())
+      .addColumn('checked_at', 'text')
+      .execute();
+    await db.schema.alterTable('extension_pairing').addColumn('holder', 'text').execute();
+  },
+};
+
+// Line 2, item 4: 自动重新去报销 (ADR-0034) starts a fill job nobody clicked, and the trail has to tell it from the
+// employee's 重新去报销. `erp_job.trigger` gains `rerun`, by the same rebuild #242 used to add `refill` (see there for
+// why each pragma is set).
+const rerunTrigger: Migration = {
+  async up(db: Kysely<unknown>) {
+    await sql`PRAGMA foreign_keys = OFF`.execute(db);
+    await sql`PRAGMA defer_foreign_keys = ON`.execute(db);
+    await db.schema
+      .createTable('erp_job_rebuilt')
+      .addColumn('job_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('kind', 'text', (c) => c.notNull().check(sql`kind IN ('fill')`))
+      .addColumn('trigger', 'text', (c) => c.notNull().check(sql`trigger IN ('start', 'confirm_login', 'refill', 'rerun')`))
+      .addColumn('confirmation_digest', 'text', (c) => c.notNull())
+      .addColumn('plan', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await sql`INSERT INTO erp_job_rebuilt (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+              SELECT job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at FROM erp_job`.execute(db);
+    await sql`DROP TABLE erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = ON`.execute(db);
+    await sql`ALTER TABLE erp_job_rebuilt RENAME TO erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = OFF`.execute(db);
+    await appendOnly(db, 'erp_job');
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -676,4 +773,7 @@ export const MIGRATIONS: Record<string, Migration> = {
   // Added after the already-integrated #280 migration so existing databases never need a landed migration rewritten.
   '0018_273_project_deadline': projectDeadline273,
   '0019_312_blob_medium': blobMedium312,
+  '0020_331_screenshot_group': screenshotGroup331,
+  '0021_line2_erp_credentials': erpCredentials,
+  '0022_line2_rerun_trigger': rerunTrigger,
 };

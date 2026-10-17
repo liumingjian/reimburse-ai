@@ -74,7 +74,7 @@ seed 只改主任务 T1（2026-08 上海出差，9 行明细合计 3972.59）；
 | --- | --- |
 | `upload`（默认） | 还没有材料，显示拖拽区 |
 | `inventory` | 11 份材料已盘点，结果按费用事件归组 |
-| `pending` | 4 个待确认项未处理（含住宿发票缺支付截图：可在这一项上直接上传支付截图，或选「确认没有支付截图」） |
+| `pending` | 4 个待确认项未处理（含住宿发票缺支付截图：可在这一项上一次上传多张支付截图，mock 直接归到这张发票并处理完这一项；或选「确认没有支付截图」） |
 | `project` / `assign` | 待确认项已处理，项目归属进行中，No.1、No.2 已归入 P-2307（「归入项目」面板的「本次已归入」显示 2 条 / 47.54 元）；整单确认页还不能进 |
 | `review` | 9 行整单明细（项目归属已提交）待「确认」 |
 | `actions` | 整单明细已确认，出现「去打印」「去报销」 |
@@ -172,7 +172,7 @@ mock 与服务端的对照见 `src/mock/parity.test.ts`：每个黄金快照场�
   是否按分守恒由服务端判定，不守恒返回 `{ error }`（文案 `ALLOCATION_ERRORS.notConserved`），页面只显示。「认不出」的后果由服务端写在 `giveUpNote`；照内核，放弃之后出现一条阻塞的 `given_up` 项（`why` 是后果说明），它不接受 `answer-pending`（`PENDING_ANSWER_ERRORS.notAnswerable`），只能用 `exclude-material` 排除这张发票，或追加材料后重新盘点。
 - 跨任务重复发票（内核 `duplicate_blocked`）：快照 `blockers: [{ kind: 'duplicate_across_tasks', materialId, fileName, reason, resolver, tasks: [{ taskId, name }] }]`。有阻塞项时整批停：盘点结束但 `events`、`pendingItems` 为空，阶段停在 `inventory`，step 为 `none`。处置是 `exclude-material`（阻塞项的 `materialId`）：服务端把这份移出本次材料，阻塞解除后接着划分费用事件。表格列 `BLOCKER_TABLE_COLUMNS`，说明文案 `DUPLICATE_BLOCKER_COPY`。
 - 响应约定：成功 200 返回整份新快照；失败 `{ error: { code, message } }`（`message` 直接显示在按钮旁）；`stepToken` 过期返回 409 与 `{ error, snapshot }`（最新快照）。事件流为 SSE，`event: snapshot`，`data` 为整份快照；客户端断开后按 0.5 s 起翻倍、封顶 10 s 重连，恢复后重新拉取快照。
-- 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；支付截图为 `voucherMaterialId` + `file`；打印稿生成前只接受住宿三件套的发票）。
+- 值：金额两位小数字符串，日期 `YYYY-MM-DD`，时间 `HH:MM`，ID 不透明。上传为 multipart（`files`；待确认项里的支付截图为 `voucherMaterialId` + `stepToken` + 多个 `files`，只接受住宿发票的图片，服务端把它们作为新批次归到这张发票并重新盘点（ADR-0032）；#331 的旧截图组只能删和「已传齐」（`complete-payment-screenshots`，`voucherMaterialId`）；整单明细确认后都拒绝，`screenshot_locked`）。
 - 验收样本：`src/mock/fixtures/`（各阶段快照）与 `fixtures/generated/`（原件、页图、PDF）。
 - mock 与服务端对照：`src/mock/parity.test.ts` 把服务端录制黄金快照（`@baox/contract/goldens`）的每个场景在 mock 里走一遍，
   逐项比对阶段、step、`allowedActions`、ERP 与对账处置等页面据以分支的字段。mock 流程改动让它失败时，改 mock 去跟服务端一致，不要改黄金快照。

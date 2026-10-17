@@ -1,5 +1,6 @@
 // The read-only 对账 (reconcile) job of the v1 in-process executor (ADR-0016): Chromium ready -> login probe ->
-// one read of the open expense form -> `readback` (stage `reconcile`) -> `result` `read`.
+// one read of the open expense form -> `readback` (stage `reconcile`) -> `result` `read`. After 暂存 (`plan.draft`):
+// the draft looked up by its ownership marker through WebAPI -> `draft_lookup` -> `result` `read`.
 // It only evaluates: no click, key, scroll, navigation, upload or attempt. Origin: 50931a3:kernel/src/erpreconcile.mjs
 // readReconciliation (collection half); the judgement is the server's (server/src/erp/reconcile.ts).
 // The lazily rendered detail grid is not opened: opening it is a page side effect, and reconcile changes nothing.
@@ -7,12 +8,14 @@
 import { ReconcilePlanSchema, type ExecutorChannel, type ResultEvent, type ResultStatus } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import type { ChromiumPage } from './page';
-import type { BrowserPort } from './job';
+import type { BrowserPort, ExecutorPorts } from './job';
 import { DEFAULT_PACE, type Pace } from './pace';
 import { probeIdentity, sameOrigin } from './probe';
 import { protocolReadings, readForm } from './reader';
+import { lookupDraft } from './draft';
 
-export type ReconcilePorts = { browser: BrowserPort; channel: ExecutorChannel; pace?: Pace; probeWaitMs?: number };
+/** `signIn`: the headless path's, as for a fill (`ExecutorPorts`). Signing in writes nothing to any bill. */
+export type ReconcilePorts = { browser: BrowserPort; channel: ExecutorChannel; pace?: Pace; probeWaitMs?: number; signIn?: ExecutorPorts['signIn'] };
 
 export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): Promise<ResultEvent> {
   const plan = ReconcilePlanSchema.parse(rawPlan);
@@ -44,11 +47,17 @@ export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): 
     await step('chromium', 'done');
 
     await step('login', 'running');
-    const probe = await probeIdentity({
+    const probeLogin = (tabs: ChromiumPage[]) => probeIdentity({
       origin: plan.erpOrigin, waitMs: ports.probeWaitMs ?? 30_000, pollMs: pace.pollMs, transport: 'chromium-cdp',
-      listTabs: async () => pages,
+      listTabs: async () => tabs,
       evaluate: async (page, expression) => evalIn((await attach(page as ChromiumPage)).session, expression, { timeout: 10_000 }),
     });
+    let probe = await probeLogin(pages);
+    if (probe.status === 'not_logged_in' && probe.page && ports.signIn) {
+      const signedIn = await ports.signIn((await attach(probe.page as ChromiumPage)).session);
+      if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
+      probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
+    }
     if (probe.status === 'not_logged_in' || probe.status === 'no_tab') {
       await step('login', 'done');
       await channel.emit({ type: 'waiting_login', hint: probe.hint ?? '' });
@@ -59,6 +68,12 @@ export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): 
     await step('login', 'done');
 
     await step('readback', 'running');
+    // After 暂存 the bill is looked up by its marker; the form the fill left went with its browser.
+    if (plan.draft) {
+      await channel.emit(await lookupDraft(session, plan.draft));
+      await step('readback', 'done');
+      return await finish('read', null, null);
+    }
     const form = await readForm(session);
     const readings = protocolReadings(form);
     // Which form was read: the server compares the form-instance UUID and the CDP target with the fill's attempt.

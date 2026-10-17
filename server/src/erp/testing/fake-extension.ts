@@ -11,11 +11,13 @@
 
 import { EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ReconcilePlan, ResultEvent } from '@baox/erp-executor/protocol';
-import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, ResumeVerdictSchema, wireChannel, type FillRequest, type PageObservation, type ResumeVerdict } from '@baox/erp-executor/wire';
+import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, ResumeVerdictSchema, TrySignInRequestSchema, wireChannel, type FillRequest, type PageObservation, type ResumeVerdict, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
 import type { ExtensionChannel } from '../../extension/channel';
 
 export type FillRunner = (plan: FillPlan, channel: ExecutorChannel, trigger: FillRequest['trigger']) => Promise<ResultEvent>;
 export type ReconcileRunner = (plan: ReconcilePlan, channel: ExecutorChannel) => Promise<ResultEvent>;
+// A baox 本地执行器's 试登录 (`erp.trySignIn`).
+export type TrySignInRunner = (request: TrySignInRequest) => Promise<TrySignInAnswer>;
 
 export type FakeExtension = {
   // Sends `hello` and resolves once the server answered `ready`.
@@ -43,7 +45,7 @@ class FakeRequestFailed extends Error {
   }
 }
 
-export function fakeExtension(channel: ExtensionChannel, token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner }): FakeExtension {
+export function fakeExtension(channel: ExtensionChannel, token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner; trySignIn?: TrySignInRunner }): FakeExtension {
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const asked: Array<{ method: string; payload: unknown }> = [];
   const sent: ExecutorEvent[] = [];
@@ -90,7 +92,8 @@ export function fakeExtension(channel: ExtensionChannel, token: string, runners:
     }
   }
 
-  async function serve(method: string, payload: unknown): Promise<ResultEvent> {
+  async function serve(method: string, payload: unknown): Promise<ResultEvent | TrySignInAnswer> {
+    if (method === EXECUTOR_METHODS.trySignIn && runners.trySignIn) return runners.trySignIn(TrySignInRequestSchema.parse(payload));
     if (method === EXECUTOR_METHODS.fill && runners.fill) {
       const { plan, trigger } = FillRequestSchema.parse(payload);
       return runners.fill(plan, wireChannel(plan.jobId, request), trigger);

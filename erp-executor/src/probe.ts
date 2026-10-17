@@ -99,6 +99,7 @@ export async function probeIdentity({
 } = {}): Promise<ProbeResult> {
   const deadline = Date.now() + waitMs;
   let last: { observed: Observation; errors: string[] } | null = null;
+  let unsettled: ProbeResult | null = null;
   const transportKind = typeof transport === 'string' ? transport : transport?.kind ?? transport?.transport;
   const cdp = transportKind === 'chromium-cdp';
   const reportedTransport = cdp ? 'chromium-cdp' : transportKind;
@@ -136,15 +137,21 @@ export async function probeIdentity({
         const targetId = p.cdpTargetId ?? p.tabId ?? p.pageId ?? `${p.windowId}:${p.index}`;
         return { ...verdict, ...last, transport: reportedTransport, origin, targetId: String(targetId), tabId: p.tabId ?? null, page };
       }
-      if (!fallback || verdict.status === 'not_logged_in') fallback = { ...verdict, origin, ...last };
+      if (!fallback || verdict.status === 'not_logged_in') fallback = { ...verdict, origin, ...last, page };
     }
-    if (!sawLoading) {
+    // `unknown` on a loaded page is often a moment, not a state: Kingdee reports `complete` before it paints the
+    // login form or the console (live 2026-10-12, S8). It is looked at again within the wait, and only stands when
+    // the wait runs out on it.
+    unsettled = fallback?.status === 'unknown' ? fallback : null;
+    if (!sawLoading && !unsettled) {
       if (fallback) return fallback;
       return { status: 'unknown', origin, observed: null, errors, hint: `${where}里的 ERP 页面全都读不出来；请人工看一眼这个窗口` };
     }
+    if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   } while (Date.now() < deadline);
 
+  if (unsettled) return unsettled;
   return { status: 'loading', origin, ...last, hint: `ERP 页面 ${waitMs}ms 内没有加载完成` };
 }
 

@@ -2,12 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   ABANDON_TASK_COPY,
+  DINING_INVOICE_FIELD,
+  DINING_INVOICE_KEY,
   CONFIRM_REVIEW_ERRORS,
   CREATE_TASK_ERRORS,
   ERP_ACTION_ERRORS,
   HOME_CITY_ERRORS,
   PENDING_ANSWER_ERRORS,
+  PAYMENT_SCREENSHOT_ERRORS,
+  PAYMENT_STAY_FIELD,
   PENDING_CHOICE_KEY,
+  STAY_TRIO_COPY,
   PROJECT_ASSIGNMENT_ERRORS,
   fieldAnswer,
   type ActionError,
@@ -19,6 +24,7 @@ import {
   type TaskList,
   type TaskListItem,
   type TaskSnapshot,
+  type UploadRejectCode,
 } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
@@ -29,8 +35,8 @@ import type { ParseOutcome } from './parse/dispatch';
 import type { ParseInput } from './parse/material';
 import { mediumOf } from './parse/media';
 import { EXCLUDE_CHOICE, judgeAnswer, type Verdict } from './pending/answers';
-import { EDIT_COPY, EDIT_PREFIX, judgeEdit } from './pending/edits';
-import { ACTION_COPY, ERP_IN_USE, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
+import { EDIT_COPY, EDIT_PREFIX, editAddress, judgeEdit } from './pending/edits';
+import { ACTION_COPY, ERP_IN_USE, NO_RERUN, STALE_JOB, isNonTerminal, parseRunning, stepToken, taskPolicy, type ActionName, type Refusal, type TaskFacts } from './task-policy';
 import { loadFacts, materialRows, uploadHistory, type LoadedTask } from './task-facts';
 import { projectListItem, projectSnapshot } from './task-snapshot';
 import { relativeSourcePath, rejectByShape, rejectReason, sourceFileName, storedMime } from './upload-rules';
@@ -42,10 +48,12 @@ import type { ErpLease } from './erp-lease';
 import type { MaintenanceLease } from './maintenance';
 import type { ErpConfig } from './erp/config';
 import { buildFillJob, type FrozenJob } from './erp/fill-plan';
-import { newJobId, type FillRun, type FillTrigger } from './erp/fill-jobs';
-import { PROTOCOL_VERSION } from '@baox/erp-executor/protocol';
+import { JOB_DEADLINE_CODE, newJobId, NO_RESULT_CODE, type FillRun, type FillTrigger } from './erp/fill-jobs';
+import { draftMarkOf, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
+import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
+import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
-import { loadErp } from './erp/fill-state';
+import { loadErp, type ErpRecord } from './erp/fill-state';
 import { printFileShas } from './print/facts';
 import * as printActions from './print/service';
 import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
@@ -55,6 +63,10 @@ import { PrintRefusal, type PrintCommit, type PrintState } from './print/service
 // revision bump, then `onChange` (SSE).
 
 export type UploadedFile = { fileName: string; mime: string; bytes: Uint8Array; relativePath?: string | null };
+
+// An uploaded file as a batch records it: its name and source path as stored, a shape rejection if any, its content
+// hash.
+type JudgedFile = UploadedFile & { relativePath: string; shape: UploadRejectCode | null; sha256: string };
 
 // Contract times are ISO 8601 to the second.
 const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
@@ -107,7 +119,26 @@ export type ErpServiceOptions = {
   // Acquired beside the durable job row, before the runner can start. This closes the admission race with a new job.
   acquireErp?: () => MaintenanceLease | null;
   acquireBackground?: () => MaintenanceLease | null;
+  // The account's jobs go to a baox 本地执行器 (it is sent ERP 凭据, ADR-0033), the only executor 自动重新去报销 runs on
+  // (ADR-0034): the 浏览器扩展 drives the employee's own tab, and the employee's own 重新去报销 stays theirs there.
+  unattended?: (accountId: string) => Promise<boolean>;
 };
+
+// 对账 after 暂存 (line 2 item 5): look the draft up by the 暂存 job's marker, make sure none of the task's other jobs
+// left one, and compare it with what the strict hand-over read-back saw before 暂存, as the fill compared its own.
+async function draftLookupOf(tx: Db, taskId: string, fillJobId: string, mark: string, erp: Pick<ErpRecord, 'events' | 'preview'>): Promise<ReconcilePlan['draft']> {
+  const others = await tx.selectFrom('erp_job').select('job_id').where('task_id', '=', taskId).where('kind', '=', 'fill').where('job_id', '!=', fillJobId).orderBy('revision').execute();
+  const verified = [...erp.events].reverse().find((event): event is ReadbackEvent => event.type === 'readback' && event.stage === 'before_hand_over');
+  const expected = verified && erp.preview
+    ? { causa: markedPurpose(erp.preview.purpose, mark), receipts: filledRows(verified.readings.receiptsGrid), details: filledRows(verified.readings.detailGrid) }
+    : null;
+  return { mark, earlier: others.map((row) => draftMarkOf(row.job_id)), expected };
+}
+
+// 自动重新去报销 (ADR-0034): at most this many in a row, then the task waits for the employee as before.
+export const AUTO_RERUN_LIMIT = 2;
+// Results the server, not the executor, gave the job: the run may still hold the page, so nothing starts over on it.
+const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE, EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE]);
 
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 
@@ -142,6 +173,57 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   // a job running, the ERP freeze, the action's own step), let `apply` refuse or append facts, bump the revision, then
   // publish the fresh snapshot. A refusal or stale token writes nothing. The rules themselves live in task-policy.ts.
   // `request`: the refusal of the request's input that the policy ranks ahead of the action's own precondition.
+  // Accepted bytes land on disk (content-addressed) before any row can refer to them.
+  function judgeFiles(files: readonly UploadedFile[]): JudgedFile[] {
+    const judged = files.map((file) => {
+      const fileName = sourceFileName(file.fileName);
+      return { ...file, fileName, relativePath: relativeSourcePath(fileName, file.relativePath), shape: rejectByShape(fileName, file.mime, file.bytes.byteLength), sha256: createHash('sha256').update(file.bytes).digest('hex') };
+    });
+    for (const file of judged) if (file.shape === null) writeBlob(dataDir, file.bytes);
+    return judged;
+  }
+
+  // The task's contents so far, by sha256: a file already among them is rejected as a duplicate.
+  async function knownContent(tx: Db, taskId: string): Promise<Map<string, string>> {
+    const known = new Map<string, string>();
+    for (const row of await tx.selectFrom('material').select(['blob_sha256', 'file_name', 'source_path']).where('task_id', '=', taskId).orderBy(sql`rowid`).execute()) {
+      if (!known.has(row.blob_sha256)) known.set(row.blob_sha256, row.source_path ?? row.file_name);
+    }
+    return known;
+  }
+
+  // Writes one upload batch of judged files: a rejection row for each refused file, a material for each accepted one.
+  // The accepted materials' ids, in batch order.
+  async function writeBatch(tx: Db, taskId: string, judged: readonly JudgedFile[], at: string): Promise<string[]> {
+    const known = await knownContent(tx, taskId);
+    const last = await tx.selectFrom('upload_batch').select((eb) => eb.fn.max('no').as('no')).where('task_id', '=', taskId).executeTakeFirst();
+    const batchId = randomUUID();
+    await tx.insertInto('upload_batch').values({ batch_id: batchId, task_id: taskId, account_id: accountId, no: (last?.no ?? 0) + 1, uploaded_at: at }).execute();
+    const accepted: string[] = [];
+    for (const [seq, file] of judged.entries()) {
+      const duplicateOf = file.shape === null ? known.get(file.sha256) : undefined;
+      const code = file.shape ?? (duplicateOf !== undefined ? 'duplicate_content' : null);
+      if (code) {
+        await tx
+          .insertInto('upload_rejection')
+          .values({ rejection_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, batch_seq: seq, file_name: file.fileName, source_path: file.relativePath, size: file.bytes.byteLength, reason_code: code, reason: rejectReason(code, duplicateOf), created_at: at })
+          .execute();
+        continue;
+      }
+      known.set(file.sha256, file.relativePath);
+      const mime = storedMime(file.fileName, file.mime);
+      // The medium is recognition's to sniff (#312); the material list, print and the parse order read it back.
+      await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime, medium: mediumOf({ fileName: file.fileName, mime, bytes: file.bytes }), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+      const materialId = randomUUID();
+      await tx
+        .insertInto('material')
+        .values({ material_id: materialId, task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, source_path: file.relativePath, created_at: at, batch_seq: seq })
+        .execute();
+      accepted.push(materialId);
+    }
+    return accepted;
+  }
+
   async function mutate(taskId: string, token: string | null, action: ActionName, apply: (ctx: Context) => Promise<Refusal | void>, request: Refusal | null = null): Promise<TaskSnapshot> {
     const outcome = await db.transaction().execute(async (tx): Promise<{ kind: 'ok' } | { kind: 'stale' } | ({ kind: 'refused' } & Refusal)> => {
       const task = await taskRow(tx, taskId);
@@ -170,7 +252,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
   //
   // Where each trigger may be taken from (choose_action; the login pause; the 对账 verdict offering 重新去报销, ADR-0027)
   // is the task policy's to say, like any other admission: by the time `apply` runs, the trigger was admitted.
-  async function startFillJob(taskId: string, token: string, trigger: FillTrigger): Promise<TaskSnapshot> {
+  async function startFillJob(taskId: string, token: string, trigger: Exclude<FillTrigger, 'rerun'>): Promise<TaskSnapshot> {
     const recovery = trigger === 'refill';
     const started: { run: FillRun | null } = { run: null };
     try {
@@ -359,41 +441,46 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return snapshot(taskId);
     },
 
-    // One 上传批次 (upload batch). Each file is accepted or rejected with a reason code; accepted bytes land on disk
-    // (content-addressed) before any row refers to them. A batch that adds a material forms a new inventory version.
+    // One 上传批次 (upload batch). Each file is accepted or rejected with a reason code. A batch that adds a material
+    // forms a new inventory version.
     async upload(taskId: string, files: readonly UploadedFile[]): Promise<TaskSnapshot> {
-      const judged = files.map((file) => {
-        const fileName = sourceFileName(file.fileName);
-        return { ...file, fileName, relativePath: relativeSourcePath(fileName, file.relativePath), shape: rejectByShape(fileName, file.mime, file.bytes.byteLength), sha256: createHash('sha256').update(file.bytes).digest('hex') };
-      });
-      for (const file of judged) if (file.shape === null) writeBlob(dataDir, file.bytes);
+      const judged = judgeFiles(files);
       return mutate(taskId, null, 'upload', async ({ tx, at }) => {
-        const known = new Map<string, string>();
-        for (const row of await tx.selectFrom('material').select(['blob_sha256', 'file_name', 'source_path']).where('task_id', '=', taskId).orderBy(sql`rowid`).execute()) {
-          if (!known.has(row.blob_sha256)) known.set(row.blob_sha256, row.source_path ?? row.file_name);
-        }
-        const last = await tx.selectFrom('upload_batch').select((eb) => eb.fn.max('no').as('no')).where('task_id', '=', taskId).executeTakeFirst();
-        const batchId = randomUUID();
-        await tx.insertInto('upload_batch').values({ batch_id: batchId, task_id: taskId, account_id: accountId, no: (last?.no ?? 0) + 1, uploaded_at: at }).execute();
-        for (const [seq, file] of judged.entries()) {
-          const duplicateOf = file.shape === null ? known.get(file.sha256) : undefined;
-          const code = file.shape ?? (duplicateOf !== undefined ? 'duplicate_content' : null);
-          if (code) {
-            await tx
-              .insertInto('upload_rejection')
-              .values({ rejection_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, batch_seq: seq, file_name: file.fileName, source_path: file.relativePath, size: file.bytes.byteLength, reason_code: code, reason: rejectReason(code, duplicateOf), created_at: at })
-              .execute();
-            continue;
-          }
-          known.set(file.sha256, file.relativePath);
-          const mime = storedMime(file.fileName, file.mime);
-          // The medium is recognition's to sniff (#312); the material list, print and the parse order read it back.
-          await tx.insertInto('blob').values({ sha256: file.sha256, size: file.bytes.byteLength, mime, medium: mediumOf({ fileName: file.fileName, mime, bytes: file.bytes }), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
+        await writeBatch(tx, taskId, judged, at);
+      });
+    },
+
+    async supplementDiningEvidence(taskId: string, pendingItemId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
+      const judged = judgeFiles(files);
+      return mutate(taskId, token, 'change_dining_evidence', async ({ tx, facts, view, at, revision }) => {
+        const item = view.answerables.get(pendingItemId)?.item;
+        if (!item || item.status !== 'open' || !item.dining?.supplement) return { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' };
+        const accepted = await writeBatch(tx, taskId, judged, at);
+        if (accepted.length > 0) await tx.insertInto('inventory_run').values({ run_id: randomUUID(), task_id: taskId, account_id: accountId, version_no: facts.versionNo + 1, revision, started_at: at }).execute();
+      });
+    },
+
+    // 支付截图 added from a 住宿 invoice's 待确认项 (ADR-0032): a new upload batch whose screenshots are placed with that
+    // invoice (stored as the filer's 改归属) and a new inventory run over it, in one change, so the screenshots are
+    // read and checked by sum like any other. Admitted where reopening upload is; refused, like any change to a stay's
+    // screenshots, once the list is confirmed.
+    async addPaymentScreenshots(taskId: string, invoiceId: string, files: readonly UploadedFile[], token: string): Promise<TaskSnapshot> {
+      const judged = judgeFiles(files);
+      const images = await Promise.all(judged.map((file) => printActions.isScreenshotImage(file)));
+      return mutate(taskId, token, 'reopen_upload', async ({ tx, facts, view, at, revision }) => {
+        if (!view.trios.some((trio) => trio.invoiceId === invoiceId && trio.screenshot)) return { code: 'screenshot_not_applicable', message: PAYMENT_SCREENSHOT_ERRORS.notApplicable };
+        if (facts.confirmation === 'confirmed') return { code: 'screenshot_locked', message: STAY_TRIO_COPY.changeLocked };
+        if (images.some((image) => !image)) return { code: 'not_image', message: PAYMENT_SCREENSHOT_ERRORS.notImage };
+        const known = await knownContent(tx, taskId);
+        if (judged.every((file) => file.shape !== null || known.has(file.sha256))) return { code: 'duplicate_content', message: PAYMENT_SCREENSHOT_ERRORS.alreadyUploaded };
+        for (const materialId of await writeBatch(tx, taskId, judged, at)) {
+          const answer: PendingAnswer = { value: invoiceId };
           await tx
-            .insertInto('material')
-            .values({ material_id: randomUUID(), task_id: taskId, account_id: accountId, batch_id: batchId, blob_sha256: file.sha256, file_name: file.fileName, source_path: file.relativePath, created_at: at, batch_seq: seq })
+            .insertInto('pending_answer')
+            .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: editAddress(materialId, PAYMENT_STAY_FIELD), material_id: materialId, answer: JSON.stringify(answer), revision, created_at: at })
             .execute();
         }
+        await tx.insertInto('inventory_run').values({ run_id: randomUUID(), task_id: taskId, account_id: accountId, version_no: facts.versionNo + 1, revision, started_at: at }).execute();
       });
     },
 
@@ -463,7 +550,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     // class. An accepted answer is stored under its item id and carried into every later derivation; the choice
     // `exclude` also excludes the material.
     async answerPending(taskId: string, itemId: string, answer: PendingAnswer, token: string): Promise<TaskSnapshot> {
-      return mutate(taskId, token, 'answer_pending', async ({ tx, view, at, revision }) => {
+      return mutate(taskId, token, 'answer_pending', async ({ tx, facts, loaded, view, at, revision }) => {
         let verdict: Verdict;
         let materialId: string;
         const edit = itemId.startsWith(EDIT_PREFIX);
@@ -480,9 +567,18 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           materialId = found.item.materialId;
         }
         if (!verdict.ok) return { code: verdict.code, message: verdict.message };
+        const selectedInvoiceId = fieldAnswer(verdict.answer)[DINING_INVOICE_KEY];
+        if (selectedInvoiceId || itemId === editAddress(materialId, DINING_INVOICE_FIELD)) {
+          const admission = taskPolicy(facts, loaded.erp).admit('change_dining_evidence', token);
+          if (admission === 'stale') throw new StaleStepError(await snapshot(taskId));
+          if (admission !== 'ok') return admission;
+        }
+        const { [DINING_INVOICE_KEY]: _selection, ...fields } = fieldAnswer(verdict.answer);
+        const storedAnswer = DINING_INVOICE_KEY in fieldAnswer(verdict.answer) ? fields : verdict.answer;
+        if (selectedInvoiceId) await tx.insertInto('pending_answer').values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: editAddress(materialId, DINING_INVOICE_FIELD), material_id: materialId, answer: JSON.stringify({ value: selectedInvoiceId }), revision, created_at: at }).execute();
         await tx
           .insertInto('pending_answer')
-          .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: itemId, material_id: materialId, answer: JSON.stringify(verdict.answer), revision, created_at: at })
+          .values({ answer_id: randomUUID(), task_id: taskId, account_id: accountId, item_id: itemId, material_id: materialId, answer: JSON.stringify(storedAnswer), revision, created_at: at })
           .execute();
         if (!edit && fieldAnswer(verdict.answer)[PENDING_CHOICE_KEY] === EXCLUDE_CHOICE) await excludeOnce(tx, taskId, accountId, materialId, revision, at);
       });
@@ -554,6 +650,62 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return startFillJob(taskId, token, 'refill');
     },
 
+    // 自动重新去报销 (ADR-0034), asked by the fill job runner when a job settles. It starts a fresh run of the same
+    // frozen plan on a fresh 新增单 when, and only when, the ended job is still the task's latest, its write result is
+    // unknown, its last attempt was the import or the fill (never 暂存), the executor itself said so, the job went to a
+    // 本地执行器, and fewer than AUTO_RERUN_LIMIT re-runs came before it in a row. The new plan asks ERP first whether
+    // the bill already landed (`rerun`); the executor stops before uploading if it did. Anything else: nothing, and
+    // the task stays in 对账 as before. Never throws.
+    async autoRerun(taskId: string, endedJobId: string, { serverEnded }: { serverEnded: boolean }): Promise<boolean> {
+      const erpService = erp;
+      if (!erpService?.unattended || serverEnded || !(await erpService.unattended(accountId))) return false;
+      const started: { run: FillRun | null } = { run: null };
+      try {
+        await mutate(taskId, null, 'auto_rerun', async ({ tx, loaded, at, revision }) => {
+          const ended = loaded.erp.job;
+          if (!ended || ended.job_id !== endedJobId || ended.kind !== 'fill') return NO_RERUN;
+          const code = loaded.erp.result?.code ?? null;
+          if (code !== null && EXECUTOR_MAY_STILL_RUN.has(code)) return NO_RERUN;
+          const last = await tx.selectFrom('erp_attempt').select('action').where('job_id', '=', endedJobId).orderBy(sql`rowid`, 'desc').executeTakeFirst();
+          if (last?.action !== 'import' && last?.action !== 'fill') return NO_RERUN;
+          const jobs = await tx.selectFrom('erp_job').select(['job_id', 'trigger']).where('task_id', '=', taskId).orderBy('revision', 'desc').execute();
+          const inRow = jobs.findIndex((job) => job.trigger !== 'rerun');
+          const before = inRow === -1 ? jobs.length : inRow;
+          if (before >= AUTO_RERUN_LIMIT) return NO_RERUN;
+          const frozen = JSON.parse(ended.plan) as FrozenJob;
+          const invoiceNos = [...new Set(frozen.judge.invoices.flatMap((invoice) => (invoice.identity?.number ? [invoice.identity.number] : [])))];
+          // Without a number to ask about, ERP cannot be asked, and the re-run's precondition cannot be met.
+          if (!invoiceNos.length || invoiceNos.length !== frozen.judge.invoices.length || !invoiceNos.every((no) => INVOICE_NO.test(no))) return NO_RERUN;
+          const unreachable = await erpService.executorReady?.(tx, accountId);
+          if (unreachable) return unreachable;
+          const jobId = newJobId();
+          const job: FrozenJob = {
+            plan: { ...frozen.plan, jobId, replaceAbandonedForm: true, rerun: { invoiceNos, marks: jobs.map((row) => draftMarkOf(row.job_id)) } },
+            judge: frozen.judge,
+            rerunOf: { jobId: endedJobId, code, no: before + 1 },
+          };
+          const maintenance = erpService.acquireErp ? erpService.acquireErp() : { release: () => undefined };
+          if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护。' };
+          if (!erpService.lease.acquire({ accountId, taskId, jobId })) {
+            maintenance.release();
+            return ERP_IN_USE;
+          }
+          started.run = { jobId, accountId, taskId, trigger: 'rerun', frozen: job, maintenance };
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger: 'rerun', confirmation_digest: ended.confirmation_digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
+        });
+      } catch (error) {
+        if (started.run) {
+          erpService.lease.release(started.run.jobId);
+          started.run.maintenance?.release();
+        }
+        if (!(error instanceof ActionRefusedError || error instanceof StaleStepError)) console.error(`自动重新去报销 of task ${taskId} failed`, error);
+        return false;
+      }
+      if (!started.run) return false;
+      erpService.run(started.run);
+      return true;
+    },
+
     // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).
     async cancelErpWrite(taskId: string, token: string): Promise<TaskSnapshot> {
       return mutate(taskId, token, 'cancel_erp_write', async ({ tx, facts, at, revision }) => {
@@ -583,7 +735,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
               maintenance.release();
               return ERP_IN_USE;
             }
-            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erpService.config.origin }, maintenance };
+            const draft = loaded.erp.draftMark === null ? undefined : await draftLookupOf(tx, taskId, fill.job_id, loaded.erp.draftMark, loaded.erp);
+            started.run = { jobId, accountId, taskId, plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId, taskId, erpOrigin: loaded.erp.frozen?.plan.erpOrigin ?? erpService.config.origin, ...(draft ? { draft } : {}) }, maintenance };
             await tx.insertInto('erp_reconcile_job').values({ job_id: jobId, fill_job_id: fill.job_id, task_id: taskId, account_id: accountId, revision, started_at: at }).execute();
           },
         );
@@ -641,8 +794,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     generatePrintSheet: (taskId: string) => printChange(taskId, (state) => printActions.generate(state)),
     rotatePlacement: (taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean) => printChange(taskId, (state) => printActions.rotate(state, pageId, slot, rotate)),
     cropPlacement: (taskId: string, pageId: string, slot: PlacementSlot, corners: Corners) => printChange(taskId, (state) => printActions.crop(state, pageId, slot, corners)),
-    addPaymentScreenshot: (taskId: string, voucherMaterialId: string, file: UploadedFile) => printChange(taskId, (state) => printActions.addScreenshot(state, voucherMaterialId, file)),
     removePaymentScreenshot: (taskId: string, screenshotId: string) => printChange(taskId, (state) => printActions.removeScreenshot(state, screenshotId)),
+    completePaymentScreenshots: (taskId: string, voucherMaterialId: string) => printChange(taskId, (state) => printActions.completeScreenshots(state, voucherMaterialId)),
 
     // A content-addressed file of this task (an original, a payment screenshot, a composed sheet or page image).
     async file(taskId: string, sha256: string): Promise<{ path: string; mime: string } | null> {

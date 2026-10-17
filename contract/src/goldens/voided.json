@@ -2,7 +2,7 @@
   "revision": 3,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
-    "name": "2026-09-29 新建报销",
+    "name": "2000-01-01 新建报销",
     "period": null,
     "homeCity": "杭州",
     "createdAt": "2000-01-01T00:00:00Z",
@@ -151,7 +151,9 @@
     "draftNo": null,
     "abortReason": null,
     "loginNotice": null,
-    "erpAccount": null
+    "rerunNotice": null,
+    "erpAccount": null,
+    "review": null
   },
   "readback": {
     "status": "none",

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Button,
   InlineNotification,
@@ -25,6 +25,7 @@ import {
   type TaskSnapshot,
   STAGE_DEFAULT_PAGE,
 } from '@baox/contract';
+import { useAppStore } from '../adapter/context';
 import { formatDateTime } from '../format';
 import { navigate, taskHash } from '../router';
 import { ActionBar } from '../shell/ActionBar';
@@ -36,7 +37,7 @@ import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { useAction } from '../shell/useAction';
 import { useReopenUpload } from '../shell/useReopenUpload';
-import { PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
+import { ERP_RUN_LOGS_OUT, PAGE_COPY, REVIEW_ORDER_NOTE } from './page-copy';
 import { DeadlineWarningList } from './DeadlineWarningList';
 
 // 整单明细确认页：Skill 的唯一一次整单确认（preparation_confirmation），在项目归属、报销信息核对与材料准备之后。
@@ -138,6 +139,24 @@ function cellsOf(line: Line): readonly Cell[] {
   ];
 }
 
+// Whether this employee's 去报销 runs in the baox 本地执行器, which signs in to ERP itself with the saved ERP 凭据
+// (ADR-0033): only a 试登录 through a 本地执行器 makes them authorised (saved but untested or refused says nothing about
+// what is paired). Read once while 去报销 can still start; a failed read keeps the 浏览器扩展 copy.
+function useHostedSignIn(asking: boolean): boolean {
+  const store = useAppStore();
+  const [hosted, setHosted] = useState(false);
+  useEffect(() => {
+    if (!asking) return;
+    let live = true;
+    store.adapter.getErpCredentials().then(
+      (view) => { if (live) setHosted(view.status === 'authorised'); },
+      () => undefined,
+    );
+    return () => { live = false; };
+  }, [asking, store]);
+  return hosted;
+}
+
 function CellText({ cell }: { cell: Cell }) {
   if (!cell.code) return <>{cell.text}</>;
   return (
@@ -156,8 +175,9 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const catalogMismatch = catalog.status === 'mismatch';
   const preparationBlocked = preparation.status === 'blocked';
   const erpStarted = erp.status !== 'idle';
-  const erpDone = erp.outcome === 'filled' || erp.outcome === 'saved';
+  const erpDone = erp.outcome === 'filled' || erp.outcome === 'drafted' || erp.outcome === 'saved';
   const purpose = snapshot.projectAssignment.purpose;
+  const hostedSignIn = useHostedSignIn(confirmed && !erpStarted);
   const packageFiles = preparation.packageFiles;
   const deadlineWarnings = snapshot.projectAssignment.deadlineWarnings;
 
@@ -272,6 +292,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </Card>
             <Card
               title="去报销"
+              label="去报销"
               actions={
                 erpDone ? (
                   <Button href={taskHash(taskId, 'done')}>查看结果</Button>
@@ -285,9 +306,17 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
               }
             >
               <p>
-                已配对的浏览器扩展会为这次报销打开报销系统标签页。你登录后，应用自动导入发票、写入 {confirmation.lineCount} 行明细并严格回读。完成时只表示单据已填好并交接给你；请你在报销系统里核对、保存并提交。
+                {hostedSignIn
+                  ? `baox 本地执行器会在你的电脑上用你保存的报销系统账号密码登录，自动导入发票、写入 ${confirmation.lineCount} 行明细并严格回读。`
+                  : `已配对的浏览器扩展会为这次报销打开报销系统标签页。你登录后，应用自动导入发票、写入 ${confirmation.lineCount} 行明细并严格回读。`}
+                完成时只表示单据已填好并交接给你；请你在报销系统里核对、保存并提交。
                 {erpDone ? '已交接，去完成页查看回读结果。' : ''}
               </p>
+              {hostedSignIn && !erpStarted ? (
+                <p className="app-caption" data-testid="erp-logs-out">
+                  {ERP_RUN_LOGS_OUT}
+                </p>
+              ) : null}
               {!erpStarted && erp.abortReason ? (
                 <p className="app-caption" role="status" data-testid="erp-abort-reason">
                   {erp.abortReason}

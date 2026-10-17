@@ -23,11 +23,11 @@ async function reachLogin(channel: ExecutorChannel) {
   await channel.emit({ type: 'step', step: 'login', status: 'running' });
 }
 
-async function attempt(plan: FillPlan, channel: ExecutorChannel, action: Mutation, n: number, erpAccount: ErpAccount) {
+async function attempt(plan: FillPlan, channel: ExecutorChannel, action: Mutation, n: number, erpAccount: ErpAccount, expectedPostconditions: Record<string, unknown> = {}) {
   await channel.emit({
     type: 'attempt_started', attemptId: `${plan.jobId}.${action}`, action,
     preconditions: { targetId: 'erp-page-1', url: `${plan.erpOrigin}/k3cloud/html5/index.aspx`, formInstanceId: 'form-1', formMode: 'new', billNo: null, receiptRowCount: n === 0 ? 0 : plan.invoices.length, detailRowCount: 1 },
-    expectedPostconditions: {}, compatibility: plan.compatibility, erpAccount,
+    expectedPostconditions, compatibility: plan.compatibility, erpAccount,
   });
 }
 
@@ -86,6 +86,42 @@ export const handedOver = (erpAccount = TEST_ERP_ACCOUNT): Script => async (plan
   await channel.emit({ type: 'step', step: 'fill', status: 'done' });
   await channel.emit({ type: 'step', step: 'handover', status: 'done' });
   return result(channel, 'handed_over', null, null, null);
+};
+
+/** The unattended path (ADR-0029): imports, fills, 暂存s under the plan's marker, and ends at the draft (内码 119946). */
+export const drafted: Script = async (plan, channel) => {
+  await pastCatalog(channel);
+  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  const event: ResultEvent = { type: 'result', status: 'drafted', code: null, message: null, billNo: null, capture: null, draftId: '119946' };
+  await channel.emit(event);
+  return event;
+};
+
+/** 暂存 was pressed under the plan's marker and the tab never turned to 修改: ERP 写入结果未知, a bill may have landed. */
+export const uncertainDraft: Script = async (plan, channel) => {
+  await pastCatalog(channel);
+  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  const event: ResultEvent = { type: 'result', status: 'unknown', code: 'draft_not_observed', message: '点了「暂存」之后页签没有变成「修改」', billNo: null, capture: null };
+  await channel.emit(event);
+  return event;
+};
+
+/**
+ * 暂存 landed (内码 119985) but the draft read back by its 内码 disagrees with what the fill verified: ERP 写入结果未知,
+ * with the 内码 on the result (as in QA on 2026-10-16).
+ */
+export const draftReadbackMismatch: Script = async (plan, channel) => {
+  await pastCatalog(channel);
+  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  const event: ResultEvent = { type: 'result', status: 'unknown', code: 'draft_readback_mismatch', message: '暂存单（内码 119985）和填写时回读的不一致：申请报销金额 1000.00 ≠ 1006.00', billNo: null, capture: null, draftId: '119985' };
+  await channel.emit(event);
+  return event;
 };
 
 // A 1×1 PNG: stands in for the cropped screenshot of ERP's error dialog.

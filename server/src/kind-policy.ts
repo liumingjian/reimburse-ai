@@ -150,6 +150,7 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
   ride_itinerary: RIDE_ITINERARY,
   // A folio forms no event of its own: `hotel-stay.ts` pairs it with its hotel invoice for the stay dates.
   hotel_folio: { kind: 'hotel_folio', label: '酒店结账单', role: 'reference', slots: SLOTS.hotel_folio, categoryLabel: () => CATEGORIES.accommodation.label, event: noEvent },
+  dining_receipt: { kind: 'dining_receipt', label: '餐饮小票', role: 'reference', slots: SLOTS.dining_receipt, categoryLabel: () => CATEGORIES.hospitality.label, event: noEvent },
   taxi_receipt: {
     kind: 'taxi_receipt',
     label: '出租车车费发票',
@@ -185,5 +186,20 @@ export const KINDS: Readonly<Record<MaterialKind, KindSpec>> = {
     identity: ({ invoiceCode, invoiceNumber }) =>
       /^(?:\d{10}|\d{12})$/.test(invoiceCode ?? '') && /^\d{8}$/.test(invoiceNumber ?? '') ? `vat-legacy:${invoiceCode}:${invoiceNumber}` : null,
     faceInvoiceType: () => '普通发票',
+  },
+  // A 支付截图 forms no event and has no invoice identity, so it never counts toward 发票占用 (ADR-0032). Its amount is
+  // the payment, written positive however the app signs it.
+  payment_screenshot: {
+    kind: 'payment_screenshot',
+    label: '支付截图',
+    role: 'reference',
+    slots: SLOTS.payment_screenshot,
+    categoryLabel: () => CATEGORIES.accommodation.label,
+    event: noEvent,
+    check({ amount, payTime }) {
+      if (amount !== undefined && (slotCents(amount) ?? 0) <= 0) return '支付金额应大于 0。';
+      if (payTime && !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(payTime)) return '支付时间应写成 时:分 或 时:分:秒，例如 13:01:12。';
+      return null;
+    },
   },
 };

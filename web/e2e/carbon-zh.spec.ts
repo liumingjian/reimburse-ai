@@ -72,6 +72,8 @@ async function englishLeftovers(page: Page): Promise<string[]> {
 }
 
 test('主要页面没有 Carbon 自带的英文文案', async ({ page }) => {
+  // 一个用例逐页打开近二十个页面：单独跑 11–13 秒，整套并行时会顶到默认的 30 秒。
+  test.setTimeout(120_000);
   for (const [query, hash] of PAGES) {
     await page.goto(open(query, hash));
     await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();

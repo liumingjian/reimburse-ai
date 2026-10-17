@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { EXCLUDE_MATERIAL_ERRORS, STALE_STEP_NOTICE, CATALOG_PREPARATION_COPY, PROJECT_CHANGED_NOTICE, REVIEW_INVALIDATED_NOTICE } from '@baox/contract';
@@ -83,6 +83,37 @@ describe('整单明细确认', () => {
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
     expect(screen.queryByRole('button', { name: '追加材料' })).toBeNull();
+  });
+
+  test('报销系统账号密码试登录成功（走 baox 本地执行器）：去报销卡片说明由本地执行器登录，并在去报销按钮旁一句话提醒报销系统里的登录会被退出；没保存或被拒绝照旧说浏览器扩展，不提醒', async () => {
+    const adapter = renderReview();
+    await screen.findByRole('heading', { name: '整单明细确认' });
+    fireEvent.click(checkbox());
+    await screen.findByRole('button', { name: '去报销' });
+    expect(screen.getByText(/已配对的浏览器扩展会为这次报销打开报销系统标签页/)).toBeTruthy();
+    expect(screen.queryByTestId('erp-logs-out')).toBeNull();
+    expect(screen.queryByText('去报销期间你在报销系统里的登录会被退出。')).toBeNull();
+    cleanup();
+
+    await adapter.saveErpCredentials({ account: 'zhangsan', password: 'wrong' });
+    render(<App adapter={adapter} />);
+    await screen.findByRole('button', { name: '去报销' });
+    expect(screen.getByText(/已配对的浏览器扩展会为这次报销打开报销系统标签页/)).toBeTruthy();
+    expect(screen.queryByTestId('erp-logs-out')).toBeNull();
+    expect(screen.queryByText('去报销期间你在报销系统里的登录会被退出。')).toBeNull();
+    cleanup();
+
+    await adapter.saveErpCredentials({ account: 'zhangsan', password: 'secret' });
+    render(<App adapter={adapter} />);
+    await screen.findByRole('button', { name: '去报销' });
+    const warning = await screen.findByTestId('erp-logs-out');
+    expect(warning.textContent).toBe('去报销期间你在报销系统里的登录会被退出。');
+    // 一句话，不是挡路的对话框：去报销仍是一次点击，警告与按钮在同一张「去报销」卡片里。
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const card = screen.getByRole('region', { name: '去报销' });
+    expect(within(card).getByRole('button', { name: '去报销' })).toBeTruthy();
+    expect(within(card).getByTestId('erp-logs-out')).toBe(warning);
+    expect(screen.getByText(/baox 本地执行器会在你的电脑上用你保存的报销系统账号密码登录/)).toBeTruthy();
   });
 
   test('点「确认」：出现并列的去打印与去报销；去打印进入打印稿，去报销请服务端开始写入并进入 ERP 填报页（没有开始填报）', async () => {

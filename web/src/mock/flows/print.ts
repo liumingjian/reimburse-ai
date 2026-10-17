@@ -1,11 +1,26 @@
-import { PRINT_ACTION_ERRORS, stayTrioItemId, type ActionError, type PlacementSlot, type ActionOutcome, type AppAdapter, PAYMENT_SCREENSHOT_ERRORS, type PrintPage, type TaskSnapshot } from '@baox/contract';
+import {
+  PENDING_CHOICE_KEY,
+  PAYMENT_SCREENSHOT_ERRORS,
+  PRINT_ACTION_ERRORS,
+  STAY_TRIO_COPY,
+  fieldAnswer,
+  screenshotGroupOf,
+  stayTrioItemId,
+  type ActionError,
+  type ActionOutcome,
+  type AppAdapter,
+  type PlacementSlot,
+  type PrintPage,
+  type TaskSnapshot,
+} from '@baox/contract';
 import type { MockBus } from '../bus';
-import { buildPrintSheet, cornersValid, cropPage, refreshScreenshots, rotatePage } from '../fixtures/print';
+import { buildPrintSheet, cornersValid, cropPage, rotatePage } from '../fixtures/print';
 import { settlePending } from './pending';
 
-// 支付截图与打印稿（生成、旋转、四角裁剪）。这些动作都不碰整单明细确认与 step，也不带 stepToken。
+// 支付截图与打印稿（生成、旋转、四角裁剪）。这些动作都不带 stepToken，也不碰整单明细确认；支付截图的「已传齐」、删空，以及
+// 「确认没有支付截图」之后的上传会改变缺支付截图待确认项的状态，随之改变 step（同服务端）。
 
-export type PrintFlow = Pick<AppAdapter, 'addPaymentScreenshot' | 'removePaymentScreenshot' | 'generatePrintSheet' | 'rotatePlacement' | 'cropPlacement'>;
+export type PrintFlow = Pick<AppAdapter, 'addPaymentScreenshots' | 'removePaymentScreenshot' | 'completePaymentScreenshots' | 'generatePrintSheet' | 'rotatePlacement' | 'cropPlacement'>;
 
 // 图片判定按扩展名，其次按 MIME（无扩展名时）。
 function isImage(file: File): boolean {
@@ -24,9 +39,27 @@ function objectUrl(file: File, screenshotId: string): string {
 export function createPrintFlow(bus: MockBus): PrintFlow {
   let nextScreenshotNo = 1;
 
-  // 支付截图变了：已生成的打印稿随之更新该页截图与提醒（不作废、不碰确认）。
-  const afterScreenshotChange = (snapshot: TaskSnapshot) => {
-    if (snapshot.printSheet.status === 'generated') snapshot.printSheet = refreshScreenshots(snapshot.printSheet, snapshot);
+  const screenshotItemOf = (snapshot: TaskSnapshot, invoiceId: string) => snapshot.pendingItems.find((candidate) => candidate.itemId === stayTrioItemId('screenshot', invoiceId));
+  // 支付截图组（#331，同服务端 print/service.ts）：只有住宿发票（列出了它的缺支付截图待确认项）收支付截图；组锁定时
+  // （screenshotGroup.locked，见 fixtures/print.ts withScreenshotGroups）增、删、「已传齐」都拒绝。打印稿只在确认后存在，
+  // 所以截图变化从不重排已生成的打印稿。
+  const refusal = (snapshot: TaskSnapshot, voucherMaterialId: string): ActionOutcome | null => {
+    const item = screenshotItemOf(snapshot, voucherMaterialId);
+    // An excluded invoice leaves the 住宿 trio, as on the server.
+    if (!item?.screenshotGroup || fieldAnswer(item.answer)[PENDING_CHOICE_KEY] === 'exclude') return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+    if (item.screenshotGroup.locked) return bus.fail('screenshot_locked', STAY_TRIO_COPY.changeLocked);
+    return null;
+  };
+  const groupOf = (snapshot: TaskSnapshot, voucherMaterialId: string) => screenshotGroupOf(snapshot.paymentScreenshots, voucherMaterialId);
+  // The invoice's screenshot item goes back to pending, its answer dropped (#332).
+  const reopen = (snapshot: TaskSnapshot, taskId: string, invoiceId: string) => {
+    const item = screenshotItemOf(snapshot, invoiceId);
+    if (!item) return;
+    item.status = 'open';
+    item.answer = null;
+    const invoice = snapshot.materials.find((material) => material.materialId === invoiceId);
+    if (invoice) invoice.status = 'pending';
+    settlePending(snapshot, bus.projectAllowList(taskId));
   };
 
   // 打印稿的旋转与裁剪：只改这一页的放置（服务端立即重新渲染该页），不改原件、不碰确认状态与 step。
@@ -45,40 +78,84 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
   };
 
   return {
-    // 支付截图 (payment screenshot): added on a generated 打印稿 (print sheet), from the print page; images only; one per
-    // invoice, another one replaces it. It touches only paymentScreenshots and the sheet, never the confirmation or step.
-    // Like the server (#213), a 住宿 invoice whose missing-screenshot item is open takes one before any sheet exists;
-    // the item then goes away.
-    async addPaymentScreenshot(taskId, voucherMaterialId, file) {
+    // 支付截图 from the item (ADR-0032): the server adds them as a batch placed with this invoice and inventories again.
+    // The mock has no parser, so it lists them as screenshots placed with the invoice that cover it, and settles the
+    // item at once.
+    async addPaymentScreenshots(taskId, voucherMaterialId, files) {
       const snapshot = bus.draft(taskId);
-      const trioItemId = stayTrioItemId('screenshot', voucherMaterialId);
-      const asked = snapshot.pendingItems.some((item) => item.itemId === trioItemId && item.status === 'open');
-      if (snapshot.printSheet.status === 'generated') {
-        const page = snapshot.printSheet.pages.find((candidate) => candidate.top?.materialId === voucherMaterialId);
-        if (!page || !page.acceptsPaymentScreenshot) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-      } else if (!asked) {
-        return bus.fail('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
+      const refused = refusal(snapshot, voucherMaterialId);
+      if (refused) return refused;
+      if (files.some((file) => !isImage(file))) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
+      const invoice = snapshot.materials.find((material) => material.materialId === voucherMaterialId);
+      if (!invoice) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+      for (const file of files) {
+        const materialId = `s${nextScreenshotNo}`;
+        nextScreenshotNo += 1;
+        snapshot.materials.push({
+          ...invoice,
+          materialId,
+          fileName: file.name,
+          relativePath: file.name,
+          contentHash: `mock-${materialId}`,
+          kind: 'payment_screenshot',
+          layout: 'labelled',
+          kindLabel: '支付截图',
+          role: 'reference',
+          shape: 'photo',
+          mediaType: 'image',
+          status: 'ok',
+          checkText: '',
+          linkedMaterialIds: [voucherMaterialId],
+          pendingItemIds: [],
+          originalUrl: objectUrl(file, materialId),
+          previewUrl: null,
+          variants: [],
+          fields: [],
+          payment: { invoiceId: voucherMaterialId, chosen: true, options: [] },
+        });
+        invoice.linkedMaterialIds = [...invoice.linkedMaterialIds, materialId];
+        // As on the server, the snapshot's 支付截图 list also carries the placed materials: they print.
+        snapshot.paymentScreenshots.push({ screenshotId: materialId, voucherMaterialId, fileName: file.name, url: objectUrl(file, materialId) });
       }
-      if (!isImage(file)) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
-      const screenshotId = `s${nextScreenshotNo}`;
-      nextScreenshotNo += 1;
-      snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.voucherMaterialId !== voucherMaterialId);
-      snapshot.paymentScreenshots.push({ screenshotId, voucherMaterialId, fileName: file.name, url: objectUrl(file, screenshotId) });
-      if (asked) {
-        snapshot.pendingItems = snapshot.pendingItems.filter((item) => item.itemId !== trioItemId);
+      const item = screenshotItemOf(snapshot, voucherMaterialId);
+      if (item?.status === 'open') {
+        item.status = 'resolved';
+        item.answer = null;
         settlePending(snapshot, bus.projectAllowList(taskId));
       }
-      afterScreenshotChange(snapshot);
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);
     },
+    // Removing one keeps the rest in order. An emptied group is no longer complete, so an item settled on it opens again.
     async removePaymentScreenshot(taskId, screenshotId) {
       const snapshot = bus.draft(taskId);
-      if (!snapshot.paymentScreenshots.some((shot) => shot.screenshotId === screenshotId)) {
-        return bus.fail('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
-      }
+      const removing = snapshot.paymentScreenshots.find((shot) => shot.screenshotId === screenshotId);
+      if (!removing) return bus.fail('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
+      const refused = refusal(snapshot, removing.voucherMaterialId);
+      if (refused) return refused;
       snapshot.paymentScreenshots = snapshot.paymentScreenshots.filter((shot) => shot.screenshotId !== screenshotId);
-      afterScreenshotChange(snapshot);
+      const invoiceId = removing.voucherMaterialId;
+      if (groupOf(snapshot, invoiceId).length === 0 && bus.completeScreenshotGroups(taskId).delete(invoiceId)) {
+        const item = screenshotItemOf(snapshot, invoiceId);
+        if (item?.status === 'resolved' && item.answer === null) reopen(snapshot, taskId, invoiceId);
+      }
+      snapshot.task.updatedAt = bus.now();
+      return bus.commit(snapshot);
+    },
+    // 「已传齐」: the group is complete and the item settles on it (idempotent); an empty group cannot be complete.
+    async completePaymentScreenshots(taskId, voucherMaterialId) {
+      const snapshot = bus.draft(taskId);
+      const refused = refusal(snapshot, voucherMaterialId);
+      if (refused) return refused;
+      if (groupOf(snapshot, voucherMaterialId).length === 0) return bus.fail('screenshot_group_empty', PAYMENT_SCREENSHOT_ERRORS.empty);
+      bus.completeScreenshotGroups(taskId).add(voucherMaterialId);
+      const item = screenshotItemOf(snapshot, voucherMaterialId);
+      if (item?.status === 'open') {
+        item.status = 'resolved';
+        const invoice = snapshot.materials.find((material) => material.materialId === voucherMaterialId);
+        if (invoice && !snapshot.pendingItems.some((other) => other.materialId === voucherMaterialId && other.status === 'open')) invoice.status = 'ok';
+        settlePending(snapshot, bus.projectAllowList(taskId));
+      }
       snapshot.task.updatedAt = bus.now();
       return bus.commit(snapshot);
     },

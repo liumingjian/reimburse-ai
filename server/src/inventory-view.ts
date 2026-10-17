@@ -1,24 +1,27 @@
-import { MATERIAL_KINDS, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingField, type PendingItem } from '@baox/contract';
+import { DINING_INVOICE_FIELD, DINING_INVOICE_KEY, type DiningAssignment, DINING_COPY, DINING_ITEM_CODES, MANUAL_FILL_CHOICE, MANUAL_KIND_KEY, MATERIAL_KINDS, manualKindOf, PAYMENT_COPY, PENDING_CHOICE_KEY, fieldAnswer, isAllocationAnswer, type ExpenseEvent, type FieldCandidate, type Inventory, type Line, type Material, type MaterialKind, type PendingAnswer, type PendingField, type PendingItem, type PendingManualKind } from '@baox/contract';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES, type ResolvedErpInvoiceType } from '@baox/erp-executor/invoice-type';
 import type { ParseOutcome, Recognised } from './parse/dispatch';
 import { planTransport, type PlannedLine } from './allocation';
 import { factsOf, isDerivedSource } from './parse/facts';
 import { pairHotelStays } from './hotel-stay';
+import { deriveDiningEvidence, diningProblem } from './dining-evidence';
 import { KINDS, type EventDraft } from './kind-policy';
-import { fieldLabel, slotOf, type Slot } from './parse/slots';
+import { CATEGORIES, fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
-import { checkStayTrios, stayVoucherIds, type StayTrio, type TrioVoucher } from './stay-trio';
+import { proposeFolio, type FolioProposal, type ProposalStay } from './folio-proposal';
+import { checkPayments, type LabelledStay } from './stay-payments';
+import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
 // here is stored. Pending items are derived per run with stable ids `<code>.<materialId>[.<key>]`, which is the
 // answer key `(kind, materialId, field|segment)`: a re-derived item meets its earlier answer (ADR-0014).
 //
-// Item codes: unrecognised → manual_kind → manual_fill (手工补填, manual fill), ambiguous_layout, parse_failed,
+// Item codes: unrecognised (with 手工补填, manual fill, in one step), ambiguous_layout, parse_failed,
 // validation_failure, missing_required, duplicate_invoice (重复发票 inside the task),
-// category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
+// dining_receipt_missing (#359), dining_invoice_missing (#361), dining_amount_mismatch (#362); category_city_missing (#188), stay_invoice_missing / stay_folio_missing / stay_screenshot_missing (the 住宿 trio,
 // #213, `stay-trio.ts`); allocation, itinerary_ambiguous and given_up come from #184's transport plan
 // (`allocation.ts`), answered generically (`pending/answers.ts`).
 
@@ -87,8 +90,16 @@ export const INVENTORY_COPY = {
   manualCheck: '手工补填',
 } as const;
 
+// An unrecognised image proposed as a 住宿 invoice's folio (`folio-proposal.ts`): the choice that confirms it.
+const FOLIO_CHOICE = 'folio:';
+const FOLIO_PROPOSAL_COPY = {
+  why: (p: FolioProposal) =>
+    `没有任何版式匹配这份材料，但图里有「${p.fileName}」的价税合计 ${p.folioTotal}，日期也对得上，可能是它的酒店结账单。确认后按入住 ${p.checkIn}、离店 ${p.checkOut}、消费合计 ${p.folioTotal} 记为它的结账单；对不上就手工补填。`,
+  confirm: (fileName: string) => `是「${fileName}」的结账单`,
+  check: '按发票确认',
+} as const;
+
 const REPLACE_HINT = '换原件请在上传页追加材料后重新盘点。';
-const MANUAL_FILL = 'manual_fill';
 const REFERENCE = 'reference';
 const CITY_MISSING_CHECK = '取不到费用发生城市';
 // A recognised material missing a required slot said nothing in the 校验 column, which rendered as 无; it now names the
@@ -125,11 +136,11 @@ type Worked = {
 };
 
 function choice(itemId: string, materialId: string, title: string, why: string, choices: PendingItem['choices']): PendingItem {
-  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'choice', resolver: '要你处理', fields: [], choices, allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null };
 }
 
 function form(itemId: string, materialId: string, title: string, why: string, fields: PendingField[]): PendingItem {
-  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, status: 'open', answer: null };
+  return { itemId, materialId, title, why, kind: 'form', resolver: '要你处理', fields, choices: [], allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null };
 }
 
 const pendingField = (slot: Slot): PendingField => ({ key: slot.key, label: slot.label, placeholder: '', required: slot.required, format: slot.format });
@@ -235,12 +246,43 @@ function allocationAnswers(answers: StoredAnswers): Map<string, string[]> {
   return found;
 }
 
-const MANUAL_KINDS = MATERIAL_KINDS.filter((kind) => KINDS[kind].slots.length > 0);
+const MANUAL_FORMS: PendingManualKind[] = MATERIAL_KINDS.filter((kind) => KINDS[kind].slots.length > 0).map((kind) => ({ kind, label: KINDS[kind].label, fields: KINDS[kind].slots.map(pendingField) }));
+
+// The kind and the values of a 手工补填 answer (empty values dropped), else null.
+function manualFilled(answer: PendingAnswer): { kind: MaterialKind; values: Values; how: string } | null {
+  const { [PENDING_CHOICE_KEY]: choice, [MANUAL_KIND_KEY]: kind, ...values } = fieldAnswer(answer);
+  const form = manualKindOf({ manualKinds: MANUAL_FORMS }, { [MANUAL_KIND_KEY]: kind ?? '' });
+  return choice === MANUAL_FILL_CHOICE && form ? { kind: form.kind, values: nonEmpty(Object.fromEntries(form.fields.map((field) => [field.key, values[field.key] ?? '']))), how: INVENTORY_COPY.manualCheck } : null;
+}
+
+// Before #342, 手工补填 took three answers: 手工补填 here, the kind (`manual_kind.<id>`, `kind:<kind>`), then the form
+// (`manual_fill.<id>`). A material answered that way reads as the one answer the three stand for.
+function withLegacyManual(answers: StoredAnswers, id: string): StoredAnswers {
+  const itemId = `unrecognised.${id}`;
+  const first = fieldAnswer(answers.get(itemId) ?? null);
+  const kind = fieldAnswer(answers.get(`manual_kind.${id}`) ?? null)[PENDING_CHOICE_KEY];
+  const form = answers.get(`manual_fill.${id}`);
+  if (first[PENDING_CHOICE_KEY] !== MANUAL_FILL_CHOICE || first[MANUAL_KIND_KEY] || !kind?.startsWith('kind:') || !form) return answers;
+  return new Map(answers).set(itemId, { ...fieldAnswer(form), [PENDING_CHOICE_KEY]: MANUAL_FILL_CHOICE, [MANUAL_KIND_KEY]: kind.slice('kind:'.length) });
+}
+
+// The 住宿 invoices no folio pairs with yet, by amount as `pairHotelStays` pairs them.
+function folioless(worked: readonly Worked[]): ProposalStay[] {
+  const folioTotals = new Set(worked.flatMap((w) => (w.resolved?.kind === 'hotel_folio' && w.values['folioTotal'] ? [w.values['folioTotal']] : [])));
+  return worked.flatMap((w) => {
+    const { totalAmount, issueDate } = w.values;
+    if (w.resolved?.kind !== 'vat_invoice' || w.reference || !totalAmount || !issueDate || folioTotals.has(totalAmount)) return [];
+    if (KINDS.vat_invoice.event(w.values)?.category.code !== CATEGORIES.accommodation.code) return [];
+    return [{ invoiceId: w.m.materialId, fileName: w.m.fileName, totalAmount, issueDate }];
+  });
+}
 
 // Derives one material's items, settling each against the stored answers as it goes: a later item exists only once the
-// earlier one is answered (unrecognised → pick a kind → fill its form).
-function work(m: ViewMaterial, outcome: ParseOutcome, answers: StoredAnswers, answerables: Map<string, Answerable>, editables: Map<string, Editable>): Worked {
+// earlier one is answered.
+// `stays`: the 住宿 invoices an unrecognised image may be proposed as the folio of (`folio-proposal.ts`).
+function work(m: ViewMaterial, outcome: ParseOutcome, stored: StoredAnswers, answerables: Map<string, Answerable>, editables: Map<string, Editable>, stays: readonly ProposalStay[] = []): Worked {
   const id = m.materialId;
+  const answers = withLegacyManual(stored, id);
   const name = m.fileName;
   const w: Worked = { m, items: [], resolved: null, reference: false, values: {}, fields: [], notes: [], kindLabel: INVENTORY_COPY.unrecognised };
   const add = (item: PendingItem, check?: AnswerCheck): PendingItem => {
@@ -254,42 +296,41 @@ function work(m: ViewMaterial, outcome: ParseOutcome, answers: StoredAnswers, an
     case 'unrecognised': {
       const unreadable = outcome.reason === 'unreadable_document';
       w.notes.push(unreadable ? '读不出文件内容' : '没有匹配的版式');
+      const proposal = m.mediaType === 'image' && outcome.clues ? proposeFolio(outcome.clues, stays) : null;
+      const why = unreadable ? '这份文件读不出内容。' : proposal ? FOLIO_PROPOSAL_COPY.why(proposal) : '没有任何版式匹配这份材料。';
       const first = add(
-        choice(`unrecognised.${id}`, id, `认不出「${name}」`, unreadable ? '这份文件读不出内容。' : '没有任何版式匹配这份材料。', [
-          EXCLUDE,
-          { key: REFERENCE, label: '作为参考材料' },
-          { key: MANUAL_FILL, label: '手工补填' },
-        ]),
+        {
+          ...choice(`unrecognised.${id}`, id, `认不出「${name}」`, why, [
+            ...(proposal ? [{ key: `${FOLIO_CHOICE}${proposal.invoiceId}`, label: FOLIO_PROPOSAL_COPY.confirm(proposal.fileName) }] : []),
+            EXCLUDE,
+            { key: REFERENCE, label: '作为参考材料' },
+            { key: MANUAL_FILL_CHOICE, label: '手工补填' },
+          ]),
+          manualKinds: MANUAL_FORMS,
+        },
+        (answer) => {
+          const filled = manualFilled(answer);
+          return filled ? (KINDS[filled.kind].check?.(filled.values) ?? null) : null;
+        },
       );
       if (chosen(first) === REFERENCE) w.reference = true;
-      if (chosen(first) === MANUAL_FILL) {
-        const picking = add(
-          choice(`manual_kind.${id}`, id, `「${name}」是哪一种材料`, '选定材料种类后，对照原件逐项填写这个种类的字段；填写的值同样要通过核对。', [
-            ...MANUAL_KINDS.map((kind) => ({ key: `kind:${kind}`, label: KINDS[kind].label })),
-            EXCLUDE,
-          ]),
-        );
-        const picked = chosen(picking)?.replace(/^kind:/, '') as MaterialKind | undefined;
-        if (picked && MANUAL_KINDS.includes(picked)) {
-          const spec = KINDS[picked];
-          const filled = add(
-            form(`manual_fill.${id}`, id, `手工补填「${name}」`, `按${spec.label}的字段对照原件填写。系统不会倒算任何金额。`, spec.slots.map(pendingField)),
-            (answer) => spec.check?.(nonEmpty(fieldAnswer(answer))) ?? null,
-          );
-          if (filled.status === 'resolved') {
-            const values = nonEmpty(fieldAnswer(filled.answer));
-            w.resolved = {
-              kind: picked,
-              layout: null,
-              parserVersion: null,
-              kindLabel: `${spec.label}（手工补填）`,
-              candidates: Object.entries(values).map(([key, value]) => ({ key, value, source: 'user', parserVersion: '', evidence: 'explicit', refs: [] })),
-              findings: [],
-              missing: [],
-            };
-            w.notes.splice(0, w.notes.length, INVENTORY_COPY.manualCheck);
-          }
-        }
+      const confirmed = proposal && chosen(first) === `${FOLIO_CHOICE}${proposal.invoiceId}`;
+      const filled = confirmed
+        ? { kind: 'hotel_folio' as const, values: { checkIn: proposal.checkIn, checkOut: proposal.checkOut, folioTotal: proposal.folioTotal }, how: FOLIO_PROPOSAL_COPY.check }
+        : first.status === 'resolved' && first.answer
+          ? manualFilled(first.answer)
+          : null;
+      if (filled) {
+        w.resolved = {
+          kind: filled.kind,
+          layout: null,
+          parserVersion: null,
+          kindLabel: `${KINDS[filled.kind].label}（${filled.how}）`,
+          candidates: Object.entries(filled.values).map(([key, value]) => ({ key, value, source: 'user', parserVersion: '', evidence: 'explicit', refs: [] })),
+          findings: [],
+          missing: [],
+        };
+        w.notes.splice(0, w.notes.length, filled.how);
       }
       break;
     }
@@ -418,20 +459,23 @@ function recognisedItems(w: Worked, resolved: Resolved, answers: StoredAnswers, 
 }
 
 // `answers`: the latest stored answer per item id / edit address (#187), allocation answers included — they reach
-// #184's per-leg split through `planTransport`. `screenshots`: the voucher material ids that have a current 支付截图.
+// #184's per-leg split through `planTransport`. `screenshots`: the vouchers' 支付截图 groups (#331).
 export function inventoryView(
   materials: readonly ViewMaterial[],
   results: RunResults,
   { homeCity, rules }: CategoryContext = { homeCity: '', rules: COMPANY_RULES },
   answers: StoredAnswers = new Map(),
-  screenshots: ReadonlySet<string> = new Set(),
+  screenshots: ReadonlyMap<string, ScreenshotGroup> = new Map(),
 ): InventoryView {
   const answerables = new Map<string, Answerable>();
   const editables = new Map<string, Editable>();
   let waiting = 0;
   const waitingBy = { pdf: 0, image: 0 };
 
+  // An unrecognised image is worked last, once the 住宿 invoices it may be the folio of are known, and put back in
+  // upload order.
   const worked: Worked[] = [];
+  const images: { at: number; m: ViewMaterial; outcome: ParseOutcome }[] = [];
   for (const m of materials) {
     if (m.excluded || !results) continue;
     const outcome = results.outcomes.get(m.materialId);
@@ -440,8 +484,11 @@ export function inventoryView(
       waitingBy[m.mediaType] += 1;
       continue;
     }
-    worked.push(work(m, outcome, answers, answerables, editables));
+    if (outcome.outcome === 'unrecognised' && outcome.clues && m.mediaType === 'image') images.push({ at: worked.length + images.length, m, outcome });
+    else worked.push(work(m, outcome, answers, answerables, editables));
   }
+  const unpaired = folioless(worked);
+  for (const { at, m, outcome } of images) worked.splice(at, 0, work(m, outcome, answers, answerables, editables, unpaired));
 
   const variantPlan = planInvoiceVariants(worked, answers, answerables);
   const includedWorked = variantPlan.included;
@@ -586,9 +633,7 @@ export function inventoryView(
     });
   }
 
-  // Business order (kernel confirmation table): local → out-of-town city transport → long distance → accommodation;
-  // within a category, voucher upload order. Invoice labels follow voucher upload order.
-  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation'];
+  const rank = ['local_city_transport', 'remote_city_transport', 'long_distance', 'accommodation', 'hospitality'];
   const ordered = [...drafts].sort((a, b) => rank.indexOf(a.draft.category.code) - rank.indexOf(b.draft.category.code));
 
   // The 住宿 invoices are the vouchers the print stage will compose as 住宿 pages, chosen by the same rule.
@@ -598,12 +643,128 @@ export function inventoryView(
   // Pairing: a hotel invoice and its folio form one stay (`hotel-stay.ts`).
   const stays = new Map(pairHotelStays(stayInvoices, folios).map((stay) => [stay.invoiceId, stay]));
   const linked = new Map<string, string[]>([...stays.values()].flatMap((stay) => [[stay.invoiceId, [stay.folioId]], [stay.folioId, [stay.invoiceId]]]));
+  const diningInvoices = ordered.filter(({ draft }) => draft.category.code === 'hospitality');
+  const diningReceipts = includedWorked.filter((w) => w.resolved?.kind === 'dining_receipt' && !w.reference && !w.items.some(isOpen));
+  const receiptIds = new Set(diningReceipts.map((receipt) => receipt.m.materialId));
+  const dining = deriveDiningEvidence({
+    invoices: diningInvoices.map(({ material, draft }) => ({ invoiceId: material.materialId, amount: draft.grossAmount, label: material.fileName + ' · ' + draft.grossAmount + ' 元' })),
+    sources: includedWorked.map((w) => {
+      const selected = fieldAnswer(answers.get(editAddress(w.m.materialId, DINING_INVOICE_FIELD)) ?? null)['value'];
+      return { receiptId: w.m.materialId, paidAmount: receiptIds.has(w.m.materialId) ? w.values['paidAmount'] ?? null : null, selectedInvoiceId: selected && selected !== 'auto' ? selected : null };
+    }),
+  });
+  const receiptByInvoice = new Map(dining.pairs.map(({ invoiceId, receiptId }) => [invoiceId, receiptId]));
+  for (const { invoiceId, receiptId } of dining.pairs) {
+    linked.set(invoiceId, [receiptId]);
+    linked.set(receiptId, [invoiceId]);
+  }
+  const assignmentOf = (receiptId: string): DiningAssignment => {
+    const decision = dining.decisions.get(receiptId);
+    return {
+      address: editAddress(receiptId, DINING_INVOICE_FIELD),
+      selection: decision?.kind === 'selected_failed' ? { kind: 'selected_stale', invoiceId: decision.invoiceId, reason: diningProblem(decision.problem) }
+        : decision?.kind === 'selected_paired' ? { kind: 'selected_valid', invoiceId: decision.invoiceId } : { kind: 'automatic' },
+      options: dining.invoiceChoices(receiptId),
+    };
+  };
+  for (const w of includedWorked) {
+    const receiptId = w.m.materialId;
+    const decision = dining.decisions.get(receiptId);
+    const assignment = assignmentOf(receiptId);
+    if (receiptIds.has(receiptId) || decision?.kind === 'selected_failed') {
+      editables.set(assignment.address, { address: assignment.address, materialId: receiptId, field: DINING_INVOICE_FIELD, label: '关联餐饮发票', editClass: 'choice', format: 'text', allowed: ['auto', ...assignment.options.map((option) => option.invoiceId)], check: (value) => dining.judgeAssignment(receiptId, value) });
+    }
+    for (const item of w.items) {
+      if (!item.manualKinds.some((kind) => kind.kind === 'dining_receipt')) continue;
+      item.manualKinds = item.manualKinds.map((kind) => kind.kind === 'dining_receipt' ? { ...kind, diningAssignment: assignment } : kind);
+      const previousCheck = answerables.get(item.itemId)?.check;
+      answerables.set(item.itemId, { item, check: (answer) => {
+        const failed = previousCheck?.(answer);
+        if (failed) return failed;
+        const values = fieldAnswer(answer);
+        const invoiceId = values[DINING_INVOICE_KEY];
+        return values[MANUAL_KIND_KEY] === 'dining_receipt' && invoiceId ? dining.judgeAssignment(receiptId, invoiceId, values['paidAmount'] ?? null) : null;
+      } });
+    }
+  }
 
-  // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
-  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, answers) : { trios: [], items: new Map<string, PendingItem[]>() };
-  for (const items of trio.items.values()) {
+  // 支付截图 materials, placed with the 住宿 invoices (ADR-0032), only over a finished run like the trio below.
+  const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
+  const folioValues = new Map(folios.map((folio) => [folio.materialId, folio.values]));
+  const paymentStays = stayInvoices.map((invoice): LabelledStay => {
+    const stay = stays.get(invoice.materialId);
+    const hotel = stay ? folioValues.get(stay.folioId)?.['hotelName'] : undefined;
+    const seller = invoice.values['sellerName'];
+    const totalAmount = invoice.values['totalAmount'] ?? '';
+    return {
+      invoiceId: invoice.materialId,
+      totalAmount,
+      checkIn: stay?.checkIn ?? null,
+      checkOut: stay?.checkOut ?? null,
+      issueDate: invoice.values['issueDate'] ?? null,
+      hotelNames: [hotel, seller].filter((name): name is string => Boolean(name)),
+      label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, stay ? `${stay.checkIn}~${stay.checkOut}` : null, totalAmount),
+    };
+  });
+  const shots = includedWorked.flatMap((w) => (w.resolved?.kind === 'payment_screenshot' && !w.items.some(isOpen) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
+  const payments = results && waiting === 0 ? checkPayments(shots, paymentStays, new Set(screenshots.keys()), answers) : null;
+  for (const editable of payments?.editables ?? []) editables.set(editable.address, editable);
+  for (const items of payments?.items.values() ?? []) {
     for (const item of items) answerables.set(item.itemId, { item });
     pendingItems.push(...items);
+  }
+  for (const [shotId, invoiceId] of payments?.placement.assigned ?? []) {
+    linked.set(shotId, [invoiceId]);
+    linked.set(invoiceId, [...(linked.get(invoiceId) ?? []), shotId]);
+  }
+
+  // The 住宿 trio (#213), only over a finished run: a folio still being read is not yet missing.
+  const trio = results && waiting === 0 ? checkStayTrios(stayInvoices, folios, [...stays.values()], screenshots, payments?.paid ?? new Map(), answers) : { trios: [], items: new Map<string, PendingItem[]>(), checks: new Map<string, AnswerCheck>() };
+  for (const items of trio.items.values()) {
+    for (const item of items) {
+      const check = trio.checks.get(item.itemId);
+      answerables.set(item.itemId, check ? { item, check } : { item });
+    }
+    pendingItems.push(...items);
+  }
+
+  const diningItems = new Map<string, PendingItem[]>();
+  if (results && waiting === 0) {
+    const unpairedPaidAmounts = [...new Set(diningReceipts.filter((receipt) => !linked.has(receipt.m.materialId)).flatMap((receipt) => receipt.values['paidAmount'] ? [receipt.values['paidAmount']] : []))];
+    for (const { material, draft } of ordered) {
+      if (draft.category.code !== 'hospitality' || receiptByInvoice.has(material.materialId)) continue;
+      const mismatch = unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes(draft.grossAmount);
+      const code = mismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing;
+      const copy = mismatch ? DINING_COPY.amountMismatch : DINING_COPY.receiptMissing;
+      const why = mismatch ? DINING_COPY.amountMismatch.why(draft.grossAmount, unpairedPaidAmounts) : DINING_COPY.receiptMissing.why(draft.grossAmount);
+      const item = settle(choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]), answers);
+      item.dining = { kind: 'invoice', supplement: 'receipt' };
+      diningItems.set(material.materialId, [item]);
+      answerables.set(item.itemId, { item });
+      pendingItems.push(item);
+    }
+    for (const receipt of diningReceipts) {
+      const { materialId, fileName } = receipt.m;
+      if (linked.has(materialId) || dining.decisions.get(materialId)?.kind === 'selected_failed') continue;
+      const item = settle(choice(`${DINING_ITEM_CODES.invoiceMissing}.${materialId}`, materialId, DINING_COPY.invoiceMissing.title(fileName), DINING_COPY.invoiceMissing.why(receipt.values['paidAmount']), [EXCLUDE]), answers);
+      item.dining = { kind: 'receipt', supplement: 'invoice', assignment: assignmentOf(materialId) };
+      diningItems.set(materialId, [item]);
+      answerables.set(item.itemId, { item });
+      pendingItems.push(item);
+    }
+  }
+
+  if (results && waiting === 0) {
+    for (const decision of dining.decisions.values()) {
+      if (decision.kind !== 'selected_paired' && decision.kind !== 'selected_failed') continue;
+      const item = choice('dining_association.' + decision.receiptId, decision.receiptId, '餐饮小票关联发票', decision.kind === 'selected_failed' ? diningProblem(decision.problem) : '已按你的选择关联发票，实付金额与发票价税合计一致。', [EXCLUDE]);
+      item.dining = { kind: 'receipt', supplement: null, assignment: assignmentOf(decision.receiptId) };
+      item.status = decision.kind === 'selected_paired' ? 'resolved' : 'open';
+      item.answer = { value: decision.invoiceId };
+      diningItems.set(decision.receiptId, [item]);
+      answerables.set(item.itemId, { item });
+      pendingItems.push(item);
+    }
   }
 
   const materialViews = materials.flatMap((m): Material[] => {
@@ -615,18 +776,20 @@ export function inventoryView(
       return [{ ...baseMaterial(m), ...identity, role: 'excluded', status: 'excluded', checkText: INVENTORY_COPY.excludedCheck }];
     }
     const view = views.get(m.materialId) ?? baseMaterial(m);
-    // A trio item sits on a material that is otherwise clean: it keeps its role, but is pending while the item is open.
-    const trioItems = trio.items.get(m.materialId) ?? [];
+    const laterItems = [...(trio.items.get(m.materialId) ?? []), ...(payments?.items.get(m.materialId) ?? []), ...(diningItems.get(m.materialId) ?? [])];
+    const note = payments?.notes.get(m.materialId);
+    const assignment = payments?.assignments.get(m.materialId);
     return [{
       ...view,
       variants: (variantPlan.variantsByCanonical.get(m.materialId) ?? []).map(variantView),
-      status: trioItems.some(isOpen) ? 'pending' : view.status,
-      pendingItemIds: [...view.pendingItemIds, ...trioItems.map((item) => item.itemId)],
+      status: laterItems.some(isOpen) ? 'pending' : view.status,
+      checkText: note ? [view.checkText, note].filter(Boolean).join('；') : view.checkText,
+      pendingItemIds: [...view.pendingItemIds, ...laterItems.map((item) => item.itemId)],
       linkedMaterialIds: linked.get(m.materialId) ?? view.linkedMaterialIds,
+      ...(assignment ? { payment: assignment } : {}),
     }];
   });
 
-  const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const events: ExpenseEvent[] = [];
   const lines: Line[] = [];
   ordered.forEach(({ material, draft: own, leg, referenceMaterialIds: legReferences, evidenceNote: legNote }, index) => {
@@ -635,7 +798,8 @@ export function inventoryView(
     const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
     const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
-    const referenceMaterialIds = stay ? [stay.folioId] : legReferences;
+    const receiptId = receiptByInvoice.get(material.materialId);
+    const referenceMaterialIds = stay ? [stay.folioId] : receiptId ? [receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
     events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
@@ -665,7 +829,7 @@ export function inventoryView(
   });
 
   const openPendingItems = pendingItems.filter(isOpen).length;
-  const grouped = new Set(events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]));
+  const grouped = new Set([...events.flatMap((e) => [e.voucherMaterialId, ...e.referenceMaterialIds]), ...(payments?.placement.assigned.keys() ?? [])]);
   const done = results !== null && waiting === 0;
   const progress: RunProgress = {
     status: !results ? 'not_started' : done ? 'done' : 'running',

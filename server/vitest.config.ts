@@ -19,6 +19,7 @@ const OCR_TESTS = [
   'src/hotel-stay.test.ts',
   'src/legacy/import.test.ts',
   'src/parse/executor.test.ts',
+  'src/parse/dining-photo.test.ts',
   'src/parse/readers-production.test.ts',
   'src/print.test.ts',
   'src/test/parse-presets.test.ts',

@@ -1,22 +1,30 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
-import { CheckmarkFilled, WarningAltFilled } from '@carbon/icons-react';
+import { Button, IconButton, Select, SelectItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, TextInput } from '@carbon/react';
+import { CheckmarkFilled, TrashCan, WarningAltFilled } from '@carbon/icons-react';
 import {
+  DINING_INVOICE_KEY,
   segmentKey,
-  isStayScreenshotItem,
+  manualKindOf,
+  normalizePendingAnswer,
   validatePendingAnswer,
+  MANUAL_FILL_CHOICE,
+  MANUAL_KIND_KEY,
   PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE,
   STAY_TRIO_COPY,
+  STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID,
   PENDING_CHOICE_KEY,
   fieldAnswer,
   isAllocationAnswer,
   type FieldAnswer,
   type Material,
   type PendingAnswer,
+  type PendingField,
+  type PaymentScreenshot,
   type PendingItem,
+  type PendingScreenshotGroup,
   type TaskSnapshot,
 } from '@baox/contract';
-import { taskHash } from '../router';
+import { navigate, taskHash } from '../router';
 import { DetailList } from '../shell/DetailList';
 import { FieldGroup } from '../shell/FieldGroup';
 import { FileName } from '../shell/FileName';
@@ -25,6 +33,9 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { ActionGroup } from '../shell/ActionGroup';
 import { LodgingPreview } from './LodgingPreview';
+import { DiningEvidence, DiningInvoiceSelect } from './DiningEvidence';
+import { LatestUploadRejections } from './LatestUploadRejections';
+import { DiningPreview } from './DiningPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PAGE_COPY } from './page-copy';
 
@@ -33,7 +44,11 @@ import { PAGE_COPY } from './page-copy';
 // 契约里的处理人（resolver）这一页不显示。
 // 所有答复经 answerPendingItem 携带 stepToken 提交；页面只做格式校验，采用与否由服务端决定（逐段分摊是否按分守恒也是）。
 // 选择类待确认项的已选项用选中样式（aria-pressed），不用主按钮。读出的字段不显示来源。
-// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshot itself: uploading it makes the item go away.
+// A 住宿 invoice's missing-screenshot item (#213) also takes the screenshots themselves (ADR-0032): one file dialog, any
+// number, sent as one upload that the server places with this invoice before it inventories again, so the page moves
+// on to 材料盘点. Screenshots stored before that (#331) show as the item's `screenshotGroup`, as thumbnails, each
+// removable, and that group still closes with 「已传齐」. A resolved screenshot item still takes uploads and removals
+// (#332), from the queue or from the all-done view, until the server locks it (`screenshotGroup.locked`).
 
 const EVIDENCE_LABELS: Readonly<Record<Material['fields'][number]['evidence'], string>> = {
   explicit: '',
@@ -83,8 +98,17 @@ type FormProps = {
   fileName: string;
   onSubmit: (answer: PendingAnswer) => Promise<void>;
   onExclude: () => Promise<void>;
-  onScreenshot: (file: File) => Promise<void>;
+  // The missing-screenshot item's group (#331); absent for any other item.
+  screenshots?: ScreenshotGroupProps | undefined;
+  diningAllowed?: boolean | undefined;
   state: SubmitState;
+};
+// What the item's `screenshotGroup` says (the lock), its #331 screenshots in upload order, and the group's actions.
+type ScreenshotGroupProps = Pick<PendingScreenshotGroup, 'locked'> & {
+  shots: readonly PaymentScreenshot[];
+  onAdd: (files: readonly File[]) => Promise<void>;
+  onRemove: (screenshotId: string) => Promise<void>;
+  onComplete: () => Promise<void>;
 };
 
 // 字段错误：Carbon 输入框的错误文字区里放一个 role="alert"，读屏立即读出。
@@ -106,19 +130,7 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
   const resolved = item.status === 'resolved';
   return (
     <form className="app-form" onSubmit={submit} noValidate aria-label={item.title}>
-      {item.fields.map((field) => (
-        <TextInput
-          key={field.key}
-          id={`pf-${item.itemId}-${field.key}`}
-          name={field.key}
-          labelText={`${field.label}${field.required ? ' *' : ''}`}
-          placeholder={field.placeholder}
-          value={values[field.key] ?? ''}
-          disabled={resolved || state.busy}
-          onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
-          {...fieldError(errors[field.key])}
-        />
-      ))}
+      <FieldInputs idPrefix={`pf-${item.itemId}`} fields={item.fields} values={values} errors={errors} disabled={resolved || state.busy} onChange={setValues} />
       {resolved ? (
         <Resolved />
       ) : (
@@ -132,51 +144,149 @@ function AnswerForm({ item, onSubmit, state }: FormProps) {
   );
 }
 
-// One button group: side actions (排除) first as ghost, the other answers as secondary, and for a 住宿 invoice missing
-// its payment screenshot, 上传支付截图 as the primary button last. The chosen answer keeps aria-pressed when revisited.
-// The file input stays hidden behind the upload button, as on the print page.
-function ChoiceForm({ item, fileName, onSubmit, onScreenshot, state }: FormProps) {
+type FieldInputsProps = { idPrefix: string; fields: readonly PendingField[]; values: FieldAnswer; errors: Record<string, string>; disabled: boolean; onChange: (values: FieldAnswer) => void };
+
+function FieldInputs({ idPrefix, fields, values, errors, disabled, onChange }: FieldInputsProps) {
+  return fields.map((field) => (
+    <TextInput
+      key={field.key}
+      id={`${idPrefix}-${field.key}`}
+      name={field.key}
+      labelText={`${field.label}${field.required ? ' *' : ''}`}
+      placeholder={field.placeholder}
+      value={values[field.key] ?? ''}
+      disabled={disabled}
+      onChange={(event) => onChange({ ...values, [field.key]: event.target.value })}
+      {...fieldError(errors[field.key])}
+    />
+  ));
+}
+
+// 手工补填 in one step (#342): the 材料种类 is picked inline and its fields follow; one answer carries both, and the
+// server checks it like any read value. A resolved item shows what was filled.
+function ManualForm({ item, fileName, onSubmit, state, diningAllowed }: Pick<FormProps, 'item' | 'fileName' | 'onSubmit' | 'state' | 'diningAllowed'>) {
+  const answered = fieldAnswer(item.answer);
+  const [values, setValues] = useState<FieldAnswer>(answered[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? answered : { [PENDING_CHOICE_KEY]: MANUAL_FILL_CHOICE });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const manual = manualKindOf(item, values);
+  const resolved = item.status === 'resolved';
+  const disabled = resolved || state.busy;
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const nextErrors = validatePendingAnswer(item, values);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+    void onSubmit(normalizePendingAnswer(item, values));
+  };
+
+  return (
+    <form className="app-form" onSubmit={submit} noValidate aria-label={`手工补填「${fileName}」`}>
+      <Select
+        id={`pm-${item.itemId}-kind`}
+        labelText="材料种类 *"
+        value={values[MANUAL_KIND_KEY] ?? ''}
+        disabled={disabled}
+        onChange={(event) => setValues({ ...values, [MANUAL_KIND_KEY]: event.target.value })}
+        {...fieldError(errors[MANUAL_KIND_KEY])}
+      >
+        <SelectItem value="" text="选择材料种类" disabled />
+        {item.manualKinds.map((option) => (
+          <SelectItem key={option.kind} value={option.kind} text={option.label} />
+        ))}
+      </Select>
+      {manual ? <FieldInputs idPrefix={`pm-${item.itemId}`} fields={manual.fields} values={values} errors={errors} disabled={disabled} onChange={setValues} /> : null}
+      {manual?.diningAssignment ? <DiningInvoiceSelect assignment={manual.diningAssignment} id={`pm-${item.itemId}-invoice`} value={values[DINING_INVOICE_KEY] ?? ''} onChange={(value) => setValues({ ...values, [DINING_INVOICE_KEY]: value })} disabled={disabled || !diningAllowed} blankLabel="暂不关联" error={errors[DINING_INVOICE_KEY]} /> : null}
+      {resolved ? null : (
+        <ActionGroup caption="对照原件填写所选种类的字段。补填的值同样经过核对，系统不会倒算任何金额。" error={state.error}>
+          <Button type="submit" size="md" disabled={state.busy}>
+            保存并标记已处理
+          </Button>
+        </ActionGroup>
+      )}
+    </form>
+  );
+}
+
+// One button group: side actions (排除) first as ghost, the other answers as secondary. For a 住宿 invoice missing its
+// payment screenshots, 上传支付截图 is secondary too and 「已传齐」 the primary, last; 「确认没有支付截图」 is offered only
+// while the group is empty. The chosen answer keeps aria-pressed when revisited. The file input stays hidden behind
+// the upload button. Once resolved (unless by 排除), the group still takes uploads and removals while not locked.
+function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, diningAllowed }: FormProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
+  // 手工补填 opens its form here instead of answering (#342).
+  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE);
+  const fills = (key: string) => key === MANUAL_FILL_CHOICE && item.manualKinds.length > 0;
   const manual = item.choices.some((choice) => choice.key === 'manual');
   const excludes = item.choices.some((choice) => choice.key === 'exclude');
-  const screenshot = !resolved && isStayScreenshotItem(item);
+  const screenshot = group !== undefined && chosen !== 'exclude';
+  const editable = screenshot && !group?.locked;
+  const screenshots = group?.shots ?? [];
   const copy = STAY_TRIO_COPY.screenshot;
-  const choices = [...item.choices].sort((a, b) => Number(b.key === 'exclude') - Number(a.key === 'exclude'));
+  // A stay whose 支付截图 materials fall short of the invoice is confirmed with the item's own 「已传齐」 choice (ADR-0032).
+  const confirmsPaid = item.choices.some((choice) => choice.key === STAY_TRIO_CONFIRM_PAID);
+  const choices = [...item.choices]
+    .filter((choice) => !(screenshots.length > 0 && choice.key === STAY_TRIO_CONFIRM_NONE))
+    .sort((a, b) => Number(b.key === 'exclude') - Number(a.key === 'exclude'));
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = [...(event.target.files ?? [])];
     event.target.value = '';
-    if (file) void onScreenshot(file);
+    if (files.length > 0) void group?.onAdd(files);
   };
   const notes = [
-    screenshot ? copy.uploadNote : null,
+    editable ? copy.uploadNote : null,
+    screenshot && group?.locked ? STAY_TRIO_COPY.changeLocked : null,
     excludes ? (manual ? '排除后该材料不进入明细，也不上传报销系统；自行手工处理表示你会在报销系统里另行补录，应用同样不碰它。' : '排除后该材料不进入明细，也不进材料包。') : null,
   ].filter(Boolean);
   return (
     <div className="app-choice-form app-screenshot-row">
       {resolved ? <Resolved /> : null}
-      {screenshot ? <input ref={inputRef} type="file" accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} /> : null}
-      <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={state.error}>
+      {editable ? <input ref={inputRef} type="file" multiple accept={PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE} aria-label={copy.inputLabel(fileName)} onChange={onChange} /> : null}
+      {screenshot && screenshots.length > 0 ? (
+        <div className="app-screenshot-group">
+          <p className="app-screenshot-count">{copy.count(screenshots.length)}</p>
+          <ol className="app-screenshot-thumbs" aria-label="已上传的支付截图">
+            {screenshots.map((shot, index) => (
+              <li key={shot.screenshotId}>
+                <img src={shot.url} alt={copy.thumbnail(shot.fileName, index + 1)} />
+                {editable ? (
+                  <IconButton kind="ghost" size="sm" align="bottom" disabled={state.busy} label={copy.remove(shot.fileName, index + 1)} onClick={() => void group?.onRemove(shot.screenshotId)}>
+                    <TrashCan />
+                  </IconButton>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+      <ActionGroup caption={notes.length > 0 ? notes.join('') : undefined} error={filling ? null : state.error}>
         {choices.map((choice) => (
           <Button
             key={choice.key}
             size="md"
             kind={choice.key === 'exclude' ? 'ghost' : 'secondary'}
-            className={chosen === choice.key ? 'app-toggle is-selected' : 'app-toggle'}
-            aria-pressed={chosen === choice.key}
+            className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
+            aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
             disabled={resolved || state.busy}
-            onClick={() => void onSubmit({ [PENDING_CHOICE_KEY]: choice.key })}
+            onClick={() => (fills(choice.key) ? setFilling(true) : void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }))}
           >
             {choice.label}
           </Button>
         ))}
-        {screenshot ? (
-          <Button size="md" disabled={state.busy} onClick={() => inputRef.current?.click()}>
+        {editable ? (
+          <Button size="md" kind="secondary" disabled={state.busy} onClick={() => inputRef.current?.click()}>
             {copy.upload}
           </Button>
         ) : null}
+        {editable && !resolved && !confirmsPaid ? (
+          <Button size="md" disabled={state.busy || screenshots.length === 0} onClick={() => void group?.onComplete()}>
+            {copy.complete}
+          </Button>
+        ) : null}
       </ActionGroup>
+      {filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
     </div>
   );
 }
@@ -314,8 +424,67 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const exclude = async (item: PendingItem) => {
     settle(await run((adapter) => adapter.excludeMaterial(taskId, item.materialId, snapshot.step.stepToken)));
   };
-  const attachScreenshot = async (item: PendingItem, file: File) => {
-    settle(await run((adapter) => adapter.addPaymentScreenshot(taskId, item.materialId, file)));
+  // The files go up together and the server inventories again: the page follows it to 材料盘点.
+  const attachScreenshots = async (item: PendingItem, files: readonly File[]) => {
+    const outcome = await run((adapter) => adapter.addPaymentScreenshots(taskId, item.materialId, files, snapshot.step.stepToken));
+    if (outcome.ok) navigate(taskHash(taskId, 'inventory'));
+  };
+  const removeScreenshot = async (screenshotId: string) => {
+    await run((adapter) => adapter.removePaymentScreenshot(taskId, screenshotId));
+  };
+  const completeScreenshots = async (item: PendingItem) => {
+    settle(await run((adapter) => adapter.completePaymentScreenshots(taskId, item.materialId)));
+  };
+  // The item's group as the server gives it (`screenshotGroup`), with the screenshots it names.
+  const groupOf = (item: PendingItem): ScreenshotGroupProps | undefined => {
+    const group = item.screenshotGroup;
+    if (!group) return undefined;
+    const shots = group.screenshotIds.flatMap((id) => snapshot.paymentScreenshots.find((shot) => shot.screenshotId === id) ?? []);
+    return {
+      locked: group.locked,
+      shots,
+      onAdd: (files) => attachScreenshots(item, files),
+      onRemove: removeScreenshot,
+      onComplete: () => completeScreenshots(item),
+    };
+  };
+  // A resolved screenshot item the filer can still change (#332): reachable from the all-done view too.
+  const diningAllowed = snapshot.allowedActions.includes('change_dining_evidence');
+  const reopenable = (item: PendingItem) => (diningAllowed && item.dining?.kind === 'receipt') || item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
+
+  // 选中项的详情：左边原件，右边标题、原因与表单，再往下是读出的字段。
+  const detailOf = (item: PendingItem) => {
+    const material = materialOf(item);
+    return (
+      <section className="app-pending-detail" aria-label="待确认项详情">
+        <div className="app-review-split">
+          {snapshot.materials.some((material) => material.materialId === item.materialId && (material.kind === 'dining_receipt' || snapshot.lines.some((line) => line.voucherMaterialId === material.materialId && line.category.code === 'hospitality'))) ? <DiningPreview key={item.itemId} snapshot={snapshot} materialId={item.materialId} /> : <LodgingPreview key={item.itemId} snapshot={snapshot} materialId={item.materialId} />}
+          <div className="app-detail-side">
+            <div className="app-detail-head">
+              <h2 className="app-section-title">{item.title}</h2>
+              <p className="app-lead app-why">{item.why}</p>
+            </div>
+            <ItemForm
+              key={item.itemId}
+              item={item}
+              fileName={material?.fileName ?? item.materialId}
+              state={state}
+              onSubmit={(answer) => submit(item, answer)}
+              onExclude={() => exclude(item)}
+              screenshots={groupOf(item)}
+              diningAllowed={diningAllowed}
+            />
+            <DiningEvidence key={item.itemId + JSON.stringify(item.dining)} item={item} disabled={busy || !diningAllowed}
+              onAssign={async (address, value) => { settle(await run((adapter) => adapter.answerPendingItem(taskId, address, { value }, snapshot.step.stepToken))); }}
+              onUpload={async (files) => {
+                const outcome = await run((adapter) => adapter.supplementDiningEvidence(taskId, { pendingItemId: item.itemId, files }, snapshot.step.stepToken));
+                if (outcome.ok && outcome.snapshot.batches.at(-1)?.files.some((file) => file.status === 'accepted')) navigate(taskHash(taskId, 'inventory'));
+              }} />
+            <MaterialFields material={material} />
+          </div>
+        </div>
+      </section>
+    );
   };
 
   // 跨任务重复发票命中：整批停，没有待确认项，也不能进入项目归属。
@@ -329,6 +498,8 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   }
 
   if (items.length === 0 || remaining === 0) {
+    // Only an item the filer opened here is shown in full; the rest stay one table row each.
+    const opened = items.find((item) => item.itemId === selectedId && reopenable(item));
     return (
       <>
         <PageHeader title={copy.title} lead={items.length === 0 ? '本次盘点没有形成待确认项。' : `本次盘点的 ${items.length} 个待确认项都已处理。`} />
@@ -354,6 +525,13 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                         <TableCell className="app-wrap">
                           {item.title}
                           {note ? <div className="app-caption">{note}</div> : null}
+                          {reopenable(item) ? (
+                            <div>
+                              <Button kind="ghost" size="sm" aria-expanded={opened?.itemId === item.itemId} onClick={() => setSelectedId(opened?.itemId === item.itemId ? null : item.itemId)}>
+                                {item.dining?.kind === 'receipt' ? '查看或修改关联' : STAY_TRIO_COPY.screenshot.reopen}
+                              </Button>
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <FileName name={materialOf(item)?.fileName ?? item.materialId} />
@@ -374,14 +552,15 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
             </Button>
           </ActionGroup>
         </section>
+        {opened ? detailOf(opened) : null}
       </>
     );
   }
 
-  const material = materialOf(selected);
   return (
     <>
       <PageHeader title={copy.title} lead={`${copy.lead}还剩 ${remaining} 个。`} />
+      <LatestUploadRejections snapshot={snapshot} />
       {/* 队列：每项一行（图标、标题、文件名），当前项用选中底色；已处理的整行变淡，带勾和绿色「已处理」标签。 */}
       <section className="app-queue bleed" aria-label="待确认项清单">
         <ul className="app-item-list">
@@ -409,29 +588,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
           })}
         </ul>
       </section>
-      {selected ? (
-        <section className="app-pending-detail" aria-label="待确认项详情">
-          <div className="app-review-split">
-            <LodgingPreview key={selected.itemId} snapshot={snapshot} materialId={selected.materialId} />
-            <div className="app-detail-side">
-              <div className="app-detail-head">
-                <h2 className="app-section-title">{selected.title}</h2>
-                <p className="app-lead app-why">{selected.why}</p>
-              </div>
-              <ItemForm
-                key={selected.itemId}
-                item={selected}
-                fileName={material?.fileName ?? selected.materialId}
-                state={state}
-                onSubmit={(answer) => submit(selected, answer)}
-                onExclude={() => exclude(selected)}
-                onScreenshot={(file) => attachScreenshot(selected, file)}
-              />
-              <MaterialFields material={material} />
-            </div>
-          </div>
-        </section>
-      ) : null}
+      {selected ? detailOf(selected) : null}
     </>
   );
 }

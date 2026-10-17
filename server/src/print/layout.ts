@@ -36,6 +36,19 @@ const BOTTOM_RIGHT: Box = { x: SIDE + leftWidth + SPLIT_GAP, y: BOTTOM, width: w
 export type Region = 'top' | 'bottom' | 'bottom_left' | 'bottom_right';
 export const REGIONS: Readonly<Record<Region, Box>> = { top: TOP, bottom: BOTTOM_HALF, bottom_left: BOTTOM_LEFT, bottom_right: BOTTOM_RIGHT };
 
+// 支付截图续页 (#333): the whole content area, no separator, as a grid of CONTINUATION_COLUMNS × CONTINUATION_ROWS cells
+// filled row by row in upload order; a group that fills one page goes on to the next (no cap, ADR-0032).
+export const CONTINUATION_COLUMNS = 3;
+export const CONTINUATION_ROWS = 2;
+const CELL_GAP = 8;
+const cellWidth = (width - (CONTINUATION_COLUMNS - 1) * CELL_GAP) / CONTINUATION_COLUMNS;
+const cellHeight = (contentTop - BOTTOM - (CONTINUATION_ROWS - 1) * CELL_GAP) / CONTINUATION_ROWS;
+export const CONTINUATION_CELLS: readonly Box[] = Array.from({ length: CONTINUATION_COLUMNS * CONTINUATION_ROWS }, (_, index) => {
+  const column = index % CONTINUATION_COLUMNS;
+  const row = Math.floor(index / CONTINUATION_COLUMNS);
+  return { x: SIDE + column * (cellWidth + CELL_GAP), y: contentTop - (row + 1) * cellHeight - row * CELL_GAP, width: cellWidth, height: cellHeight };
+});
+
 // The scale that fits `content` into `region`, upright or turned a quarter.
 export function scaleOf(content: Size, region: Size, rotate: boolean): number {
   const w = rotate ? content.height : content.width;
@@ -77,10 +90,6 @@ export type PagePlan = {
   categoryLabel: string;
   grossAmount: string;
   header: string;
-  // Every voucher may take a 支付截图 (payment screenshot): story 61 asks for proof of payment beside its invoice,
-  // not only for 住宿. With one the bottom half splits (supporting material left, screenshot right).
-  // Whether a missing one is worth a notice is not judged here: the inventory's 住宿 trio check recorded it (#213).
-  acceptsPaymentScreenshot: boolean;
 };
 
 const cents = (amount: string): number => {
@@ -98,7 +107,8 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
     group.push(line);
     groups.set(line.voucherMaterialId, group);
   }
-  const known = new Set(materials.map((material) => material.materialId));
+  // 支付截图 materials are linked with their invoice too, but print as screenshots, never as the bottom half (ADR-0032).
+  const known = new Set(materials.filter((material) => material.kind !== 'payment_screenshot').map((material) => material.materialId));
   const plans: PagePlan[] = [];
   for (const [voucherMaterialId, group] of groups) {
     const first = group[0];
@@ -120,7 +130,6 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
       categoryLabel: first.category.label,
       grossAmount,
       header: `${nos} · ${first.date.slice(5)} · ${first.category.label} · ${grossAmount}`,
-      acceptsPaymentScreenshot: true,
     });
   }
   return plans;

@@ -20,6 +20,7 @@ dist/
 !/.claude/skills/
 /.claude/skills/*
 !/.claude/skills/deploy-intranet
+!/.claude/skills/verify
 /.agents/*
 !/.agents/skills/
 /.agents/skills/*
@@ -32,3 +33,6 @@ dist/
 dist-mock/
 test-results/
 playwright-report/
+
+# Node runtimes fetched for the 本地执行器 zips (local-executor/scripts/fetch-runtimes.mjs)
+/local-executor/runtime/

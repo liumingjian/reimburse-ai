@@ -112,3 +112,19 @@ export async function answerStayGaps(page: Page, taskId: string): Promise<TaskSn
   }
   return snapshot;
 }
+
+// A phone 支付截图 (ADR-0032) as Chrome draws it: the payee and the negative amount as a headline, then label / value
+// rows the way WeChat Pay prints them. The real server's OCR reads it as `payment_screenshot/labelled`.
+export async function paymentScreenshot(page: Page, { amount, paidAt, payee, number }: { amount: string; paidAt: string; payee: string; number: string }): Promise<Buffer> {
+  const row = (label: string, value: string) => `<div style="display:flex;font-size:30px;padding:22px 48px"><span style="width:220px;color:#777">${label}</span><span>${value}</span></div>`;
+  const shot = await page.context().newPage();
+  await shot.setViewportSize({ width: 750, height: 1000 });
+  await shot.setContent(`<html><body style="margin:0;background:#fff;font-family:'PingFang SC','STHeiti',sans-serif">
+    <div style="text-align:center;padding-top:72px;font-size:34px">${payee}</div>
+    <div style="text-align:center;font-size:72px;font-weight:600;margin:28px 0 48px">-${amount}</div>
+    ${row('当前状态', '支付成功')}${row('支付时间', paidAt)}${row('商户全称', payee)}${row('交易单号', number)}
+  </body></html>`);
+  const png = await shot.screenshot({ type: 'png' });
+  await shot.close();
+  return png;
+}

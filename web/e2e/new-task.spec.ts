@@ -1,4 +1,3 @@
-import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
@@ -58,7 +57,13 @@ test('?location=unavailable：常驻城市没有默认值，提示直接填写�
 });
 
 test('全流程 QA：弹层创建任务，上传 sample-materials 的 11 份材料，盘点后 4 个待确认项，任务名称保持占位（同服务端）并有费用期间', async ({ page }, testInfo) => {
-  const files = readdirSync(SAMPLES_DIR).map((name) => join(SAMPLES_DIR, name));
+  const files = [
+    '全季酒店_发票.pdf', '全季酒店_结账单.pdf',
+    '高德打车_发票.pdf', '高德打车_行程单.pdf',
+    '曹操出行_发票.pdf', '曹操出行_行程单.pdf',
+    '铁路电子客票_0809.pdf', '铁路电子客票_0822.pdf',
+    'IMG_4871.jpg', 'IMG_4906.jpg', '办公用品_发票.pdf',
+  ].map((name) => join(SAMPLES_DIR, name));
   expect(files).toHaveLength(11);
 
   await page.goto(open('', '#/tasks/new'));

@@ -8,7 +8,7 @@ import { vatItemCategory } from '../slots';
 
 const KIND = 'vat_invoice';
 const NAME = 'einvoice';
-const VERSION = '3';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 export const QR_SOURCE = ruleSource(KIND, 'einvoice_qr');
 
@@ -36,7 +36,9 @@ const TYPE_OF_TITLE: Readonly<Record<string, string>> = { 增值税专用发票:
 // 全电 QR 发票类型 codes: 31 电子发票（增值税专用发票）, 32 电子发票（普通发票）.
 const TYPE_OF_QR: Readonly<Record<string, string>> = { '31': '专票', '32': '普票' };
 
-const COLUMNS: Readonly<Record<string, string>> = { 项目名称: 'name', 单位: 'unit', 数量: 'qty', 单价: 'price', 金额: 'net', '税率/征收率': 'rate', 税额: 'tax' };
+// 规格型号 is never read, but it is a column: a cell printed under it (a hotel's `间`) belongs to no other column, and
+// without it the cell fell back into 项目名称 (`住宿费间`, #344).
+const COLUMNS: Readonly<Record<string, string>> = { 项目名称: 'name', 规格型号: 'spec', 单位: 'unit', 数量: 'qty', 单价: 'price', 金额: 'net', '税率/征收率': 'rate', 税额: 'tax' };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = { invoiceNumber: '发票号码', issueDate: '开票日期', totalAmount: '价税合计', invoiceType: '票种' };
 
@@ -254,8 +256,7 @@ export const einvoice: Layout = {
 
   recognise(doc) {
     const lines = joinedRows(doc, 1, ROW_TOLERANCE);
-    // v1 kinds cover lodging and ride-hailing only; an e-invoice for anything else (e.g. 餐饮) is not this layout. One
-    // such row is enough: real ride-hailing invoices bundle unrelated fee rows (服务费, 经纪代理服务) beside it.
+    // One supported row is enough: real ride-hailing invoices bundle unrelated fee rows beside it.
     return Boolean(matchSpan(lines, TITLE) && matchSpan(lines, NUMBER)) && itemNames(lines).some((item) => vatItemCategory(item) !== null);
   },
 

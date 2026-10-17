@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import type { LocalExecutorDist } from '../local-executor/package';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccountListSchema, SessionSchema, type Account } from '@baox/contract';
@@ -78,14 +79,15 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // admitted, which is what every test but the deployment ones wants.
 // `extensionTemplate`: a built extension template (`extension/scripts/build.mjs <dir>`) for the settings page's download.
 // `schedule`: the extension channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
-export type TestServerOptions = { parser?: ParseExecutor; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string };
+// `erpCredentialKey`: the key the hosted ERP 凭据 are sealed with; without it they cannot be saved.
+export type TestServerOptions = { parser?: ParseExecutor; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string; erpCredentialKey?: Buffer | null; autoRerun?: boolean; localExecutor?: LocalExecutorDist | null };
 
-export async function createTestServer({ parser, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir() }: TestServerOptions = {}): Promise<TestServer> {
+export async function createTestServer({ parser, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir(), erpCredentialKey = null, autoRerun, localExecutor = null }: TestServerOptions = {}): Promise<TestServer> {
   const db = await openDatabase(database);
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, extensionTemplate, ...(parser ? { parser } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, erpCredentialKey, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, extensionTemplate, localExecutor, ...(parser ? { parser } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}), ...(autoRerun !== undefined ? { autoRerun } : {}) });
   await app.ready;
   let accounts = 0;
   let administrator: TestClient | null = null;

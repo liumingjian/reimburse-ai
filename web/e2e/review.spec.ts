@@ -49,7 +49,7 @@ test('确认：?seed=review 是 No. 加内核 13 列，按费用分类排序；�
   await expect(page.getByRole('region', { name: '材料包' })).toHaveCount(0);
   expect(await main.innerText()).not.toMatch(/\.pdf|\.jpg|\.png/);
   await expect(page.getByTestId('review-purpose')).toContainText('上海产品评审出差');
-  // 支付截图入口在打印稿页，不在确认页。
+  // 支付截图只在待确认项里上传，确认页没有入口。
   await expect(page.getByRole('button', { name: /补充支付截图/ })).toHaveCount(0);
 
   await expect(checkbox(page)).toBeEnabled();

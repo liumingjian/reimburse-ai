@@ -42,7 +42,7 @@ const T1_FILES: ReadonlyArray<readonly [string, string, number]> = [
   ['m08', '铁路电子客票_0822.pdf', 59392],
   ['m09', 'IMG_4871.jpg', 3250585],
   ['m10', 'IMG_4906.jpg', 3040870],
-  ['m11', '餐饮_发票.pdf', 145408],
+  ['m12', '办公用品_发票.pdf', 145408],
 ];
 
 // 夹具用的确定性伪哈希：64 位十六进制，形状与 sha256 一致，页面只显示前 8 位。
@@ -263,7 +263,9 @@ export function t2Snapshot(): TaskSnapshot {
     draftNo: T2_DRAFT_NO,
     abortReason: '严格回读时没有读到报销系统的结果，写入结果不确定。',
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
   snapshot.readback = readbackOf(T2_ROWS);
   // 已保存但严格逐行不一致 ⇒ 转人工（human_review），只允许转人工。
@@ -314,7 +316,9 @@ export function t3Snapshot(): TaskSnapshot {
     draftNo: T3_DRAFT_NO,
     abortReason: null,
     loginNotice: null,
+    rerunNotice: null,
     erpAccount: null,
+    review: null,
   };
   snapshot.readback = { status: 'matched', rows: [], summary: '明细 4/4 一致', localTotal: '2318.50', erpTotal: '2318.50' };
   return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));

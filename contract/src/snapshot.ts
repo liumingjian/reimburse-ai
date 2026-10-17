@@ -57,9 +57,9 @@ export const EVIDENCE_STATES = ['explicit', 'derived', 'ambiguous', 'missing'] a
 export const EvidenceStateSchema = z.enum(EVIDENCE_STATES);
 export type EvidenceState = z.infer<typeof EvidenceStateSchema>;
 
-// 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 has five kinds; a
-// 版式 (layout) belongs to exactly one kind.
-export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt'] as const;
+// 材料种类 (material kind, ADR-0017): owns the slot schema, checks and manual-fill form. v1 had five kinds;
+// ADR-0032 adds the 支付截图 (payment screenshot). A 版式 (layout) belongs to exactly one kind.
+export const MATERIAL_KINDS = ['vat_invoice', 'rail_ticket', 'ride_itinerary', 'hotel_folio', 'taxi_receipt', 'payment_screenshot', 'dining_receipt'] as const;
 export const MaterialKindSchema = z.enum(MATERIAL_KINDS);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
@@ -120,6 +120,18 @@ export const MaterialVariantSchema = z.object({
 });
 export type MaterialVariant = z.infer<typeof MaterialVariantSchema>;
 
+// Which 住宿 invoice a 支付截图 material counts for (ADR-0032). The server derives it at every inventory unless the
+// filer chose one; `options` are the stays it may be moved to (改归属), submitted as the field edit
+// `edit.<materialId>.stay` with the invoice's material id as the value.
+export const PAYMENT_STAY_FIELD = 'stay';
+export const PaymentAssignmentSchema = z.object({
+  // The invoice it counts for; null while no stay takes it.
+  invoiceId: IdSchema.nullable(),
+  chosen: z.boolean(),
+  options: z.array(z.object({ invoiceId: IdSchema, label: z.string().min(1) })),
+});
+export type PaymentAssignment = z.infer<typeof PaymentAssignmentSchema>;
+
 export const MaterialSchema = z.object({
   materialId: IdSchema,
   batchId: IdSchema,
@@ -149,11 +161,12 @@ export const MaterialSchema = z.object({
   // Alternate originals of this invoice. The server chooses the canonical material; clients only render this list.
   variants: z.array(MaterialVariantSchema),
   fields: z.array(FieldCandidateSchema),
+  // 支付截图 materials only.
+  payment: PaymentAssignmentSchema.optional(),
 });
 export type Material = z.infer<typeof MaterialSchema>;
 
 export const ExpenseCategorySchema = z.object({
-  // 内核类别 code（accommodation / local_city_transport / long_distance / remote_city_transport）；页面只显示 label。
   code: z.string().min(1),
   label: z.string().min(1),
 });
@@ -289,6 +302,45 @@ export type PendingAllocation = z.infer<typeof PendingAllocationSchema>;
 // 唯一的应用内处置是 exclude-material（materialId 就是这张发票，服务端连同它的行程单一起排除）。
 export const PENDING_ITEM_KINDS = ['form', 'choice', 'allocation', 'given_up'] as const;
 
+// A 住宿 invoice's 支付截图 as its missing-screenshot 待确认项 carries them: the page reads them from here, the server
+// decides them. `screenshotIds` are those stored in the `payment_screenshot` table (#331); screenshots uploaded since
+// ADR-0032 are materials and are listed with the stay's materials instead.
+export const PendingScreenshotGroupSchema = z.object({
+  // The table group, in upload order; each id is a `paymentScreenshots` entry.
+  screenshotIds: z.array(IdSchema),
+  // The stay's screenshots take no more changes (upload, remove, 「已传齐」): the list is confirmed or ERP was attempted.
+  locked: z.boolean(),
+});
+export type PendingScreenshotGroup = z.infer<typeof PendingScreenshotGroupSchema>;
+
+// 手工补填 in one step (#342): the unrecognised item offers the 手工补填 choice together with every kind's form, the
+// kind picked inline. Its answer is `{ choice: MANUAL_FILL_CHOICE, kind: <MaterialKind>, ...that kind's fields }`.
+export const MANUAL_FILL_CHOICE = 'manual_fill';
+export const MANUAL_KIND_KEY = 'kind';
+export const DINING_INVOICE_FIELD = 'diningInvoice';
+export const DINING_INVOICE_KEY = 'diningInvoiceId';
+export const DiningAssignmentSchema = z.object({
+  address: z.string().min(1),
+  selection: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('automatic') }),
+    z.object({ kind: z.literal('selected_valid'), invoiceId: IdSchema }),
+    z.object({ kind: z.literal('selected_stale'), invoiceId: IdSchema, reason: z.string() }),
+  ]),
+  options: z.array(z.object({ invoiceId: IdSchema, label: z.string(), amount: z.string() })),
+});
+export type DiningAssignment = z.infer<typeof DiningAssignmentSchema>;
+export const PendingDiningSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('invoice'), supplement: z.literal('receipt') }),
+  z.object({ kind: z.literal('receipt'), supplement: z.literal('invoice').nullable(), assignment: DiningAssignmentSchema }),
+]);
+export const PendingManualKindSchema = z.object({
+  kind: z.enum(MATERIAL_KINDS),
+  label: z.string().min(1),
+  fields: z.array(PendingFieldSchema),
+  diningAssignment: DiningAssignmentSchema.optional(),
+});
+export type PendingManualKind = z.infer<typeof PendingManualKindSchema>;
+
 // 空文本 PDF、多页发票（内核 pdf_markdown_conversion_empty / multi_page_invoice）是「要你处理」的 choice 类，
 // 只给「排除」一个选择；换原件走追加材料、重新盘点。
 export const PendingItemSchema = z.object({
@@ -302,6 +354,11 @@ export const PendingItemSchema = z.object({
   choices: z.array(PendingChoiceSchema),
   // allocation 类的逐段内容；其他类为 null。
   allocation: PendingAllocationSchema.nullable(),
+  // The missing-screenshot item's 支付截图 group (#331, see STAY_TRIO_COPY); null on every other item.
+  screenshotGroup: PendingScreenshotGroupSchema.nullable(),
+  // The unrecognised item's 手工补填 forms, one per kind; empty on every other item.
+  manualKinds: z.array(PendingManualKindSchema),
+  dining: PendingDiningSchema.nullable().optional(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });
@@ -438,16 +495,47 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 
 // ---- 支付截图与打印稿 ----
 
-// A 支付截图 (payment screenshot) is an image only (JPG, PNG). It goes on the 打印稿 (print sheet) alone and never changes
-// the lines. One per invoice; another one replaces it. It is added on the print page once the sheet is generated (per
-// page, `acceptsPaymentScreenshot`), and for a 住宿 (accommodation) invoice also on the 待确认项 (pending items) page
-// (#213, see STAY_TRIO_COPY).
+// A 支付截图 (payment screenshot) is an image only (JPG, PNG) and never changes the lines. Since ADR-0032 it is a material
+// (`payment_screenshot`), uploaded with the rest or from a 住宿 invoice's missing-screenshot 待确认项 (#213, see
+// STAY_TRIO_COPY), which adds them as a new batch placed with that invoice and inventories again.
+//
+// Before that, the item stored them in the `payment_screenshot` table (#331): the snapshot's `paymentScreenshots`
+// with the invoice's `voucherMaterialId`, in list order, which the item carries as `screenshotGroup` with the lock.
+// Such a group can still be emptied or closed with 「已传齐」 (`completePaymentScreenshots`), never added to. A
+// screenshot left on any other voucher (the print page took them before #330) belongs to no group: it is neither in
+// the snapshot nor printed.
 export const PAYMENT_SCREENSHOT_ACCEPT_ATTRIBUTE = '.jpg,.jpeg,.png,image/jpeg,image/png';
+// A voucher's group: its screenshots out of every current one, in list (upload) order.
+export const screenshotGroupOf = <T extends { voucherMaterialId: string }>(screenshots: readonly T[], voucherMaterialId: string): T[] =>
+  screenshots.filter((shot) => shot.voucherMaterialId === voucherMaterialId);
+
+export const DINING_ITEM_CODES = { receiptMissing: 'dining_receipt_missing', invoiceMissing: 'dining_invoice_missing', amountMismatch: 'dining_amount_mismatch' } as const;
+export const DINING_COPY = {
+  amountMismatch: {
+    title: (fileName: string) => `餐饮发票「${fileName}」与餐饮小票金额不一致`,
+    why: (totalAmount: string, paidAmounts: readonly string[]) =>
+      `这张餐饮发票价税合计 ${totalAmount} 元，未配对餐饮小票的实付金额 ${paidAmounts.join('、')} 元，金额不一致。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传正确的餐饮小票后重新盘点，或排除这张发票。`,
+  },
+  invoiceMissing: {
+    title: (fileName: string) => `餐饮小票「${fileName}」缺少发票`,
+    why: (paidAmount: string | undefined) =>
+      `餐饮报销要发票和餐饮小票两样。这张餐饮小票${paidAmount ? `（实付金额 ${paidAmount} 元）` : ''}没有配对到餐饮发票，不能仅凭餐饮小票报销。发票价税合计要与餐饮小票实付金额一分不差。请追加上传餐饮发票后重新盘点，或排除这份材料。`,
+  },
+  receiptMissing: {
+    title: (fileName: string) => `餐饮发票「${fileName}」缺少餐饮小票`,
+    why: (totalAmount: string | undefined) =>
+      `餐饮报销要发票和餐饮小票两样。这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票，不能仅凭发票报销。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传餐饮小票后重新盘点，或排除这份材料。`,
+  },
+} as const;
 
 // The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes three materials: the 发票
 // (invoice), the 结账单 (hotel folio) and the 支付截图 (payment screenshot). Inventory raises one 待确认项 per missing
-// element; the item disappears once the material is supplied, or settles on the choice `STAY_TRIO_CONFIRM_NONE`,
-// which records the absence. The print stage reads that record instead of judging the absence again. All filer-facing
+// invoice or folio; the item disappears once the material is supplied, or settles on the choice
+// `STAY_TRIO_CONFIRM_NONE`, which records the absence. Every 住宿 invoice carries a screenshot item: it stays open
+// while its group is empty or not yet declared complete (「已传齐」), and settles on the declaration or on
+// `STAY_TRIO_CONFIRM_NONE` while the group is empty. An upload supersedes a `STAY_TRIO_CONFIRM_NONE` for good. A resolved
+// item's group still takes additions and removals until the list is confirmed; removing its last screenshot opens the
+// item again (#332). The print stage reads that record instead of judging the absence again. All filer-facing
 // wording of the check lives here, shared by the server and the page.
 export const STAY_TRIO_ELEMENTS = ['invoice', 'folio', 'screenshot'] as const;
 export type StayTrioElement = (typeof STAY_TRIO_ELEMENTS)[number];
@@ -463,6 +551,13 @@ export const STAY_TRIO_CONFIRM_NONE = 'confirm_none';
 // The one place a trio item id is built and read back.
 export const stayTrioItemId = (element: StayTrioElement, materialId: string): string => `${STAY_TRIO_ITEM_CODES[element]}.${materialId}`;
 export const stayTrioElementOf = (itemId: string): StayTrioElement | null => STAY_TRIO_ELEMENTS.find((element) => itemId.startsWith(`${STAY_TRIO_ITEM_CODES[element]}.`)) ?? null;
+// The material a trio item is raised on; null for any other item.
+export const stayTrioMaterialOf = (itemId: string): string | null => {
+  const element = stayTrioElementOf(itemId);
+  return element ? itemId.slice(STAY_TRIO_ITEM_CODES[element].length + 1) : null;
+};
+// Whether an answer is the choice 确认没有 (`STAY_TRIO_CONFIRM_NONE`).
+export const confirmsNone = (answer: PendingAnswer | null): boolean => fieldAnswer(answer)[PENDING_CHOICE_KEY] === STAY_TRIO_CONFIRM_NONE;
 
 // Whether a pending item is the missing-screenshot item, which the page answers with an upload as well as a choice.
 export const isStayScreenshotItem = (item: Pick<PendingItem, 'itemId'>): boolean => stayTrioElementOf(item.itemId) === 'screenshot';
@@ -480,12 +575,20 @@ export const STAY_TRIO_COPY = {
   screenshot: {
     title: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」缺少支付截图`,
     why: (totalAmount: string | undefined) =>
-      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}还没有支付截图。可以在这里直接上传支付截图（JPG、PNG）；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
+      `${TRIO}这张住宿发票${amountNote('价税合计', totalAmount)}需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张），上传后会重新盘点，截图金额合计不少于发票价税合计就算齐了；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。`,
     confirmNone: '确认没有支付截图',
     upload: '上传支付截图',
     // The file input's accessible name.
     inputLabel: (invoiceFileName: string) => `选择这张住宿发票的支付截图：${invoiceFileName}`,
-    uploadNote: '上传后这一项自动消失；支付截图只进打印稿，不上传报销系统。',
+    uploadNote: '分次付款、多种支付方式或一次付款截了几屏，都传在这里。上传后会重新盘点。支付截图只进打印稿，不上传报销系统。',
+    // 「已传齐」: declares the group complete; the item settles on it.
+    complete: '已传齐',
+    count: (count: number) => `已传 ${count} 张`,
+    // A thumbnail's accessible name and its remove button's.
+    thumbnail: (fileName: string, index: number) => `第 ${index} 张支付截图：${fileName}`,
+    remove: (fileName: string, index: number) => `移除第 ${index} 张支付截图：${fileName}`,
+    // Opens a resolved item again to add or remove screenshots (#332).
+    reopen: '修改支付截图',
   },
   invoice: {
     title: (folioFileName: string) => `结账单「${folioFileName}」缺少住宿发票`,
@@ -495,15 +598,54 @@ export const STAY_TRIO_COPY = {
   },
   // 打印稿 notice for a 住宿 page whose screenshot absence was confirmed at inventory.
   printNotice: (nos: string, categoryLabel: string) => `${nos} ${categoryLabel}发票在盘点时已确认没有支付截图，这一页不放支付截图。`,
-  // Refusal: removing the screenshot would reopen the check on a list that is already confirmed.
-  removeLocked: '整单明细已经确认，这张住宿发票的支付截图只能替换，不能移除。',
+  // Refusal: a change to the group would reopen the check on a list that is already confirmed (or went to ERP).
+  changeLocked: '整单明细已经确认或已开始写入报销系统，这张住宿发票的支付截图不能再增减。',
 } as const;
 
 export const PAYMENT_SCREENSHOT_ERRORS = {
   notImage: '只接受图片（JPG、PNG）。',
   notApplicable: '这张发票不需要支付截图。',
   notFound: '这张支付截图已经不存在。',
-  notGenerated: '请先生成打印稿，再在打印稿页补充支付截图。',
+  // Every file of an upload is already in the task.
+  alreadyUploaded: '这些截图已经上传过了。',
+  // 「已传齐」 on an empty group.
+  empty: '还没有上传支付截图，传好后再点「已传齐」。',
+  // 「确认没有支付截图」 while the group holds a screenshot (#332).
+  noneWithScreenshots: '这张发票已经上传了支付截图，不能再确认没有。要确认没有，先删掉这些截图。',
+} as const;
+
+// 支付截图 materials (ADR-0032): placing them with a stay, and checking a stay's payments against its invoice.
+export const STAY_TRIO_CONFIRM_PAID = 'confirm_paid';
+export const PAYMENT_ITEM_CODES = { unassigned: 'payment_unassigned', duplicate: 'payment_duplicate' } as const;
+export const PAYMENT_COPY = {
+  // A stay as the filer picks it: 发票 number in the list, hotel, dates, amount.
+  stayLabel: (invoiceLabel: string, hotel: string | null, dates: string | null, totalAmount: string) => [invoiceLabel, hotel, dates, `价税合计 ${totalAmount}`].filter(Boolean).join(' · '),
+  unassignedTitle: (fileName: string) => `支付截图「${fileName}」不知道归哪次住宿`,
+  unassignedWhy: (amount: string, payDate: string, hasStays: boolean) =>
+    hasStays
+      ? `这张支付截图（${payDate} 支付 ${amount} 元）的支付日期不在任何一次住宿的范围内（入住前 30 天到离店后 1 天），或者几次住宿一样合适。请选它属于哪次住宿；不属于住宿就排除它。`
+      : `这张支付截图（${payDate} 支付 ${amount} 元）没有住宿发票可以归属。支付截图只用于住宿报销；不需要就排除它，或在上传页追加它的住宿发票后重新盘点。`,
+  assignTo: (stayLabel: string) => `归到 ${stayLabel}`,
+  duplicateTitle: (fileName: string, otherFileName: string) => `支付截图「${fileName}」和「${otherFileName}」是同一笔支付`,
+  duplicateWhy: (byNumber: boolean) =>
+    `${byNumber ? '两张截图的交易单号相同' : '两张截图的金额和支付时间（精确到秒）都相同'}，同一笔支付只能算一次。请排除这一张。`,
+  // The 支付截图 item of a stay whose screenshots add up to less than its invoice.
+  shortfallTitle: (invoiceFileName: string) => `住宿发票「${invoiceFileName}」的支付截图不够发票金额`,
+  shortfallWhy: (paid: string, total: string, short: string) =>
+    `这次住宿的支付截图合计 ${paid} 元，比发票价税合计 ${total} 元少 ${short} 元。可以在上传页追加支付截图后重新盘点，或修改读错的金额；确实就这些，点「已传齐」。`,
+  confirmPaid: '已传齐',
+  // The invoice's 校验 note once its screenshots are placed.
+  paidNote: (paid: string, total: string) => {
+    const [p, t] = [Math.round(Number(paid) * 100), Math.round(Number(total) * 100)];
+    if (p === t) return `支付截图合计 ${paid} 元，与发票一致`;
+    const diff = (Math.abs(p - t) / 100).toFixed(2);
+    return p > t ? `支付截图合计 ${paid} 元，实付比发票多 ${diff} 元` : `支付截图合计 ${paid} 元，比发票少 ${diff} 元`;
+  },
+  // A screenshot's 校验 note.
+  assignedNote: (stayLabel: string) => `归到 ${stayLabel}`,
+  unassignedNote: '还没有归到住宿',
+  reassign: '改归属',
+  remove: '不属于住宿（移除）',
 } as const;
 
 export const PaymentScreenshotSchema = z.object({
@@ -536,7 +678,7 @@ export const PlacementSchema = z.object({
 });
 export type Placement = z.infer<typeof PlacementSchema>;
 
-export const PrintPageSchema = z.object({
+const PrintPageBaseSchema = z.object({
   pageId: IdSchema,
   no: z.number().int().positive(),
   // 页眉整句，如「No.1-3 · 08-10 · 外地市内交通 · 69.19」；范围用 ASCII 连字符。页面原样显示，不自己拼。
@@ -548,16 +690,41 @@ export const PrintPageSchema = z.object({
   grossAmount: AmountSchema,
   // 服务端按当前放置（旋转、裁剪、支付截图）渲染出的整页页图；设置变了，地址随之变。
   imageUrl: UrlSchema,
-  top: PlacementSchema.nullable(),
-  bottom: PlacementSchema.nullable(),
-  // 这一页的主要报销凭证能否补充支付截图（住宿发票为 true）；由服务端按票种判定，页面只据此显示入口。
-  acceptsPaymentScreenshot: z.boolean(),
-  screenshotId: IdSchema.nullable(),
+  // 这一页上印的支付截图，按上传顺序（见 paymentScreenshots）。
+  screenshotIds: z.array(IdSchema),
 });
+
+// voucher：一张主要报销凭证一页，上半页凭证、下半页证明材料。住宿发票只有一张支付截图时，它在下半页右侧 1/3；
+// 有 2 张及以上时，下半页整宽只放结账单，截图全部移到紧随其后的续页。
+// screenshots：支付截图续页（#333），页眉「No.N 支付截图（续）」带酒店名与金额；每行 3 张、至多 2 行，竖放，
+// 不旋转、不裁剪，所以没有放置（top / bottom 恒为 null）。
+export const PRINT_PAGE_KINDS = ['voucher', 'screenshots'] as const;
+export type PrintPageKind = (typeof PRINT_PAGE_KINDS)[number];
+
+export const PrintPageSchema = z.discriminatedUnion('kind', [
+  PrintPageBaseSchema.extend({
+    kind: z.literal('voucher'),
+    top: PlacementSchema.nullable(),
+    bottom: PlacementSchema.nullable(),
+  }),
+  PrintPageBaseSchema.extend({
+    kind: z.literal('screenshots'),
+    // 酒店名（结账单上的酒店名称，其次发票的销售方名称）；都没有时为 null，页眉就不写。
+    hotelName: z.string().min(1).nullable(),
+    top: z.null(),
+    bottom: z.null(),
+  }),
+]);
 export type PrintPage = z.infer<typeof PrintPageSchema>;
 
+export const PRINT_COPY = {
+  // 续页页眉，如「No.9 支付截图（续） · 全季酒店 · 3640.00」。
+  continuationHeader: (nos: string, hotelName: string | null, grossAmount: string) => [`${nos} 支付截图（续）`, hotelName, grossAmount].filter((part) => part !== null).join(' · '),
+} as const;
+
 // not_generated：还没生成；generated：页图与合并 PDF 可用（调整后服务端立即重新渲染，仍是 generated）；
-// stale：材料变更使确认失效，旧打印稿作废，须重新确认后再生成。
+// stale：材料变更使确认失效，旧打印稿作废，须重新确认后再生成；复活的确认带回的旧打印稿若印的支付截图组与现在不同，
+// 也是 stale，页面随即重新生成。
 export const PRINT_SHEET_STATUSES = ['not_generated', 'generated', 'stale'] as const;
 
 export const PrintSheetSchema = z.object({
@@ -667,7 +834,7 @@ export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'extension_connecti
 export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
 export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
 
-export const ERP_OUTCOMES = ['none', 'filled', 'saved'] as const;
+export const ERP_OUTCOMES = ['none', 'filled', 'drafted', 'saved'] as const;
 export const ErpOutcomeSchema = z.enum(ERP_OUTCOMES);
 export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
 
@@ -717,6 +884,15 @@ export const ErpAccountViewSchema = z.object({
 });
 export type ErpAccountView = z.infer<typeof ErpAccountViewSchema>;
 
+// 去报销系统查看 (spec #406): where the employee reviews the bill 去报销 left in the 报销系统. `url` is the page the
+// button opens (today the 报销系统 entry page of the origin this task's fill plan froze), `draftId` the 暂存单's 内码 the
+// page shows with a copy button. The server alone decides when it is present; the page only renders it.
+export const ErpReviewSchema = z.object({
+  url: z.string().url(),
+  draftId: z.string().min(1),
+});
+export type ErpReview = z.infer<typeof ErpReviewSchema>;
+
 // idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
@@ -728,7 +904,10 @@ export const ErpSchema = z.object({
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
   loginNotice: z.string().nullable(),
+  // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row.
+  rerunNotice: z.string().nullable(),
   erpAccount: ErpAccountViewSchema.nullable(),
+  review: ErpReviewSchema.nullable(),
 });
 export type Erp = z.infer<typeof ErpSchema>;
 
@@ -846,6 +1025,14 @@ export type Reconcile = z.infer<typeof ReconcileSchema>;
 // and payment remain facts of the ERP system, not consequences of filling the form (ADR-0028).
 export const HANDOVER_COMPLETED_NOTICE =
   '报销单已经按你确认的明细填好，还没有保存或提交。请在报销系统里逐行核对，由你自己点「保存」并按流程提交。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存后回到这里再对一次账。应用只确认已填好，不代表已保存、已提交、已审批或已付款。';
+
+// ERP 草稿已交接 (ADR-0029): the baox 本地执行器 暂存'd the bill. A 暂存单 has no 单据编号 until it is saved; the page
+// shows this next to the 去报销系统查看 button and the 内码 (`Erp.review`), so it stays one short line (spec #406).
+export const DRAFT_HANDOVER_NOTICE = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
+
+// 写入结果不确定 after a 暂存 whose 内码 is known (a draft 回读 mismatch, say): shown next to the existing reason with
+// the 去报销系统查看 button and the 内码 whenever `Erp.review` is present on an aborted write (ticket #408).
+export const DRAFT_UNVERIFIED_NOTICE = '暂存单已生成但核对没通过，请打开检查。';
 
 export const ERP_SAVED_OUTCOME_NOTICE =
   '已从报销系统读到这张单据已保存。应用没有读到提交、审批或付款事实。';

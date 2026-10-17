@@ -85,6 +85,11 @@ watched in the baox page.
 
 ## Deployment, phase 1: intranet, no domain
 
+> **Superseded 2026-10-17 by [ADR-0036](../adr/0036-https-with-a-name-constrained-private-ca.md):** the app server
+> serves only HTTPS under a private CA constrained to `10.250.0.222`, which each PC trusts once by a command from the
+> launch notice, with its fingerprint. The rejection of `tls internal` below no longer holds; the guardrails other than
+> plain HTTP still do.
+
 No domain means no publicly trusted certificate. `tls internal` would require every employee to
 trust a private CA on an unmanaged personal machine; click-through warnings teach the wrong habit.
 Both were rejected in favour of plain HTTP on the intranet, with guardrails:

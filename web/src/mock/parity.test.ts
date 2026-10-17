@@ -81,6 +81,8 @@ const ID_KEYS = new Set([
   'pendingItemIds',
   'materialIds',
   'ungroupedMaterialIds',
+  'screenshotId',
+  'screenshotIds',
 ]);
 // Strings that carry an id inside them (file URLs name the task).
 const EMBEDS_IDS = new Set(['originalUrl', 'previewUrl', 'url', 'screenshotUrl']);

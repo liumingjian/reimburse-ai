@@ -42,4 +42,16 @@ describe('reconcile job on the fake ERP', () => {
     expect(events.some((event) => event.type === 'readback')).toBe(false);
     expect(sent.every((command) => command.method === 'Runtime.evaluate')).toBe(true);
   });
+
+  it('signs in on the login page when given a way to, then reads (headless, ADR-0033)', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
+    const server = stubServer({ taskId });
+    const result = await runReconcileJob(reconcilePlan(taskId), {
+      browser: fake.browser, channel: server.channel, pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => { await fake.login(); return { ok: true }; },
+    });
+    expect(result).toMatchObject({ status: 'read', code: null });
+    expect(server.events.filter((event) => event.type === 'readback')).toHaveLength(1);
+    expect(server.attempts).toEqual([]);
+  });
 });

@@ -12,7 +12,7 @@ pnpm dev          # 服务端 + 页面
 pnpm dev:mock     # 只起页面，用 mock 数据
 pnpm typecheck
 pnpm test         # lint + 各包单元测试（各包并行）
-pnpm test:changed <文件>...  # 只跑与这些改动文件相关的单元测试与 e2e 用例
+pnpm test:changed <文件>...  # 只跑与这些改动文件相关的单元测试（改到 web/e2e 时才跑相关 e2e，--e2e 强制）
 pnpm test:e2e     # Playwright：mock 与真实服务端两个项目
 ```
 

@@ -748,7 +748,8 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
-.app-lodging-preview {
+.app-lodging-preview,
+.app-dining-preview {
   display: grid;
   gap: $spacing-03;
   align-content: start;
@@ -1803,6 +1804,41 @@ $doc-frame-block: var(--app-doc-frame-block);
 // The pending page's 上传支付截图 opens this hidden input.
 .app-screenshot-row input[type='file'] {
   display: none;
+}
+
+// 支付截图组（#331）：按上传顺序排成一行缩略图，每张下面一个移除图标按钮；图片竖放、不裁剪。
+.app-screenshot-group {
+  margin-block-end: $spacing-05;
+}
+
+.app-screenshot-count {
+  @include type.type-style('body-compact-01');
+  margin-block-end: $spacing-03;
+}
+
+.app-screenshot-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-04;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 $spacing-03;
+
+  li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: $spacing-02;
+  }
+
+  img {
+    display: block;
+    width: 6rem;
+    height: 8rem;
+    object-fit: contain;
+    background: $layer-01;
+    border: 1px solid $border-subtle-01;
+  }
 }
 
 // ---------- 四角裁剪编辑器（手写，Carbon 没有对应组件） ----------

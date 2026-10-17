@@ -95,6 +95,34 @@ importers:
 
   fixtures: {}
 
+  local-executor:
+    dependencies:
+      '@baox/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@baox/erp-executor':
+        specifier: workspace:*
+        version: link:../erp-executor
+      '@baox/extension':
+        specifier: workspace:*
+        version: link:../extension
+      zod:
+        specifier: 4.6.2
+        version: 4.6.2
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      tsx:
+        specifier: 4.23.13
+        version: 4.23.13
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   server:
     dependencies:
       '@baox/contract':

@@ -1,13 +1,14 @@
 import { useEffect, useRef, type ComponentType } from 'react';
 import { Button, InlineNotification } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, InProgress, Renew, WarningAltFilled } from '@carbon/icons-react';
-import { ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE, ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
 import { navigate, taskHash } from '../router';
 import { ActionGroup } from '../shell/ActionGroup';
 import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
 import { useAction } from '../shell/useAction';
+import { DraftReview, UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 
 // The page renders the server's recorded ERP read state. Refresh reads that state only; it never dispatches another
@@ -54,7 +55,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const canCancel = snapshot.allowedActions.includes('cancel_erp_write');
   const canRefresh = erp.allowedActions.includes('refresh');
   const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
-  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
+  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
 
   return (
     <>
@@ -84,6 +85,10 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
           title={erp.externalWait === 'none' ? '正在根据已记录的状态显示进度。' : ERP_EXTERNAL_WAIT_COPY[erp.externalWait]}
           subtitle="应用不会替你点保存或提交审批；刷新状态只会读取已经记录的进度。"
         />
+      ) : null}
+
+      {erp.rerunNotice ? (
+        <InlineNotification data-testid="erp-rerun-notice" kind="info" role="status" lowContrast hideCloseButton statusIconDescription="说明" title={erp.rerunNotice} />
       ) : null}
 
       <section className="app-block" aria-label="填报进度">
@@ -144,6 +149,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                 <span data-testid={erp.outcome === 'saved' ? 'saved-outcome' : 'handover-completed'}>{completedNotice}</span>
               </InlineNotification>
             ) : null}
+            {erp.review ? <DraftReview review={erp.review} /> : null}
             <ActionGroup>
               <Button size="md" href={taskHash(taskId, 'done')}>
                 查看完成结果
@@ -153,6 +159,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
         ) : erp.status === 'aborted' ? (
           <>
             <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={`写入报销系统已停止：${erp.abortReason ?? ''}`} />
+            {erp.review ? <UnverifiedDraftReview review={erp.review} /> : null}
             {stage === 'reconcile' || stage === 'done' ? (
               <ActionGroup>
                 <Button size="md" href={taskHash(taskId, stage)}>

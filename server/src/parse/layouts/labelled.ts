@@ -2,37 +2,38 @@ import { cents, daysBetween, money } from '../../money-date';
 import { compact, rows, type ParseDoc, type TextObservation } from '../doc';
 import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
 
-// `hotel_folio/labelled`: a hotel 结账单 (folio) of any chain, read through the field labels every folio prints, from a
-// PDF text layer or a photo. A folio is reference material: it proves the stay dates of a hotel invoice and is never an
+// `hotel_folio/labelled`: a hotel 结账单 or 水单 (folio) of any hotel, read through its field labels, from a PDF text
+// layer or a photo. A folio is reference material: it proves the stay dates of a hotel invoice and is never an
 // invoice itself (kernel `parse.mjs` hotel_folio rules).
 //
-// Recognition does not look at the chain name (#211): on a photo the name is never one contiguous text observation,
-// and the brand is incidental to what a folio proves. On a PDF a label and its value usually arrive as one text run;
-// on a photo they are separate boxes, so each value is read by position from its label (as `taxi_receipt/
-// machine_printed` does). A value that cannot be read stays missing: no amount is back-calculated (ADR-0017), and no
-// date or 天数 (nights) is derived from the others (#212).
+// Recognition does not look at the chain name (#211) or the title: on a photo the name is never one contiguous text
+// observation, many a 水单 prints no 结账单 title at all, and neither is what a folio proves. On a PDF a label
+// and its value usually arrive as one text run, sometimes several fields to a run (`入住日期:…,房号:…`); on a photo
+// they are separate boxes, so each value is read by position from its label (as `taxi_receipt/machine_printed` does).
+// A value that cannot be read stays missing: no amount is back-calculated (ADR-0017), and no date or 天数 (nights) is
+// derived from the others (#212).
 
 const KIND = 'hotel_folio';
 const NAME = 'labelled';
-const VERSION = '1';
+const VERSION = '2';
 const SOURCE = ruleSource(KIND, NAME);
 const LABEL = '酒店结账单';
 
-// Hard anchors, on NFKC text without whitespace: the folio title and all four accommodation labels. The title alone
-// is generic (restaurants print 结账单 too), so it never recognises on its own. The title box is 结账单 itself, with at
-// most a Latin subtitle (`结账单 GUEST FOLIO`); a box that merely starts with it (`结账单号:…`) is not the title.
-const TITLE = /^结账单[A-Za-z]*$/;
+// Each field under the labels hotels print for it, on NFKC text without whitespace; the first that a document carries
+// is the one read. Hard anchors: the three fields a folio exists to prove — check-in, check-out and the total — each
+// under one of its labels. A restaurant's 结账单 prints a total but no stay dates, so it never recognises.
 const LABELS = {
-  checkIn: '入住日期',
-  checkOut: '离店日期',
-  roomNumber: '房号',
-  folioTotal: '消费合计',
-  guestName: '入住人',
-  nights: '天数',
-  roomRate: '房价',
-  paidAmount: '已付款(预授权结算)',
-} as const;
-const ANCHOR_LABELS = [LABELS.checkIn, LABELS.checkOut, LABELS.roomNumber, LABELS.folioTotal] as const;
+  checkIn: ['入住日期', '到店日期', '抵店日期'],
+  checkOut: ['离店日期', '退房日期'],
+  roomNumber: ['房号', '房间号'],
+  folioTotal: ['消费合计', '收费', '费用合计'],
+  guestName: ['入住人', '姓名', '宾客姓名'],
+  nights: ['天数'],
+  roomRate: ['房价'],
+  paidAmount: ['已付款(预授权结算)'],
+} as const satisfies Record<string, readonly string[]>;
+type Field = keyof typeof LABELS;
+const ANCHORS: readonly Field[] = ['checkIn', 'checkOut', 'folioTotal'];
 
 // Where a value may sit relative to its label, as multiples of the label's own text height (a photo's pixel scale
 // depends on the camera, a PDF's on the font): right of the label with its vertical centre within this band, else the
@@ -58,6 +59,8 @@ const DATE_SHAPES: readonly RegExp[] = [
   /^(\d{4})-(\d{2})(\d{2})$/,
   // An ISO date with the first hyphen unseen by OCR: 202608-09.
   /^(\d{4})(\d{2})-(\d{2})$/,
+  // Hyphen then dot, with or without 日: 2026-9.16, 2026-9.16日.
+  /^(\d{4})-(\d{1,2})\.(\d{1,2})日?$/,
 ];
 
 // A hotel's name as a folio heads it: ending in a generic lodging word, optionally with its branch in parentheses.
@@ -66,33 +69,60 @@ const HOTEL_NAME = /^[^:]{2,}(?:酒店|宾馆|饭店|旅馆|客栈)(?:\(.+\))?$/
 const NIGHTS = /^(\d+)$/;
 const RATE = /^([\d,]+\.\d{2})/;
 const CHARGE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// A room number printed with words after it (`1426入住2天`) is its leading number; one that starts with words (`A栋1208`)
+// is kept whole.
+const ROOM = /^[A-Za-z]?\d[\dA-Za-z-]*/;
 
-const find = (doc: ParseDoc, pattern: RegExp) => doc.observations.find((o) => pattern.test(compact(o.text)));
 const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
   observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join(' ') }] : [];
 
 const centre = (o: TextObservation) => o.y + o.height / 2;
-const allLabels = Object.values(LABELS);
-const stripLabel = (text: string, label: string) => compact(text).slice(label.length).replace(/^[:：]/, '');
+const allLabels: readonly string[] = Object.values(LABELS).flat();
 
-// Whether a box carries `label`: the label alone, or the label, its colon and a value in one run. A longer word that
-// only starts with the label (`房号类型`) is not that label.
-const carries = (o: TextObservation, label: string) => {
-  const text = compact(o.text);
-  return text === label || (text.startsWith(label) && /^[:：]/.test(text.slice(label.length)));
+// A run's `label:value` fields. It splits at a comma or semicolon that a label follows, so `入住日期:…,房号:1426` is two
+// fields and `消费合计:3,640.00` stays one.
+function fields(text: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (/[,;，；]/.test(text[i] ?? '') && allLabels.some((label) => text.startsWith(label, i + 1))) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return [...out, text.slice(start)];
+}
+
+// What a run carries under `label`: '' for the label alone, the value for the label, its colon and a value in one
+// field; null when the run does not carry it. A longer word that only starts with the label (`房号类型`) is not that
+// label.
+function carried(text: string, label: string): string | null {
+  for (const field of fields(compact(text))) {
+    if (field === label) return '';
+    if (field.startsWith(label) && /^[:：]/.test(field.slice(label.length))) return field.slice(label.length + 1);
+  }
+  return null;
+}
+const carries = (o: TextObservation, label: string) => carried(o.text, label) !== null;
+const labelOf = (doc: ParseDoc, field: Field): { box: TextObservation; label: string } | undefined => {
+  for (const label of LABELS[field]) {
+    const box = doc.observations.find((o) => carries(o, label));
+    if (box) return { box, label };
+  }
+  return undefined;
 };
-const labelOf = (doc: ParseDoc, label: string): TextObservation | undefined => doc.observations.find((o) => carries(o, label));
 
 type Read = { text: string; raw: string; observations: TextObservation[] };
 
-// A label's value: in the label's own box when OCR or the text layer kept them together; else the nearest box right of
+// A field's value: in the label's own run when OCR or the text layer kept them together; else the nearest box right of
 // the label within its row band; else the box directly below it within the gap. A box that is itself a label is never
 // a value.
-function valueOf(doc: ParseDoc, label: string): Read | null {
-  const box = labelOf(doc, label);
-  if (!box) return null;
-  const rest = stripLabel(box.text, label);
-  if (rest) return { text: rest, raw: stripLabel(box.raw, label), observations: [box] };
+function valueOf(doc: ParseDoc, field: Field): Read | null {
+  const found = labelOf(doc, field);
+  if (!found) return null;
+  const { box, label } = found;
+  const rest = carried(box.text, label);
+  if (rest) return { text: rest, raw: carried(box.raw, label) || rest, observations: [box] };
   const others = doc.observations.filter((o) => o !== box && o.page === box.page && !allLabels.some((l) => carries(o, l)));
   const right = others
     .filter((o) => o.x >= box.x + box.width && Math.abs(centre(o) - centre(box)) <= box.height * ROW_BAND)
@@ -132,7 +162,7 @@ function charges(doc: ParseDoc): number[] | null {
   if (headerAt < 0) return null;
   const out: number[] = [];
   for (const row of all.slice(headerAt + 1)) {
-    if (row.some((o) => compact(o.text) === LABELS.folioTotal)) break;
+    if (row.some((o) => LABELS.folioTotal.some((label) => carries(o, label)))) break;
     const amount = cents(row.at(-1)?.text ?? '');
     if (CHARGE_DATE.test(compact(row[0]?.text ?? '')) && amount !== null) out.push(amount);
   }
@@ -146,7 +176,7 @@ export const labelled: Layout = {
   label: LABEL,
 
   recognise(doc) {
-    return Boolean(find(doc, TITLE)) && ANCHOR_LABELS.every((label) => labelOf(doc, label) !== undefined);
+    return ANCHORS.every((field) => labelOf(doc, field) !== undefined);
   },
 
   parse(doc) {
@@ -156,21 +186,21 @@ export const labelled: Layout = {
       if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(observations) });
       return value ?? null;
     };
-    const read = (key: keyof typeof LABELS) => valueOf(doc, LABELS[key]);
+    const read = (key: Field) => valueOf(doc, key);
     const amount = (key: 'folioTotal' | 'paidAmount') => {
       const value = read(key);
-      const parsed = value ? cents(value.text) : null;
+      const parsed = value ? cents(value.text.replace(/元$/, '')) : null;
       if (value && parsed !== null) add(key, money(parsed), value.observations);
       return parsed;
     };
 
-    const checkInLabel = labelOf(doc, LABELS.checkIn);
+    const checkInLabel = labelOf(doc, 'checkIn')?.box;
     const hotel = doc.observations.find((o) => HOTEL_NAME.test(compact(o.text)) && checkInLabel && o.page === checkInLabel.page && o.y > checkInLabel.y);
     if (hotel) add('hotelName', compact(hotel.raw), [hotel]);
-    for (const key of ['guestName', 'roomNumber'] as const) {
-      const value = read(key);
-      if (value) add(key, value.raw, value.observations);
-    }
+    const guest = read('guestName');
+    if (guest) add('guestName', guest.raw, guest.observations);
+    const room = read('roomNumber');
+    if (room) add('roomNumber', ROOM.exec(room.raw)?.[0] ?? room.raw, room.observations);
     const dates: Record<'checkIn' | 'checkOut', string | null> = { checkIn: null, checkOut: null };
     for (const key of ['checkIn', 'checkOut'] as const) {
       const value = read(key);

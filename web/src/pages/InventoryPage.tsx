@@ -21,6 +21,8 @@ import { PageHeader } from '../shell/PageHeader';
 import { SummaryBar, SummaryField } from '../shell/SummaryBar';
 import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
+import { PaymentStay } from './PaymentStay';
+import { LatestUploadRejections } from './LatestUploadRejections';
 import { PAGE_COPY } from './page-copy';
 
 // Material inventory (材料盘点) page: inventory progress and the material list only. While inventory runs it shows
@@ -80,6 +82,11 @@ function groupEvents(snapshot: TaskSnapshot, byId: ReadonlyMap<string, Material>
       if (reference && !group.references.includes(reference)) group.references.push(reference);
     }
   }
+  // 支付截图 are placed with a 住宿 invoice rather than named by its event (ADR-0032): they join that invoice's group.
+  for (const material of byId.values()) {
+    const group = groups.find((candidate) => candidate.voucher.materialId === material.payment?.invoiceId);
+    if (group && !group.references.includes(material)) group.references.push(material);
+  }
   return groups;
 }
 
@@ -103,7 +110,7 @@ function groupParts(group: Group) {
 // When the evidence conclusion already contains a material's check text verbatim (for example the reference's
 // "26.69 + 20.85 + 21.65 = 69.19，按分守恒"), the cell points to the conclusion instead of repeating it.
 // This only compares two server strings; it rewrites and judges nothing.
-function MaterialTable({ label, materials, note }: { label: string; materials: readonly Material[]; note: string | null }) {
+function MaterialTable({ label, materials, note, snapshot }: { label: string; materials: readonly Material[]; note: string | null; snapshot: TaskSnapshot }) {
   return (
     <Table size="sm" aria-label={label} className="app-material-table">
       <TableHead>
@@ -157,6 +164,7 @@ function MaterialTable({ label, materials, note }: { label: string; materials: r
               ) : (
                 material.checkText
               )}
+              <PaymentStay material={material} snapshot={snapshot} />
             </TableCell>
             <TableCell>
               <StatusMark status={material.status} />
@@ -168,7 +176,7 @@ function MaterialTable({ label, materials, note }: { label: string; materials: r
   );
 }
 
-function GroupDetail({ group, title }: { group: Group; title: string }) {
+function GroupDetail({ group, title, snapshot }: { group: Group; title: string; snapshot: TaskSnapshot }) {
   const note = group.events.map((event) => event.evidenceNote).find((text) => text) ?? null;
   return (
     <>
@@ -188,7 +196,7 @@ function GroupDetail({ group, title }: { group: Group; title: string }) {
           ))}
         </ul>
       ) : null}
-      <MaterialTable label={`${title} 的材料`} materials={[group.voucher, ...group.references]} note={note} />
+      <MaterialTable label={`${title} 的材料`} materials={[group.voucher, ...group.references]} note={note} snapshot={snapshot} />
     </>
   );
 }
@@ -251,6 +259,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
   return (
     <>
       <PageHeader title={copy.title} lead={lead} />
+      <LatestUploadRejections snapshot={snapshot} />
 
       {!summary ? (
         <Progress snapshot={snapshot} />
@@ -315,7 +324,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
                       </TableExpandRow>,
                       expanded ? (
                         <TableExpandedRow key={`${key}-detail`} id={detailId} colSpan={GROUP_COLUMNS.length + 1} aria-label={title}>
-                          <GroupDetail group={group} title={title} />
+                          <GroupDetail group={group} title={title} snapshot={snapshot} />
                         </TableExpandedRow>
                       ) : null,
                     ];
@@ -329,7 +338,7 @@ export function InventoryPage({ snapshot }: { snapshot: TaskSnapshot }) {
               <h3 className="app-subhead">未归入费用事件</h3>
               <p className="app-caption">{blocked ? '整批暂停，还没有划分费用事件。' : '没有形成费用事件的材料：待确认或已排除。'}</p>
               <div className="bleed app-table">
-                <MaterialTable label="未归入费用事件的材料" materials={ungrouped} note={null} />
+                <MaterialTable label="未归入费用事件的材料" materials={ungrouped} note={null} snapshot={snapshot} />
               </div>
             </section>
           ) : null}

@@ -12,6 +12,7 @@ import { dedicatedErpTab } from '@baox/extension/erp-tab';
 import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
+import { FILL_JOB_DEADLINE_MS, JOB_DEADLINE_CODE } from './erp/fill-jobs';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
 import { BACKSTOP_MS } from './test/deadlines';
@@ -271,6 +272,52 @@ describe('an interrupted 去报销', () => {
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
+  // The extension's resume is answered over a socket that is gone by the time the verdict is ready: the extension
+  // never hears it, retries, and must find the job interrupted again rather than live with nobody on the other end.
+  async function resumeLostInFlight() {
+    const token = await pair(alice);
+    const { extension, plan } = droppedAfterOneStep(token);
+    await extension.connect();
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
+    const { jobId } = await plan;
+    await interrupted();
+
+    const back = await connected(token, {});
+    const unheard = back.resume(jobId, PAGE, PAGE);
+    back.disconnect();
+    await expect(unheard).rejects.toMatchObject({ code: 'channel_closed' });
+    return { token, scene, jobId };
+  }
+
+  it('opens the window again when the socket goes while its resume is being judged, and the next resume carries on', async () => {
+    const { token, scene, jobId } = await resumeLostInFlight();
+
+    await interrupted();
+    expect((await scene.snapshot()).erp.status).toBe('running');
+    const again = await connected(token, {});
+    expect(await again.resume(jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
+    const wire = again.channel(jobId);
+    await wire.emit({ type: 'waiting_login', hint: '请登录报销系统' });
+    await wire.emit({ type: 'result', status: 'waiting_login', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
+
+    expect((await scene.settled()).erp.status).toBe('waiting_login');
+    expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+  });
+
+  it('ends the job past the reopened window when the extension does not come back after an unheard resume', async () => {
+    const { scene } = await resumeLostInFlight();
+    await interrupted();
+
+    windowCloses();
+    const stopped = await scene.settled();
+
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+    expect(stopped.erp.status).toBe('idle');
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+  });
+
   it('holds the lease through the window, then aborts in place past it and says plainly that nothing was written', async () => {
     const token = await pair(alice);
     const { extension, plan } = droppedAfterOneStep(token);
@@ -464,6 +511,87 @@ describe('an interrupted 去报销', () => {
       expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
       expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     });
+  });
+});
+
+// An extension that stays connected but never finishes (a page that hangs, a runner stuck on an await): the socket is
+// healthy, so no window ever opens. The server's own deadline is what ends the job.
+describe('a job that outlives its deadline', () => {
+  async function hanging(onPlan: (plan: FillPlan, channel: ExecutorChannel) => Promise<void>) {
+    let wire!: ExecutorChannel;
+    // Set once every event `onPlan` sent has been acknowledged, so the deadline never races one still on the wire.
+    let acknowledged = false;
+    await connected(await pair(alice), {
+      fill: async (plan, channel) => {
+        wire = channel;
+        await onPlan(plan, channel);
+        acknowledged = true;
+        return new Promise<never>(() => undefined);
+      },
+    });
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
+    const deadline = Date.now() + BACKSTOP_MS;
+    while (!acknowledged || timers.pending(FILL_JOB_DEADLINE_MS) === 0) {
+      if (Date.now() > deadline) throw new Error('the job never started');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return { scene, wire: () => wire };
+  }
+
+  it('is ended by the server before any attempt: nothing written, the lease free, the executor heard no more', async () => {
+    const { scene, wire } = await hanging(async (_plan, channel) => {
+      await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+    });
+
+    timers.elapse(FILL_JOB_DEADLINE_MS);
+    const stopped = await scene.settled();
+
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: JOB_DEADLINE_CODE }]);
+    expect(stopped.erp.status).toBe('idle');
+    expect(stopped.erp.abortReason).toContain('报销系统没有被改动');
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+    // The executor's late word reads like no job at all: it can never write after the server gave up on it.
+    await expect(wire().emit({ type: 'step', step: 'chromium', status: 'done' })).rejects.toMatchObject({ code: 'unknown_job' });
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'result']);
+  });
+
+  it('goes to 对账 when an attempt is on record, and never replays it', async () => {
+    const { scene, wire } = await hanging(async (plan, channel) => {
+      await channel.emit({ type: 'step', step: 'import', status: 'running' });
+      await channel.emit(attemptStarted(plan));
+    });
+
+    timers.elapse(FILL_JOB_DEADLINE_MS);
+    const stopped = await scene.settled();
+
+    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: JOB_DEADLINE_CODE }]);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
+    await expect(wire().emit({ type: 'step', step: 'import', status: 'done' })).rejects.toMatchObject({ code: 'unknown_job' });
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+  });
+
+  it('also ends a job that is waiting out its reconnection window', async () => {
+    const token = await pair(alice);
+    const extension = fakeExtension(server.app.extensionChannel, token, {
+      fill: async (_plan, channel) => {
+        await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+        extension.disconnect();
+        return new Promise<never>(() => undefined);
+      },
+    });
+    await extension.connect();
+    const scene = await actionsOnFakeErp();
+    await scene.accept('start-erp-write');
+    await interrupted();
+
+    timers.elapse(FILL_JOB_DEADLINE_MS);
+    await scene.settled();
+
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: JOB_DEADLINE_CODE }]);
+    // The window closed with the job: nothing is left to fire.
+    expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
   });
 });
 

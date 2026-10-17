@@ -27,6 +27,9 @@ import {
   STALE_STEP_HTTP_STATUS,
   ExtensionPairingFailureSchema,
   ExtensionPairingSchema,
+  ErpCredentialsViewSchema,
+  type ErpCredentialsOutcome,
+  type ErpCredentialsView,
   type ExtensionPairing,
   type ExtensionPairingOutcome,
   LegacyImportFailureSchema,
@@ -199,6 +202,26 @@ export function parseExtensionPairingActionResponse(status: number, body: unknow
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, pairing: null };
 }
 
+export function parseErpCredentialsResponse(status: number, body: unknown): ErpCredentialsView {
+  refuseUnauthenticated(status);
+  if (!isSuccess(status)) throw new Error(`报销系统账号密码情况加载失败（HTTP ${status}）`);
+  const parsed = ErpCredentialsViewSchema.safeParse(body);
+  if (!parsed.success) throw new Error('报销系统账号密码情况的格式与契约不符');
+  return parsed.data;
+}
+
+// 保存 / 试登录 / 清除 ERP 凭据: success is the new view (a 试登录 that ran and failed included); failure is { error }.
+export function parseErpCredentialsActionResponse(status: number, body: unknown): ErpCredentialsOutcome {
+  if (isSuccess(status)) {
+    const view = ErpCredentialsViewSchema.safeParse(body);
+    if (view.success) return { ok: true, credentials: view.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的报销系统账号密码情况格式与契约不符。' }, credentials: null };
+  }
+  const failure = ExtensionPairingFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, credentials: null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, credentials: null };
+}
+
 export function parseSnapshotResponse(status: number, body: unknown): TaskSnapshot {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`任务快照加载失败（HTTP ${status}）`);
@@ -311,6 +334,15 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseExtensionPairingActionResponse(response.status, await readJson(response));
   }
+  async function credentialsAction(target: string, payload: Record<string, unknown> = {}): Promise<ErpCredentialsOutcome> {
+    let response: Response;
+    try {
+      response = await fetch(target, { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } });
+    } catch {
+      return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, credentials: null };
+    }
+    return parseErpCredentialsActionResponse(response.status, await readJson(response));
+  }
   const action = (taskId: string, endpoint: { path: string }, payload: Record<string, unknown>) => json(url(endpoint.path, taskId), payload);
 
   return {
@@ -409,6 +441,18 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     createExtensionPairingCode: () => pairingAction(url(E.createExtensionPairingCode.path)),
     revokeExtensionPairing: () => pairingAction(url(E.revokeExtensionPairing.path)),
+    async getErpCredentials() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getErpCredentials.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseErpCredentialsResponse(response.status, await readJson(response));
+    },
+    saveErpCredentials: (input) => credentialsAction(url(E.saveErpCredentials.path), { account: input.account, password: input.password }),
+    testErpCredentials: () => credentialsAction(url(E.testErpCredentials.path)),
+    clearErpCredentials: () => credentialsAction(url(E.clearErpCredentials.path)),
     async getSnapshot(taskId) {
       const response = await fetch(url(E.getSnapshot.path, taskId));
       return parseSnapshotResponse(response.status, await readJson(response));
@@ -499,17 +543,26 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
         }
       });
     },
-    addPaymentScreenshot(taskId, voucherMaterialId, file) {
+    addPaymentScreenshots(taskId, voucherMaterialId, files, stepToken) {
       const form = new FormData();
       form.append('voucherMaterialId', voucherMaterialId);
-      form.append('file', file, file.name);
-      return post(url(E.addPaymentScreenshot.path, taskId), form);
+      form.append('stepToken', stepToken);
+      for (const file of files) form.append('files', file, file.name);
+      return post(url(E.addPaymentScreenshots.path, taskId), form);
+    },
+    supplementDiningEvidence(taskId, { pendingItemId, files }, stepToken) {
+      const form = new FormData();
+      form.append('pendingItemId', pendingItemId);
+      form.append('stepToken', stepToken);
+      for (const file of files) form.append('files', file, file.name);
+      return post(url(E.supplementDiningEvidence.path, taskId), form);
     },
     startInventory: (taskId, stepToken) => action(taskId, E.startInventory, { stepToken }),
     answerPendingItem: (taskId, itemId, answer, stepToken) => action(taskId, E.answerPendingItem, { itemId, answer, stepToken }),
     confirmReview: (taskId, digest, stepToken, acceptDeadlineWarnings = false) => action(taskId, E.confirmReview, { digest, acceptDeadlineWarnings, stepToken }),
     reopenUpload: (taskId, stepToken) => action(taskId, E.reopenUpload, { stepToken }),
     removePaymentScreenshot: (taskId, screenshotId) => action(taskId, E.removePaymentScreenshot, { screenshotId }),
+    completePaymentScreenshots: (taskId, voucherMaterialId) => action(taskId, E.completePaymentScreenshots, { voucherMaterialId }),
     generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),
     rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, E.rotatePlacement, { pageId, slot, rotate }),
     cropPlacement: (taskId, pageId, slot, corners) => action(taskId, E.cropPlacement, { pageId, slot, corners }),

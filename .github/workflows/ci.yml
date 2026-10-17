@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A fast, environment-free check. The merge gate runs the whole suite on the Mac (docs/agents/merge-conditions.md);
+# CI leaves out what needs that machine: deploy/operator, whose fixtures stand a macOS box in for the Linux host, and
+# the server's real-OCR project (models, CJK fonts).
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # .claude/skills keeps a real copy for Claude Code; .agents/skills is the source.
+      - run: diff -r .agents/skills/deploy-intranet .claude/skills/deploy-intranet
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      # Every package's result, not only the first red one.
+      - run: pnpm -r --no-bail --filter '!@baox/operator' --filter '!@baox/server' test
+      - run: pnpm --filter @baox/server exec vitest run --project server

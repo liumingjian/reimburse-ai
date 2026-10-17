@@ -1,4 +1,4 @@
-import type { PlacementSlot, Corners, Placement, PrintPage, PrintSheet, TaskSnapshot } from '@baox/contract';
+import { PRINT_COPY, isStayScreenshotItem, screenshotGroupOf, type PlacementSlot, type Corners, type Placement, type PrintPage, type PrintSheet, type TaskSnapshot } from '@baox/contract';
 
 // 打印稿夹具（mock 服务端角色）：7 页与 fixtures/scripts/data.mjs 的 PRINT_PAGES 一致，页图是生成器产出的 PNG。
 // 旋转换一张预先生成的变体页图（print-pgN-r<上><下>.png）；四角裁剪只记下坐标（mock 不重新矫正照片），页图不变。
@@ -25,6 +25,9 @@ const PAGE_DEFS: readonly PageDef[] = [
   { pageId: 'pg5', nos: 'No.7', date: '2026-08-09', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0809.pdf', bottom: null, rotateTop: false, rotateBottom: false },
   { pageId: 'pg6', nos: 'No.8', date: '2026-08-22', categoryLabel: '长途交通', grossAmount: '73.00', top: '铁路电子客票_0822.pdf', bottom: null, rotateTop: false, rotateBottom: false },
   { pageId: 'pg7', nos: 'No.9', date: '2026-08-09', categoryLabel: '住宿', grossAmount: '3640.00', top: '全季酒店_发票.pdf', bottom: '全季酒店_结账单.pdf', rotateTop: false, rotateBottom: true },
+  { pageId: 'dining', nos: 'No.1', date: '2026-08-14', categoryLabel: '招待费', grossAmount: '240.00', top: '餐饮_发票.pdf', bottom: '餐饮_小票.pdf', rotateTop: false, rotateBottom: false },
+  { pageId: 'dining-discounted', nos: 'No.1', date: '2026-08-14', categoryLabel: '招待费', grossAmount: '240.00', top: '餐饮_发票.pdf', bottom: '餐饮_优惠小票.pdf', rotateTop: false, rotateBottom: false },
+  { pageId: 'dining-photo', nos: 'No.1', date: '2026-08-14', categoryLabel: '招待费', grossAmount: '240.00', top: '餐饮_发票.pdf', bottom: '餐饮_小票照片.jpg', rotateTop: false, rotateBottom: false },
 ];
 
 // 出租车票照片（900x1200）上自动检测到的纸张四角，原图像素。
@@ -65,8 +68,7 @@ function placement(materialId: string, fileName: string, rotate: boolean): Place
 
 const defOf = (pageId: string) => PAGE_DEFS.find((def) => def.pageId === pageId);
 
-// 每张主要报销凭证都可以补充支付截图（故事 61），补了就放在下半页右侧分栏。
-// 但只有住宿发票「应该」有支付截图：没补时才提醒。每页都提醒会把打印页塞满没人要的提示。
+// 支付截图只属于住宿发票（在它的待确认项里上传），放在下半页右侧分栏；住宿发票没有时提醒。
 function expectsScreenshot(snapshot: TaskSnapshot, voucherMaterialId: string): boolean {
   return snapshot.lines.some((line) => line.voucherMaterialId === voucherMaterialId && line.category.code === 'accommodation');
 }
@@ -79,11 +81,15 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
   for (const def of PAGE_DEFS) {
     const topId = byName.get(def.top);
     if (!topId || !vouchers.has(topId)) continue;
-    const bottomId = def.bottom ? byName.get(def.bottom) : undefined;
+    const line = snapshot.lines.find((candidate) => candidate.voucherMaterialId === topId);
+    const bottomId = def.categoryLabel === '招待费'
+      ? line?.referenceMaterialIds.find((id) => snapshot.materials.some((material) => material.materialId === id && material.fileName === def.bottom && material.kind === 'dining_receipt'))
+      : def.bottom ? byName.get(def.bottom) : undefined;
+    if (def.categoryLabel === '招待费' && !bottomId) continue;
     const no = snapshot.lines.find((line) => line.voucherMaterialId === topId)?.no ?? pages.length + 1;
     pages.push({
-      acceptsPaymentScreenshot: true,
       pageId: def.pageId,
+      kind: 'voucher',
       no,
       header: `${def.nos} · ${def.date.slice(5)} · ${def.categoryLabel} · ${def.grossAmount}`,
       nos: def.nos,
@@ -93,25 +99,59 @@ export function buildPrintSheet(snapshot: TaskSnapshot): PrintSheet {
       imageUrl: pageImageUrl(def, def.rotateTop, def.rotateBottom),
       top: placement(topId, def.top, def.rotateTop),
       bottom: def.bottom && bottomId ? placement(bottomId, def.bottom, def.rotateBottom) : null,
-      screenshotId: null,
+      screenshotIds: [],
     });
   }
-  const sheet: PrintSheet = { status: 'generated', fileName: PRINT_SHEET_FILE_NAME, url: PRINT_SHEET_URL, pages, notices: [] };
-  return refreshScreenshots(sheet, snapshot);
+  return { status: 'generated', fileName: PRINT_SHEET_FILE_NAME, url: pages.length === 1 && pages[0]?.categoryLabel === '招待费' ? `fixtures/print-${pages[0].pageId}-sheet.pdf` : PRINT_SHEET_URL, ...withScreenshots(pages, snapshot) };
 }
 
-// 支付截图变化后：每页的截图与「还没有支付截图」提醒随之更新（提醒不阻止下载）。
-export function refreshScreenshots(sheet: PrintSheet, snapshot: TaskSnapshot): PrintSheet {
+// 支付截图（同服务端 print/service.ts）：一张放在下半页右侧；2 张及以上全部移到紧随其后的续页（#333），每行 3 张、至多 2 行，
+// 下半页整宽只放结账单。续页的页图用组里第一张截图代替（mock 不合成页图，合并 PDF 也还是那份 7 页夹具）。
+// 住宿发票一张都没有时提醒（提醒不阻止下载）。
+function withScreenshots(voucherPages: readonly PrintPage[], snapshot: TaskSnapshot): Pick<PrintSheet, 'pages' | 'notices'> {
   const notices: string[] = [];
-  const pages = sheet.pages.map((page) => {
-    if (!page.acceptsPaymentScreenshot || !page.top) return page;
+  const pages = voucherPages.flatMap((page): PrintPage[] => {
+    if (!page.top) return [page];
     const voucherMaterialId = page.top.materialId;
-    const shot = snapshot.paymentScreenshots.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-    if (!shot && expectsScreenshot(snapshot, voucherMaterialId)) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
-    return { ...page, screenshotId: shot?.screenshotId ?? null };
+    const group = screenshotGroupOf(snapshot.paymentScreenshots, voucherMaterialId);
+    if (group.length === 0 && expectsScreenshot(snapshot, voucherMaterialId)) notices.push(MISSING_SCREENSHOT_NOTICE(page.nos, page.categoryLabel));
+    if (group.length < 2) return [{ ...page, screenshotIds: group.map((shot) => shot.screenshotId) }];
+    const hotelName = fieldOf(snapshot, page.bottom?.materialId, 'hotelName') ?? fieldOf(snapshot, voucherMaterialId, 'sellerName');
+    const continuation: PrintPage = {
+      pageId: `${page.pageId}.screenshots`,
+      kind: 'screenshots',
+      no: page.no,
+      header: PRINT_COPY.continuationHeader(page.nos, hotelName, page.grossAmount),
+      nos: page.nos,
+      date: page.date,
+      categoryLabel: page.categoryLabel,
+      grossAmount: page.grossAmount,
+      imageUrl: group[0]!.url,
+      hotelName,
+      top: null,
+      bottom: null,
+      screenshotIds: group.map((shot) => shot.screenshotId),
+    };
+    return [{ ...page, screenshotIds: [] }, continuation];
   });
-  return { ...sheet, pages, notices };
+  return { pages, notices };
 }
+
+// 服务端投影（task-snapshot/print.ts withScreenshotGroups）：缺支付截图待确认项带上它的 #331 旧截图组与是否锁定。整单明细已确认、
+// 或已开始写入报销系统时锁定，上传、删、「已传齐」都拒绝（flows/print.ts 读这里）。支付截图材料（ADR-0032）也在
+// paymentScreenshots 里（打印用），但不进这个组。mock 每次存快照前都调用一次。
+export function withScreenshotGroups(snapshot: TaskSnapshot): TaskSnapshot {
+  const locked = snapshot.confirmation.status === 'confirmed' || snapshot.erp.status !== 'idle';
+  const materials = new Set(snapshot.materials.map((material) => material.materialId));
+  const table = snapshot.paymentScreenshots.filter((shot) => !materials.has(shot.screenshotId));
+  for (const item of snapshot.pendingItems) {
+    item.screenshotGroup = isStayScreenshotItem(item) ? { screenshotIds: screenshotGroupOf(table, item.materialId).map((shot) => shot.screenshotId), locked } : null;
+  }
+  return snapshot;
+}
+
+const fieldOf = (snapshot: TaskSnapshot, materialId: string | undefined, key: string): string | null =>
+  snapshot.materials.find((material) => material.materialId === materialId)?.fields.find((field) => field.key === key)?.value.trim() || null;
 
 // 旋转：记下新的放置，换成对应的页图。
 export function rotatePage(page: PrintPage, slot: PlacementSlot, rotate: boolean): PrintPage {

@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, STAY_TRIO_COPY, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
+import { PAYMENT_SCREENSHOT_ERRORS, PRINT_ACTION_ERRORS, PRINT_COPY, STAY_TRIO_COPY, screenshotGroupOf, type Corners, type Line, type Material, type PlacementSlot } from '@baox/contract';
 import { blobPath, writeBlob } from '../data-dir';
 import type { Db } from '../db/database';
 import { paperCorners, type PaperCorners } from './straighten';
-import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn } from './compose';
-import { sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
-import { storedMime } from '../upload-rules';
-import { planPages, prefersRotation, REGIONS, type Region } from './layout';
+import { composeSheet, isJpegOrPng, pdfContent, photoContent, renderPages, screenshotContent, type Content, type Drawn, type SheetPage } from './compose';
+import { headingOf, printedScreenshots, screenshotsLocked, sheetState, type PrintFacts, type PrintSetting, type Screenshot, type StoredPage, type StoredPlacement } from './facts';
+import { CONTINUATION_CELLS, planPages, prefersRotation, REGIONS, type Box, type PagePlan, type Region } from './layout';
 import type { StayTrio } from '../stay-trio';
 
 // 去打印 (print) actions. Each reads the task, composes outside any transaction, and hands back a commit that
@@ -28,8 +27,7 @@ export type PrintState = {
   // Included materials by id.
   sources: ReadonlyMap<string, PrintSource>;
   facts: PrintFacts;
-  // The inventory's 住宿 trios (#213): which invoices take a screenshot before any sheet exists, and which recorded a
-  // confirmed absence.
+  // The inventory's 住宿 trios (#213): which invoices take a screenshot, and which recorded a confirmed absence.
   trios: readonly StayTrio[];
   // Whether the task made an ERP action attempt (its facts are frozen).
   erpAttempted: boolean;
@@ -54,14 +52,14 @@ export async function generate(state: PrintState): Promise<PrintCommit | null> {
   if (state.confirmation !== 'confirmed') throw new PrintRefusal('not_confirmed', PRINT_ACTION_ERRORS.notConfirmed);
   // Idempotent: a sheet of the standing confirmation is returned as is.
   if (stateOf(state) === 'generated') return null;
-  const composed = await compose(state, state.facts.settings, state.facts.screenshots);
+  const composed = await compose(state, state.facts.settings, printedScreenshots(state.facts));
   return renderCommit(state, composed);
 }
 
 export async function rotate(state: PrintState, pageId: string, slot: PlacementSlot, turned: boolean): Promise<PrintCommit> {
   const placement = placementOf(state, pageId, slot);
   const settings = withSetting(state.facts.settings, placement.materialId, { rotate: turned });
-  const composed = await compose(state, settings, state.facts.screenshots);
+  const composed = await compose(state, settings, printedScreenshots(state.facts));
   return async (tx, at, revision) => {
     await tx.insertInto('print_setting').values({ setting_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, material_id: placement.materialId, rotate: turned ? 1 : 0, corners: null, revision, created_at: at }).execute();
     await renderCommit(state, composed)(tx, at, revision);
@@ -74,51 +72,48 @@ export async function crop(state: PrintState, pageId: string, slot: PlacementSlo
   const rounded = corners.map(([x, y]) => [Math.round(x), Math.round(y)]) as Corners;
   if (!cornersValid(rounded, placement.original)) throw new PrintRefusal('invalid_corners', PRINT_ACTION_ERRORS.invalidCorners);
   const settings = withSetting(state.facts.settings, placement.materialId, { corners: rounded });
-  const composed = await compose(state, settings, state.facts.screenshots);
+  const composed = await compose(state, settings, printedScreenshots(state.facts));
   return async (tx, at, revision) => {
     await tx.insertInto('print_setting').values({ setting_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, material_id: placement.materialId, rotate: null, corners: JSON.stringify(rounded), revision, created_at: at }).execute();
     await renderCommit(state, composed)(tx, at, revision);
   };
 }
 
-// 补充支付截图; a second one replaces the first. On a generated sheet: for a page that takes one, and the sheet is
-// recomposed. Without a generated sheet this used to be refused outright. #213 relaxes that on purpose for a 住宿
-// invoice: the inventory's missing-screenshot item is answered by supplying the screenshot, before the list is
-// confirmed and before any sheet exists. Only the fact is stored then; the sheet picks it up when it is generated.
-export async function addScreenshot(state: PrintState, voucherMaterialId: string, file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<PrintCommit> {
-  const generated = stateOf(state) === 'generated';
-  if (generated) {
-    const page = state.facts.render?.pages.find((candidate) => candidate.voucherMaterialId === voucherMaterialId);
-    if (!page || !page.acceptsPaymentScreenshot) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
-  } else if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId)) {
-    throw new PrintRefusal('print_not_generated', PAYMENT_SCREENSHOT_ERRORS.notGenerated);
-  }
-  const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
-  if (!named || !(await isJpegOrPng(file.bytes))) throw new PrintRefusal('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
-  const sha256 = writeBlob(state.dataDir, file.bytes);
-  const shot: Screenshot = { screenshotId: randomUUID(), voucherMaterialId, fileName: file.fileName, sha256 };
-  const screenshots = [...state.facts.screenshots.filter((s) => s.voucherMaterialId !== voucherMaterialId), shot];
-  const composed = generated ? await compose(state, state.facts.settings, screenshots) : null;
-  return async (tx, at, revision) => {
-    await tx.insertInto('blob').values({ sha256, size: file.bytes.byteLength, mime: storedMime(file.fileName, file.mime), created_at: at }).onConflict((oc) => oc.column('sha256').doNothing()).execute();
-    await tx.insertInto('payment_screenshot').values({ screenshot_id: shot.screenshotId, task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, blob_sha256: sha256, file_name: file.fileName, revision, created_at: at }).execute();
-    if (composed) await renderCommit(state, composed)(tx, at, revision);
-  };
+// 支付截图 (payment screenshots, #213, #331) stored in the `payment_screenshot` table, in upload order. New screenshots
+// are materials (ADR-0032, `tasks.addPaymentScreenshots`); a group already in the table can still be emptied or declared
+// complete. Only a 住宿 invoice has one: the invoice has a trio screenshot part exactly when the check asks for one.
+//
+// Every change to a group (remove, 「已传齐」) is refused while it is locked (`screenshotsLocked`). So a sheet, which
+// exists only under a standing confirmation, is never recomposed by one; it picks the group up when it is generated.
+//
+// `groupEditable` refuses (throws) unless `voucherMaterialId` is a 住宿 invoice whose group may still change.
+function groupEditable(state: PrintState, voucherMaterialId: string): void {
+  if (!state.trios.some((trio) => trio.invoiceId === voucherMaterialId && trio.screenshot)) throw new PrintRefusal('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+  if (screenshotsLocked(state.confirmation, state.erpAttempted)) throw new PrintRefusal('screenshot_locked', STAY_TRIO_COPY.changeLocked);
 }
 
-// Removing a 住宿 invoice's screenshot reopens its missing-screenshot item unless an absence was confirmed. Before the
-// list is confirmed that is just the check asking again; after it (or once ERP was touched) it would pull a confirmed
-// list back into inventory from the print page, so it is refused there and the screenshot can only be replaced.
+// Whether an upload is a screenshot: named as a JPG or PNG (or unnamed with such a type), and its bytes are one.
+export async function isScreenshotImage(file: { fileName: string; mime: string; bytes: Uint8Array }): Promise<boolean> {
+  const named = IMAGE_NAME.test(file.fileName) || (!/\.[a-z0-9]+$/i.test(file.fileName) && /^image\/(jpeg|png)$/.test(file.mime));
+  return named && (await isJpegOrPng(file.bytes));
+}
+
 export async function removeScreenshot(state: PrintState, screenshotId: string): Promise<PrintCommit> {
   const removing = state.facts.screenshots.find((shot) => shot.screenshotId === screenshotId);
   if (!removing) throw new PrintRefusal('screenshot_not_found', PAYMENT_SCREENSHOT_ERRORS.notFound);
-  const trio = state.trios.find((candidate) => candidate.invoiceId === removing.voucherMaterialId);
-  if (trio?.screenshot && !trio.screenshot.noneConfirmed && (state.confirmation === 'confirmed' || state.erpAttempted)) throw new PrintRefusal('screenshot_required', STAY_TRIO_COPY.removeLocked);
-  const screenshots = state.facts.screenshots.filter((shot) => shot.screenshotId !== screenshotId);
-  const composed = stateOf(state) === 'generated' ? await compose(state, state.facts.settings, screenshots) : null;
+  groupEditable(state, removing.voucherMaterialId);
   return async (tx, at, revision) => {
     await tx.insertInto('payment_screenshot_removal').values({ removal_id: randomUUID(), screenshot_id: screenshotId, task_id: state.taskId, account_id: state.accountId, revision, created_at: at }).execute();
-    if (composed) await renderCommit(state, composed)(tx, at, revision);
+  };
+}
+
+// 「已传齐」: the group is complete, and the item settles on it. Idempotent while it stands complete.
+export async function completeScreenshots(state: PrintState, voucherMaterialId: string): Promise<PrintCommit | null> {
+  groupEditable(state, voucherMaterialId);
+  if (screenshotGroupOf(state.facts.screenshots, voucherMaterialId).length === 0) throw new PrintRefusal('screenshot_group_empty', PAYMENT_SCREENSHOT_ERRORS.empty);
+  if (state.facts.completeGroups.has(voucherMaterialId)) return null;
+  return async (tx, at, revision) => {
+    await tx.insertInto('payment_screenshot_group_complete').values({ declaration_id: randomUUID(), task_id: state.taskId, account_id: state.accountId, voucher_material_id: voucherMaterialId, revision, created_at: at }).execute();
   };
 }
 
@@ -231,32 +226,43 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     };
   };
 
-  const sheet: { header: string; drawn: Drawn[] }[] = [];
+  // Screenshots always stand upright and are never cropped.
+  const upright = async (shot: Screenshot, region: Box): Promise<Drawn> => ({ content: await screenshotContent(shotBytes.get(shot.screenshotId)!), rotate: false, region });
+
+  // Every page goes to both lists in the same position: the page images are matched to `pages` by index.
+  const sheet: SheetPage[] = [];
   const pages: Omit<StoredPage, 'pngSha256'>[] = [];
   for (const plan of plans) {
-    const shot = screenshots.find((candidate) => candidate.voucherMaterialId === plan.voucherMaterialId) ?? null;
+    const group = screenshotGroupOf(screenshots, plan.voucherMaterialId);
+    // One screenshot shares the bottom half with the folio; two or more move to a continuation page, and the folio
+    // takes the whole bottom half. Either way it is the page's `bottom` placement, so its rotate / crop still applies.
+    const inline = group.length === 1;
     const top = await prepared(plan.voucherMaterialId, 'top');
-    const bottom = await prepared(plan.bottomMaterialId, shot ? 'bottom_left' : 'bottom');
+    const bottom = await prepared(plan.bottomMaterialId, inline ? 'bottom_left' : 'bottom');
     const drawn = [top?.drawn, bottom?.drawn].filter((d): d is Drawn => d !== undefined);
-    const shotContent = shot ? shotBytes.get(shot.screenshotId) : undefined;
-    // The screenshot always stands upright in the right third.
-    if (shotContent) drawn.push({ content: await screenshotContent(shotContent), rotate: false, region: REGIONS.bottom_right });
-    sheet.push({ header: plan.header, drawn });
+    if (inline && group[0]) drawn.push(await upright(group[0], REGIONS.bottom_right));
+    sheet.push({ header: plan.header, divided: true, drawn });
+    const common = { voucherMaterialId: plan.voucherMaterialId, ...headingOf(plan) };
     pages.push({
+      ...common,
       pageId: plan.pageId,
-      voucherMaterialId: plan.voucherMaterialId,
-      no: plan.no,
-      nos: plan.nos,
+      kind: 'voucher',
       header: plan.header,
-      date: plan.date,
-      categoryLabel: plan.categoryLabel,
-      grossAmount: plan.grossAmount,
       top: top?.stored ?? null,
       bottom: bottom?.stored ?? null,
-      acceptsPaymentScreenshot: plan.acceptsPaymentScreenshot,
-      screenshotId: shot?.screenshotId ?? null,
+      screenshotIds: inline ? group.map((shot) => shot.screenshotId) : [],
       droppedFileNames: plan.droppedMaterialIds.map((id) => state.sources.get(id)?.fileName).filter((name): name is string => name !== undefined),
     });
+    if (group.length < 2) continue;
+    const hotelName = hotelNameOf(state.materials, plan);
+    const header = PRINT_COPY.continuationHeader(plan.nos, hotelName, plan.grossAmount);
+    // As many continuation pages as the group fills, each a full grid of cells but the last.
+    for (let start = 0; start < group.length; start += CONTINUATION_CELLS.length) {
+      const cells = group.slice(start, start + CONTINUATION_CELLS.length);
+      const page = start / CONTINUATION_CELLS.length;
+      sheet.push({ header, divided: false, drawn: await Promise.all(cells.map((shot, index) => upright(shot, CONTINUATION_CELLS[index]!))) });
+      pages.push({ ...common, pageId: `${plan.pageId}.screenshots${page === 0 ? '' : `.${page + 1}`}`, kind: 'screenshots', header, hotelName, top: null, bottom: null, screenshotIds: cells.map((shot) => shot.screenshotId) });
+    }
   }
   const pdf = await composeSheet(sheet);
   const images = await renderPages(pdf);
@@ -268,4 +274,10 @@ async function compose(state: PrintState, settings: ReadonlyMap<string, PrintSet
     return { ...page, pngSha256: sha256 };
   });
   return { pdfSha256: files[0]?.sha256 ?? '', pages: stored, files };
+}
+
+// The hotel a continuation page names: the folio's 酒店名称, else the invoice's 销售方名称.
+function hotelNameOf(materials: readonly Material[], plan: PagePlan): string | null {
+  const value = (materialId: string | null, key: string) => materials.find((material) => material.materialId === materialId)?.fields.find((field) => field.key === key)?.value.trim() || null;
+  return value(plan.bottomMaterialId, 'hotelName') ?? value(plan.voucherMaterialId, 'sellerName');
 }

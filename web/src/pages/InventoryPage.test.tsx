@@ -9,7 +9,7 @@ import type { Fault, MockOptions, SeedStage } from '../mock/options';
 function renderAt(hash: string, seed: SeedStage | null, fault: Fault | null = null, extra: Partial<MockOptions> = {}) {
   window.location.hash = hash;
   // 60ms per phase: long enough to see the progress state, short enough not to slow the suite.
-  const adapter = createMockAdapter({ ...extra, seed, fault, inventoryPhaseMs: 60 });
+  const adapter = createMockAdapter({ inventoryPhaseMs: 60, ...extra, seed, fault });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -25,7 +25,7 @@ const FIXTURE_FILES = [
   '铁路电子客票_0822.pdf',
   'IMG_4871.jpg',
   'IMG_4906.jpg',
-  '餐饮_发票.pdf',
+  '办公用品_发票.pdf',
 ];
 
 // Summary bar fields: label -> value.
@@ -136,7 +136,7 @@ describe('材料盘点', () => {
     // Materials in no expense event get their own section after the table.
     const rest = screen.getByRole('region', { name: '未归入费用事件' });
     expect(table.compareDocumentPosition(rest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(rest).getByText('餐饮_发票.pdf')).toBeTruthy();
+    expect(within(rest).getByText('办公用品_发票.pdf')).toBeTruthy();
     expect(within(rest).getByText('未识别版式')).toBeTruthy();
     expect(within(rest).getByText('没有形成费用事件的材料：待确认或已排除。')).toBeTruthy();
   });
@@ -185,7 +185,8 @@ describe('材料盘点', () => {
   });
 
   test('开始材料盘点后先看到分阶段进度，结束后看到结果与待确认项入口', async () => {
-    renderAt('#/task/T1/upload', 'upload');
+    // Long phases: at 60ms a loaded machine finishes the run before the progress is read.
+    renderAt('#/task/T1/upload', 'upload', null, { inventoryPhaseMs: 1000 });
     await screen.findByRole('button', { name: '拖入文件，或点击选择' });
     chooseFiles(FIXTURE_FILES);
     await screen.findByRole('heading', { name: '上传批次 #1' });

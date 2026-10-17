@@ -15,7 +15,7 @@ const FIXTURE_FILES = [
   '铁路电子客票_0822.pdf',
   'IMG_4871.jpg',
   'IMG_4906.jpg',
-  '餐饮_发票.pdf',
+  '办公用品_发票.pdf',
 ];
 
 async function uploadFixtureNames(page: Page) {

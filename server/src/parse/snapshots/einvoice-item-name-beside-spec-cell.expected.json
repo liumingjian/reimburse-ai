@@ -1,0 +1,20 @@
+{
+  "about": "#344: a hotel's 全电普票 prints 间 in the 规格型号 column right beside the 项目名称 cell. With no 规格型号 column in the table, 间 fell back into 项目名称 and the item read 住宿费间. Captured from the real invoice; invoice number, buyer and seller names and tax ids, and the issuer redacted.",
+  "outcome": "recognised",
+  "layout": "vat_invoice/einvoice",
+  "facts": {
+    "invoiceNumber": "26342000000000000046",
+    "issueDate": "2026-09-18",
+    "invoiceType": "普票",
+    "buyerName": "某某某(北京)科技有限公司",
+    "buyerTaxId": "91110000XXXXXXXX0W",
+    "sellerName": "示例某某酒店管理有限公司",
+    "sellerTaxId": "91340000XXXXXXXX30",
+    "itemName": "*生产生活服务*住宿费",
+    "netAmount": "332.81",
+    "taxAmount": "3.33",
+    "totalAmount": "336.14"
+  },
+  "missing": [],
+  "findings": ["qr_match"]
+}

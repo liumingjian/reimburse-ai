@@ -23,6 +23,8 @@ const allocation: PendingItem = {
     total: '69.19',
     giveUpNote: '选「认不出」后这张发票不能形成明细：请排除它和它的行程单，或追加列了逐段金额的行程单后重新盘点。',
   },
+  screenshotGroup: null,
+  manualKinds: [],
   status: 'open',
   answer: null,
 };

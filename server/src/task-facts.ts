@@ -13,7 +13,8 @@ import { bookOptions, type BookOption } from './books';
 import { pinnedCompanyRules, type CompanyRules } from './rules/company-rules';
 import { confirmationDigest, confirmationStatus, type ConfirmationDigest, type ConfirmationFact } from './confirmation';
 import { loadErp, type ErpRecord } from './erp/fill-state';
-import { loadPrintFacts, type PrintFacts } from './print/facts';
+import { loadPrintFacts, screenshotGroupsOf, stayGroupsOnly, type PrintFacts } from './print/facts';
+import { supersededByScreenshot } from './stay-trio';
 
 // Loading task facts (任务事实): every read that builds what the task service decides on and projects from. Reads
 // only, no decisions: `task-policy.ts` turns `LoadedTask.facts` into stage, step and write admission, and `tasks.ts` acts on the rest.
@@ -124,12 +125,15 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
   // Answers outlive runs: a re-derived item with the same id meets its latest answer.
   const answers = new Map<string, PendingAnswer>();
   if (current) {
-    for (const row of await tx.selectFrom('pending_answer').select(['item_id', 'answer']).where('task_id', '=', task.task_id).orderBy('revision').execute()) {
-      answers.set(row.item_id, JSON.parse(row.answer) as PendingAnswer);
+    const uploads = await lastScreenshotUploads(tx, task.task_id);
+    for (const row of await tx.selectFrom('pending_answer').select(['item_id', 'answer', 'revision']).where('task_id', '=', task.task_id).orderBy('revision').execute()) {
+      const answer = JSON.parse(row.answer) as PendingAnswer;
+      if (supersededByScreenshot(row.item_id, answer, row.revision, uploads)) answers.delete(row.item_id);
+      else answers.set(row.item_id, answer);
     }
   }
   // Payment screenshots are print facts, but the 住宿 trio check at inventory reads them too (#213).
-  const print = await loadPrintFacts(tx, task.task_id);
+  const stored = await loadPrintFacts(tx, task.task_id);
   const view = inventoryView(
     rows.map(viewMaterial),
     current
@@ -141,8 +145,14 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
       : null,
     { homeCity, rules },
     answers,
-    new Set(print.screenshots.map((shot) => shot.voucherMaterialId)),
+    screenshotGroupsOf(stored),
   );
+  // Only a 住宿 invoice's screenshots form a group (#330); the trio check says which invoices those are.
+  const print: PrintFacts = {
+    ...stayGroupsOnly(stored, new Set(view.trios.flatMap((trio) => (trio.invoiceId && trio.screenshot ? [trio.invoiceId] : [])))),
+    // 支付截图 materials print with the invoice inventory placed them with (ADR-0032).
+    placed: view.materials.flatMap((m) => (m.payment?.invoiceId ? [{ screenshotId: m.materialId, voucherMaterialId: m.payment.invoiceId, fileName: m.fileName, sha256: m.contentHash }] : [])),
+  };
   if (current) facts.parse = { waiting: view.waiting, openPendingItems: view.openPendingItems, blockers: [] };
   let assignment: Assignment | null = null;
   let options: BookOption[] = [];
@@ -159,6 +169,15 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
   const erp = await loadErp(tx, task.task_id);
   facts.erp = erp.facts;
   return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, erp, print };
+}
+
+// Per voucher, the revision of its latest 支付截图 upload, removed since or not.
+async function lastScreenshotUploads(tx: Tx, taskId: string): Promise<Map<string, number>> {
+  const uploads = new Map<string, number>();
+  for (const row of await tx.selectFrom('payment_screenshot').select(['voucher_material_id', 'revision']).where('task_id', '=', taskId).execute()) {
+    uploads.set(row.voucher_material_id, Math.max(row.revision, uploads.get(row.voucher_material_id) ?? row.revision));
+  }
+  return uploads;
 }
 
 async function latestConfirmation(tx: Tx, taskId: string): Promise<ConfirmationFact | null> {

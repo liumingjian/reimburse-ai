@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
 import { TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Locator, Page } from '@playwright/test';
-import { answerStayGaps, expect, signIn, test } from './fixture';
+import { answerStayGaps, expect, paymentScreenshot, signIn, test } from './fixture';
 
 // Slice 11 (#190) on the real server: 去打印. A task with a hotel invoice, its folio and a taxi photo is brought to
-// choose_action through the API; the page then generates the merged sheet, and the user rotates, crops, attaches a
-// 支付截图 (payment screenshot) and downloads the PDF. None of it touches the confirmation.
+// choose_action through the API; the page then generates the merged sheet, and the user rotates, crops and downloads
+// the PDF. None of it touches the confirmation.
 
 const samples = ['m01', 'm02', 'm09'].map((prefix) => {
   const found = SAMPLE_MATERIALS.find((sample) => sample.file.startsWith(prefix));
@@ -28,7 +28,8 @@ async function act(page: Page, snapshot: TaskSnapshot, name: string, body: Recor
   return TaskSnapshotSchema.parse(await response.json());
 }
 
-async function confirmedTask(page: Page, materials = samples): Promise<string> {
+// `screenshots`: how many 支付截图 are uploaded with the materials (ADR-0032); together they pay the hotel invoice.
+async function confirmedTask(page: Page, materials = samples, screenshots = 0): Promise<string> {
   const created = TaskSnapshotSchema.parse(await (await page.request.post('/api/tasks', { data: { homeCity: '杭州' } })).json());
   const taskId = created.task.taskId;
   for (const sample of materials) {
@@ -36,8 +37,16 @@ async function confirmedTask(page: Page, materials = samples): Promise<string> {
     const uploaded = await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: sample.fileName, mimeType, buffer: readFileSync(join(GENERATED_DIR, sample.file)) } } });
     expect(uploaded.ok()).toBe(true);
   }
+  for (let n = 1; n <= screenshots; n += 1) {
+    // 3640.00 in equal parts, the last taking the odd cents, each paid on a night of the 08-09 to 08-22 stay.
+    const part = Math.floor(364000 / screenshots);
+    const amount = ((n === screenshots ? 364000 - part * (screenshots - 1) : part) / 100).toFixed(2);
+    const buffer = await paymentScreenshot(page, { amount, paidAt: `2026-08-${String(8 + n).padStart(2, '0')} 12:00:0${n}`, payee: '上海某某酒店管理有限公司', number: `42000000002026080${n}00000000000${n}` });
+    const uploaded = await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: `付款${n}.png`, mimeType: 'image/png', buffer } } });
+    expect(uploaded.ok()).toBe(true);
+  }
   await act(page, await snapshotOf(page, taskId), 'start-inventory');
-  // Waits out inventory and answers the 住宿 trio gaps it raises; the 支付截图 this test adds goes on from the print page.
+  // Waits out inventory and answers the 住宿 trio gaps it raises.
   await answerStayGaps(page, taskId);
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '华东客户交付' } })).ok()).toBe(true);
   const ready = await snapshotOf(page, taskId);
@@ -154,4 +163,33 @@ test('去打印：生成合并打印稿，旋转、四角裁剪，下载 PDF；�
   expect(bytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g)?.length).toBe(2);
 
   expect((await snapshotOf(page, taskId)).confirmation).toEqual(confirmation);
+});
+
+// #333, ADR-0032: three 支付截图 uploaded with the materials are read, placed with the hotel invoice by date, and move to
+// a continuation page right after its page. It tiles, opens full screen and is in the downloaded PDF like any other page.
+test('住宿发票有 3 张支付截图：发票页后紧跟支付截图续页，可全屏查看，下载的 PDF 含续页', async ({ page }) => {
+  test.setTimeout(180_000);
+  await signIn(page);
+  const taskId = await confirmedTask(page, samples.filter((sample) => sample.file.endsWith('.pdf')), 3);
+  const hotelHeader = 'No.1 · 08-09 · 住宿 · 3640.00';
+  const continuationHeader = 'No.1 支付截图（续） · 全季酒店（上海某某店） · 3640.00';
+
+  await page.goto(`/#/task/${taskId}/print`);
+  const pages = page.getByRole('list', { name: '打印稿页面' });
+  await expect(pages.locator('.page-hdr')).toHaveText([hotelHeader, continuationHeader], { timeout: 60_000 });
+  await expect(page.getByRole('status', { name: '打印提醒' })).toHaveCount(0);
+  const continuation = pages.getByRole('listitem', { name: continuationHeader, exact: true });
+  await expectLoaded(continuation.locator('img.app-page-image'));
+  // Screenshots are neither turned nor cropped: the continuation page has no placement actions; the folio keeps its own.
+  await expect(continuation.getByRole('button', { name: /旋转|改为竖放|调整四角/ })).toHaveCount(0);
+  await expect(pages.getByRole('listitem', { name: hotelHeader, exact: true }).getByRole('button', { name: /^(旋转 90°|改为竖放)：全季酒店_结账单\.pdf$/ })).toBeVisible();
+
+  await continuation.getByRole('button', { name: '全屏查看第 2 页' }).click();
+  await expect(page.getByRole('img', { name: '第 2 页页图（全屏）' })).toBeVisible();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('link', { name: '下载打印稿 PDF' }).click();
+  const bytes = readFileSync(await (await downloading).path());
+  expect(bytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g)?.length).toBe(2);
 });

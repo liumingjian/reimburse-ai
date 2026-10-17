@@ -5,7 +5,8 @@
 import type { ExecutorChannel, ExecutorEvent, ReadbackEvent, ReconcilePlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { classifyReconciliation, reconcileReadings, reconcileRecord } from './reconcile';
 
-export type ReconcileExecutor = (plan: ReconcilePlan, channel: ExecutorChannel) => Promise<ResultEvent>;
+// `signal` aborts when the server has ended the job (its deadline, `reconcile-jobs.ts`).
+export type ReconcileExecutor = (plan: ReconcilePlan, channel: ExecutorChannel, options?: { signal?: AbortSignal }) => Promise<ResultEvent>;
 
 /**
  * Classify the last `reconcile` read-back in a job's event log. `expectedPreview` is the approved draft preview of

@@ -2,7 +2,7 @@
   "revision": 23,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
-    "name": "2026-09-29 新建报销",
+    "name": "2000-01-01 新建报销",
     "period": {
       "start": "2026-08-09",
       "end": "2026-08-22"
@@ -76,7 +76,7 @@
           "label": "发票号码",
           "value": "26312000000098127734",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -85,7 +85,7 @@
           "label": "开票日期",
           "value": "2026-08-22",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -94,7 +94,7 @@
           "label": "发票票种",
           "value": "专票",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -103,7 +103,7 @@
           "label": "购买方名称",
           "value": "某某科技（上海）有限公司",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -112,7 +112,7 @@
           "label": "购买方纳税人识别号",
           "value": "91310000XXXXXXXX0A",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -121,7 +121,7 @@
           "label": "销售方名称",
           "value": "上海某某酒店管理有限公司",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -130,7 +130,7 @@
           "label": "销售方纳税人识别号",
           "value": "91310000YYYYYYYY0B",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -139,7 +139,7 @@
           "label": "项目名称",
           "value": "*住宿服务*住宿费",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -148,7 +148,7 @@
           "label": "不含税金额",
           "value": "3433.96",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -157,7 +157,7 @@
           "label": "税额",
           "value": "206.04",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -166,7 +166,7 @@
           "label": "价税合计",
           "value": "3640.00",
           "source": "rule:vat_invoice/einvoice",
-          "parserVersion": "3",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         }
@@ -201,7 +201,7 @@
           "label": "酒店名称",
           "value": "全季酒店（上海某某店）",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -210,7 +210,7 @@
           "label": "入住人",
           "value": "林颂宜",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -219,7 +219,7 @@
           "label": "房号",
           "value": "1208",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -228,7 +228,7 @@
           "label": "入住日期",
           "value": "2026-08-09",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -237,7 +237,7 @@
           "label": "离店日期",
           "value": "2026-08-22",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -246,7 +246,7 @@
           "label": "天数",
           "value": "13",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -255,7 +255,7 @@
           "label": "房价",
           "value": "280.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -264,7 +264,7 @@
           "label": "消费合计",
           "value": "3640.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -273,7 +273,7 @@
           "label": "已付款",
           "value": "3640.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "1",
+          "parserVersion": "2",
           "evidence": "explicit",
           "editClass": "fact_locked"
         }
@@ -328,7 +328,7 @@
       "itemId": "stay_screenshot_missing.00000000-0000-4000-8000-000000000003",
       "materialId": "00000000-0000-4000-8000-000000000003",
       "title": "住宿发票「全季酒店_发票.pdf」缺少支付截图",
-      "why": "住宿报销要发票、结账单、支付截图三样。这张住宿发票（价税合计 3640.00 元）还没有支付截图。可以在这里直接上传支付截图（JPG、PNG）；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。",
+      "why": "住宿报销要发票、结账单、支付截图三样。这张住宿发票（价税合计 3640.00 元）需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张），上传后会重新盘点，截图金额合计不少于发票价税合计就算齐了；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。",
       "kind": "choice",
       "resolver": "要你处理",
       "fields": [],
@@ -343,6 +343,11 @@
         }
       ],
       "allocation": null,
+      "screenshotGroup": {
+        "screenshotIds": [],
+        "locked": true
+      },
+      "manualKinds": [],
       "status": "resolved",
       "answer": {
         "choice": "confirm_none"
@@ -602,11 +607,13 @@
     "draftNo": null,
     "abortReason": "写入报销系统的结果不确定，应用已停止写入，不会重放。原因：保存后没有读到报销系统的结果",
     "loginNotice": null,
+    "rerunNotice": null,
     "erpAccount": {
       "displayName": "测试员",
       "account": "erp.tester",
       "tenant": "测试账套"
-    }
+    },
+    "review": null
   },
   "readback": {
     "status": "none",

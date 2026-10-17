@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { App } from '../App';
-import { ALLOCATION_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
+import { ALLOCATION_ERRORS, PAYMENT_SCREENSHOT_ERRORS, PENDING_ANSWER_ERRORS, STALE_STEP_NOTICE, STAY_TRIO_COPY } from '@baox/contract';
 import { ALLOCATION_GIVE_UP_NOTE, GIVEN_UP_TITLE, givenUpNote } from '../mock/fixtures/inventory';
 import { t1Snapshot } from '../mock/fixtures/tasks';
 import { createMockAdapter } from '../mock/mock-adapter';
@@ -40,7 +40,7 @@ describe('待确认项', () => {
     expect(buttons.map((button) => button.textContent)).toEqual([
       '补填起点与终点IMG_4871.jpg',
       '下车时间不合法，并补填起点与终点IMG_4906.jpg',
-      '不支持的材料类型餐饮_发票.pdf',
+      '不支持的材料类型办公用品_发票.pdf',
       '住宿发票「全季酒店_发票.pdf」缺少支付截图',
     ]);
 
@@ -60,9 +60,9 @@ describe('待确认项', () => {
 
     // 切到不支持的材料：jsdom 画不了 PDF，退回 iframe 预览；出现两种选择。
     fireEvent.click(itemButton('不支持的材料类型'));
-    const frame = await within(detail()).findByTitle('餐饮_发票.pdf 原件');
+    const frame = await within(detail()).findByTitle('办公用品_发票.pdf 原件');
     expect(frame.tagName).toBe('IFRAME');
-    expect(frame.getAttribute('src')).toBe('fixtures/m11-other-invoice.pdf');
+    expect(frame.getAttribute('src')).toBe('fixtures/m12-office-supplies-invoice.pdf');
     expect(within(detail()).getByRole('button', { name: '排除此材料' })).toBeTruthy();
     expect(within(detail()).getByRole('button', { name: '自行手工处理' })).toBeTruthy();
   });
@@ -137,7 +137,7 @@ describe('待确认项', () => {
     ]);
     const taxi = snapshot.materials.find((material) => material.materialId === 'm09');
     expect(taxi?.fields.find((candidate) => candidate.key === 'origin')).toMatchObject({ value: '张江高科', source: 'user', evidence: 'explicit' });
-    expect(snapshot.materials.find((material) => material.materialId === 'm11')?.status).toBe('excluded');
+    expect(snapshot.materials.find((material) => material.materialId === 'm12')?.status).toBe('excluded');
     expect(snapshot.materials.find((material) => material.materialId === 'm01')?.status).toBe('ok');
     expect(snapshot.lines).toHaveLength(9);
     // The review's total only comes with its digest (after project assignment); here the lines carry it.
@@ -260,7 +260,7 @@ describe('原件查看器', () => {
     renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
     fireEvent.click(itemButton('不支持的材料类型'));
-    expect((await within(detail()).findByTitle('餐饮_发票.pdf 原件')).tagName).toBe('IFRAME');
+    expect((await within(detail()).findByTitle('办公用品_发票.pdf 原件')).tagName).toBe('IFRAME');
     expect(within(viewer()).queryByRole('button', { name: '全屏查看' })).toBeNull();
   });
 
@@ -381,7 +381,7 @@ describe('逐段分摊与阻塞项', () => {
     fireEvent.click(within(detail()).getByRole('button', { name: '排除这张发票及其行程单' }));
     expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
     snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04', 'm11']);
+    expect(snapshot.materials.filter((material) => material.status === 'excluded').map((material) => material.materialId)).toEqual(['m03', 'm04', 'm12']);
     expect(snapshot.stage).toBe('project');
     expect(snapshot.lines).toHaveLength(6);
     // The review's total only comes with its digest (after project assignment); here the lines carry it.
@@ -427,25 +427,154 @@ describe('逐段分摊与阻塞项', () => {
     expect(rows[1]?.textContent).toBe('下车时间不合法，并补填起点与终点IMG_4906.jpg');
   });
 
-  // #213: a 住宿 invoice missing its 支付截图 is answered by uploading the screenshot right here, or by 确认没有.
-  // The mock raises the item at inventory like the server does (T1 has no screenshot).
-  test('住宿发票缺少支付截图：在待确认项里直接上传支付截图，这一项随之消失', async () => {
+  // #342: 手工补填 is one form. The button opens it in place; the 材料种类 is picked inline and its fields follow, and one
+  // answer carries the kind and the values.
+  test('手工补填一步完成：选种类、填字段，一次提交', async () => {
+    const snapshot = t1Snapshot('pending');
+    const [first, ...rest] = snapshot.pendingItems;
+    if (!first) throw new Error('夹具里没有待确认项');
+    const field = (key: string, label: string, format: 'money' | 'date' | 'text', required = true) => ({ key, label, placeholder: '', required, format });
+    const unrecognised = {
+      ...first,
+      itemId: `unrecognised.${first.materialId}`,
+      title: '认不出这份材料',
+      kind: 'choice' as const,
+      fields: [],
+      choices: [{ key: 'exclude', label: '排除这份材料' }, { key: 'reference', label: '作为参考材料' }, { key: 'manual_fill', label: '手工补填' }],
+      manualKinds: [
+        { kind: 'vat_invoice' as const, label: '全电发票', fields: [field('totalAmount', '价税合计', 'money')] },
+        { kind: 'payment_screenshot' as const, label: '支付截图', fields: [field('amount', '支付金额', 'money'), field('payDate', '支付日期', 'date'), field('payee', '收款方', 'text', false)] },
+      ],
+    };
+    const adapter = createMockAdapter({ seed: 'pending', fault: null });
+    const answer = vi.spyOn(adapter, 'answerPendingItem');
+    render(
+      <AppProvider store={new AppStore(adapter, { validate: true })}>
+        <PendingPage snapshot={{ ...snapshot, pendingItems: [unrecognised, ...rest] }} />
+      </AppProvider>,
+    );
+    fireEvent.click(within(detail()).getByRole('button', { name: '手工补填' }));
+    expect(answer).not.toHaveBeenCalled();
+    const form = within(detail()).getByRole('form', { name: /^手工补填「/ });
+    fireEvent.click(within(form).getByRole('button', { name: '保存并标记已处理' }));
+    expect(within(form).getByText(PENDING_ANSWER_ERRORS.kind)).toBeTruthy();
+
+    fireEvent.change(within(form).getByLabelText('材料种类 *'), { target: { value: 'payment_screenshot' } });
+    expect(within(form).queryByLabelText('价税合计 *')).toBeNull();
+    fireEvent.change(within(form).getByLabelText('支付金额 *'), { target: { value: '178.48' } });
+    fireEvent.change(within(form).getByLabelText('支付日期 *'), { target: { value: '2026-09-16' } });
+    fireEvent.click(within(form).getByRole('button', { name: '保存并标记已处理' }));
+    await waitFor(() =>
+      expect(answer).toHaveBeenCalledWith('T1', unrecognised.itemId, { choice: 'manual_fill', kind: 'payment_screenshot', amount: '178.48', payDate: '2026-09-16', payee: '' }, snapshot.step.stepToken),
+    );
+  });
+
+  test('餐饮小票手工补填保留独立金额，发票选择随同一次提交', async () => {
+    const snapshot = t1Snapshot('pending');
+    const first = snapshot.pendingItems[0]!;
+    const item = {
+      ...first, itemId: `unrecognised.${first.materialId}`, kind: 'choice' as const, fields: [],
+      choices: [{ key: 'manual_fill', label: '手工补填' }],
+      manualKinds: [{ kind: 'dining_receipt' as const, label: '餐饮小票', fields: [{ key: 'paidAmount', label: '实付金额', placeholder: '', required: true, format: 'money' as const }], diningAssignment: {
+        address: `edit.${first.materialId}.diningInvoice`, selection: { kind: 'automatic' as const }, options: [{ invoiceId: 'invoice-1', label: '餐饮发票 · 240.00 元', amount: '240.00' }],
+      } }],
+    };
+    const adapter = createMockAdapter({ seed: 'pending', fault: null });
+    const answer = vi.spyOn(adapter, 'answerPendingItem').mockResolvedValue({ ok: false, error: { code: 'check_failed', message: '金额不一致' }, snapshot: null });
+    render(<AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...snapshot, pendingItems: [item] }} /></AppProvider>);
+    fireEvent.click(within(detail()).getByRole('button', { name: '手工补填' }));
+    fill('材料种类 *', 'dining_receipt');
+    fill('实付金额 *', '239.99');
+    fill('关联餐饮发票', 'invoice-1');
+    expect(within(detail()).getByLabelText('实付金额 *')).toHaveProperty('value', '239.99');
+    fireEvent.click(within(detail()).getByRole('button', { name: '保存并标记已处理' }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith('T1', item.itemId, { choice: 'manual_fill', kind: 'dining_receipt', paidAmount: '239.99', diningInvoiceId: 'invoice-1' }, snapshot.step.stepToken));
+  });
+
+  test('餐饮补传发送所选文件，全部拒收时停留待确认并展示原因', async () => {
+    window.location.hash = '#/task/T1/pending';
+    const snapshot = t1Snapshot('pending');
+    const item = { ...snapshot.pendingItems[0]!, dining: { kind: 'invoice' as const, supplement: 'receipt' as const } };
+    const rejected = { ...snapshot, batches: [{ batchId: 'reject', no: 2, uploadedAt: '2026-10-10T00:00:00Z', versionId: null, files: [{ fileId: 'bad', fileName: 'notes.txt', relativePath: 'notes.txt', size: 3, status: 'rejected' as const, contentHash: null, materialId: null, reasonCode: 'unsupported_type' as const, reason: '不支持的文件类型' }] }] };
+    const adapter = createMockAdapter({ seed: 'pending', fault: null });
+    const upload = vi.spyOn(adapter, 'supplementDiningEvidence').mockResolvedValue({ ok: true, snapshot: rejected });
+    const wrapper = (value: typeof snapshot) => <AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...value, pendingItems: [item] }} /></AppProvider>;
+    const rendered = render(wrapper(snapshot));
+    const files = [new File(['bad'], 'notes.txt')];
+    fireEvent.change(within(detail()).getByLabelText('补传餐饮小票'), { target: { files } });
+    await waitFor(() => expect(upload).toHaveBeenCalledWith('T1', { pendingItemId: item.itemId, files }, snapshot.step.stepToken));
+    expect(window.location.hash).toBe('#/task/T1/pending');
+    rendered.rerender(wrapper(rejected));
+    expect(screen.getByRole('status', { name: '本次未接收的文件' }).textContent).toContain('notes.txt：不支持的文件类型');
+  });
+
+  test('已处理的餐饮关联可重新展开并重置，确认锁定后不能展开', async () => {
+    const snapshot = t1Snapshot('review');
+    const item = { ...snapshot.pendingItems[0]!, itemId: 'dining_association.receipt', title: '餐饮小票关联发票', dining: {
+      kind: 'receipt' as const, supplement: null, assignment: { address: 'edit.receipt.diningInvoice', selection: { kind: 'selected_valid' as const, invoiceId: 'invoice-1' }, options: [{ invoiceId: 'invoice-1', label: '餐饮发票 · 240.00 元', amount: '240.00' }] },
+    }, screenshotGroup: null };
+    const adapter = createMockAdapter({ seed: 'review', fault: null });
+    const answer = vi.spyOn(adapter, 'answerPendingItem').mockResolvedValue({ ok: false, error: { code: 'test', message: 'test' }, snapshot: null });
+    const wrapper = (allowedActions: typeof snapshot.allowedActions) => <AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...snapshot, pendingItems: [item], allowedActions }} /></AppProvider>;
+    const rendered = render(wrapper(snapshot.allowedActions));
+    fireEvent.click(screen.getByRole('button', { name: '查看或修改关联' }));
+    fill('关联餐饮发票', '');
+    fireEvent.click(within(detail()).getByRole('button', { name: '保存关联' }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith('T1', 'edit.receipt.diningInvoice', { value: 'auto' }, snapshot.step.stepToken));
+    rendered.rerender(wrapper(snapshot.allowedActions.filter((action) => action !== 'change_dining_evidence')));
+    expect(screen.queryByRole('button', { name: '查看或修改关联' })).toBeNull();
+  });
+
+  // #213, ADR-0032: a 住宿 invoice missing its 支付截图 takes them right here, all in one upload that the server places with
+  // this invoice before it inventories again. The mock raises the item at inventory like the server does (T1 has no
+  // screenshot) and, having no parser, counts the upload as covering the invoice.
+  test('住宿发票缺少支付截图：多选的截图一次传上去，归到这张发票，页面转到材料盘点', async () => {
+    const copy = STAY_TRIO_COPY.screenshot;
     const adapter = renderPending();
     await screen.findByRole('heading', { name: '待确认项' });
-    const title = STAY_TRIO_COPY.screenshot.title('全季酒店_发票.pdf');
+    const title = copy.title('全季酒店_发票.pdf');
     fireEvent.click(itemButton(title));
     expect(within(detail()).getByRole('heading', { name: title })).toBeTruthy();
-    expect(within(detail()).getByText(STAY_TRIO_COPY.screenshot.why('3640.00'))).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone })).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.upload })).toBeTruthy();
+    expect(within(detail()).getByText(copy.why('3640.00'))).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone })).toBeTruthy();
+    expect(within(detail()).getByRole('button', { name: copy.upload })).toBeTruthy();
+    expect(within(detail()).getByText(copy.uploadNote, { exact: false })).toBeTruthy();
 
-    const add = vi.spyOn(adapter, 'addPaymentScreenshot');
-    const file = new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' });
-    fireEvent.change(within(detail()).getByLabelText(STAY_TRIO_COPY.screenshot.inputLabel('全季酒店_发票.pdf')), { target: { files: [file] } });
-    await waitFor(() => expect(add).toHaveBeenCalledWith('T1', 'm01', file));
-    await screen.findByText('对照原件补填或作出选择。还剩 3 个。');
+    const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
+    const add = vi.spyOn(adapter, 'addPaymentScreenshots');
+    const input = within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf'));
+    const files = [png('IMG_5011.png'), png('IMG_5012.png')];
+    expect(input.hasAttribute('multiple')).toBe(true);
+    const before = await adapter.getSnapshot('T1');
+    fireEvent.change(input, { target: { files } });
+    await waitFor(() => expect(window.location.hash).toBe('#/task/T1/inventory'));
+    expect(add.mock.calls).toEqual([['T1', 'm01', files, before.step.stepToken]]);
     const snapshot = await adapter.getSnapshot('T1');
-    expect(snapshot.pendingItems.some((item) => item.itemId === 'stay_screenshot_missing.m01')).toBe(false);
-    expect(snapshot.paymentScreenshots.map((shot) => [shot.voucherMaterialId, shot.fileName])).toEqual([['m01', 'IMG_5011.png']]);
+    expect(snapshot.pendingItems.find((item) => item.itemId === 'stay_screenshot_missing.m01')).toMatchObject({ status: 'resolved', answer: null });
+    expect(snapshot.materials.filter((material) => material.kind === 'payment_screenshot').map((material) => [material.fileName, material.payment?.invoiceId])).toEqual([
+      ['IMG_5011.png', 'm01'],
+      ['IMG_5012.png', 'm01'],
+    ]);
+  });
+
+  // #332: a resolved 支付截图 item stays reachable from the all-done view, and still takes an upload.
+  test('已处理的支付截图项可以重新展开：「确认没有」之后仍可上传，没有「已传齐」', async () => {
+    const copy = STAY_TRIO_COPY.screenshot;
+    const adapter = renderPending('review');
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+    // Seeded with 确认没有: opening it shows the chosen answer and still offers the upload, but no 「已传齐」.
+    expect(screen.queryByLabelText('待确认项详情')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: copy.reopen }));
+    expect(within(detail()).getByRole('button', { name: copy.confirmNone }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(detail()).queryByRole('button', { name: copy.complete })).toBeNull();
+    const add = vi.spyOn(adapter, 'addPaymentScreenshots');
+    fireEvent.change(within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf')), { target: { files: [new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' })] } });
+    await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
+  });
+
+  test('整单明细确认后，已处理的支付截图项不再能展开增删', async () => {
+    renderPending('actions');
+    await screen.findByRole('heading', { name: '没有待确认项了' });
+    expect(screen.queryByRole('button', { name: STAY_TRIO_COPY.screenshot.reopen })).toBeNull();
   });
 });
