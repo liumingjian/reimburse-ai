@@ -3,11 +3,13 @@
 Title updated 2026-10-17 to match the amendments below; it used to say "on the server". `10.250.0.222` hosts only the
 server and never drives ERP.
 
-**Status: proposed (2026-10-11).** Accepted once the spike in
-[erp-headless-v1.md](../design/erp-headless-v1.md#验证计划) passes. Until then the browser extension (ADR-0019, ADR-0021)
-remains the shipped path. On acceptance this ADR supersedes, for the default path, ADR-0019's "the ERP session never
-leaves the user's machine" and ERP authorisation by the employee's own login, and ADR-0028's "baox never clicks 保存".
-It implements the 暂存 half of ADR-0029, not its delete gateway.
+**Status: Accepted (2026-10-17).** Proposed 2026-10-11. S8 chose headless, and line 2 items 2 to 5 are built and
+measured live, except item 5's reconcile through the 本地执行器, run so far only against the stand-in; see the 当前状态
+section of [erp-headless-v1.md](../design/erp-headless-v1.md). For the 本地执行器
+path, the recommended one, this ADR supersedes ADR-0019's "the ERP session never leaves the user's machine" and ERP
+authorisation by the employee's own login, and ADR-0028's "baox never clicks 保存". The browser extension path
+(ADR-0019, ADR-0021) is still offered per account (amendment of 2026-10-16), and there ADR-0028 still holds: the
+extension hands the form over and never saves it. This ADR implements the 暂存 half of ADR-0029, not its delete gateway.
 
 **Amended 2026-10-12 (owner): the executor runs on the employee's own PC, not on the server.** `10.250.0.222` only
 hosts the server and never drives ERP. Whether the browser on the PC is headless, a dedicated headed one, or the

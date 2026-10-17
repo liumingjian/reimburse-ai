@@ -1,7 +1,7 @@
 # 去报销稳定性：无头执行器 v1
 
 状态：2026-10-11 与所有者逐项确认。决策见 [ADR-0033](../adr/0033-headless-executor-with-hosted-erp-credentials.md)
-与 [ADR-0034](../adr/0034-automatic-re-run-before-the-draft-is-saved.md)；两者都在下文验证计划通过后生效。
+与 [ADR-0034](../adr/0034-automatic-re-run-before-the-draft-is-saved.md)。ADR-0033 已于 2026-10-17 接受；ADR-0034 的状态仍是 proposed。
 
 2026-10-12 修订（所有者）：执行器跑在**员工自己的电脑上**，不在服务端。用无头、专用有头浏览器还是员工自己 Chrome 里的扩展，
 按 S8 实测，哪种更稳定、更快就用哪种。下文凡说「服务端」「主机」运行浏览器的地方，都按员工电脑理解。
