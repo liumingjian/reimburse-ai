@@ -117,8 +117,19 @@ export const PreconditionsSchema = z.object({
 });
 export type Preconditions = z.infer<typeof PreconditionsSchema>;
 
-// `save` is kept for job events recorded before ADR-0028; a fill job now ends at `handover` and never saves.
-export const STEPS = ['chromium', 'login', 'catalog', 'compatibility', 'navigate', 'import', 'fill', 'save', 'handover', 'readback'] as const;
+// `save` is 暂存 on the unattended path (ADR-0029), and a 保存 in job events recorded before ADR-0028; `draft_check`
+// (核对暂存单) is that path's lookup and read-back of the draft 暂存 left. An attended fill job ends at `handover`.
+export const STEPS = ['chromium', 'login', 'catalog', 'compatibility', 'navigate', 'import', 'fill', 'save', 'handover', 'readback', 'draft_check'] as const;
+export type Step = (typeof STEPS)[number];
+
+/**
+ * 去报销进度 (#420): how far a step with countable parts is, on its `step` event. Today only 填写明细 sends it: `total`
+ * 明细 rows with its start (`done: 0`), then one event per row written. An executor or 浏览器扩展 from before it sends
+ * none; the server then counts the step once. Optional on purpose: a new event type would be refused (`bad_event`).
+ */
+export const StepProgressSchema = z.object({ done: z.number().int().min(0), total: z.number().int().min(1) })
+  .refine((progress) => progress.done <= progress.total);
+export type StepProgress = z.infer<typeof StepProgressSchema>;
 
 const GridSchema = z.union([
   z.object({ ok: z.literal(true), columns: z.array(z.object({ label: z.string() }).passthrough()), rows: z.array(z.object({ kind: z.enum(['data', 'total']), values: z.record(z.string(), z.string()) }).passthrough()) }).passthrough(),
@@ -158,7 +169,7 @@ export const RESULT_STATUSES = ['saved', 'handed_over', 'drafted', 'aborted', 'u
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const ExecutorEventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('step'), step: z.enum(STEPS), status: z.enum(['running', 'done', 'failed']) }),
+  z.object({ type: z.literal('step'), step: z.enum(STEPS), status: z.enum(['running', 'done', 'failed']), progress: StepProgressSchema.optional() }),
   z.object({ type: z.literal('waiting_login'), hint: z.string() }),
   z.object({
     type: z.literal('catalog_mismatch'),

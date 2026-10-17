@@ -12,6 +12,7 @@
 import {
   FillPlanSchema, filledRows, markedPurpose, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
   type ExecutorChannel, type Mutation, type Preconditions, type ReadbackStage, type ResultEvent, type ResultStatus, type FreshGate,
+  type Step, type StepProgress,
 } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
@@ -85,9 +86,9 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   let compatibility: Compatibility | null = null;
   let currentStep: Parameters<typeof step>[0] | null = null;
 
-  async function step(name: 'chromium' | 'login' | 'catalog' | 'compatibility' | 'navigate' | 'import' | 'fill' | 'handover' | 'save' | 'readback', status: 'running' | 'done' | 'failed') {
+  async function step(name: Step, status: 'running' | 'done' | 'failed', progress?: StepProgress) {
     currentStep = status === 'running' ? name : null;
-    await channel.emit({ type: 'step', step: name, status });
+    await channel.emit({ type: 'step', step: name, status, ...(progress ? { progress } : {}) });
   }
 
   async function finish(status: ResultStatus, code: string | null, message: string | null, billNo: string | null = null, draftId: string | null = null): Promise<ResultEvent> {
@@ -306,11 +307,13 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
         + '请在报销专用浏览器窗口里关掉它，然后回到这个任务继续。');
     }
     await startAttempt('fill', { formMode: 'new', billNo: null, detailRowCount: preview.lines.length });
-    await step('fill', 'running');
+    // 去报销进度 (#420): the row count goes out with the step's start, then one event per row written.
+    await step('fill', 'running', { done: 0, total: preview.lines.length });
     const causa = plan.draft ? markedPurpose(preview.purpose, plan.draft.mark) : null;
     const filled = await fillApprovedPreview(write, {
       approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'), causa,
       addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs,
+      onRowWritten: (done, total) => step('fill', 'running', { done, total }),
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');
@@ -335,6 +338,9 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await pressDraft(session, { timeoutMs: Math.min(10_000, pace.longMs), pollMs: pace.pollMs });
     const drafted = await waitDrafted(async () => (await readForm(session)).formMode.value, { timeoutMs: Math.min(60_000, pace.longMs), pollMs: pace.pollMs });
     if (!drafted) return await finish('unknown', 'draft_not_observed', '点了「暂存」之后页签没有变成「修改」：不知道报销系统有没有暂存这张单。');
+    await step('save', 'done');
+    // 核对暂存单: find the draft by its marker and read it back by its 内码.
+    await step('draft_check', 'running');
     const found = await findDrafts(session, mark);
     if (!found.ok) return await finish('unknown', 'draft_query_failed', `已经点了「暂存」，但按归属标记查暂存单失败：${found.reason}`);
     if (found.drafts.length !== 1) return await finish('unknown', 'draft_not_unique', `已经点了「暂存」，按归属标记找到 ${found.drafts.length} 张暂存单，应当恰好一张。`);
@@ -343,7 +349,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     if (!model) return await finish('unknown', 'draft_view_failed', `暂存单（内码 ${draft.id}）找到了，但按内码读不回它。`, null, draft.id);
     const problems = compareDraft(model, verified);
     if (problems.length) return await finish('unknown', 'draft_readback_mismatch', `暂存单（内码 ${draft.id}）和填写时回读的不一致：${problems.join('；')}`, null, draft.id);
-    await step('save', 'done');
+    await step('draft_check', 'done');
     // ERP 草稿已交接: found by its marker, read back by its 内码; it has no 单据编号 until the employee saves it.
     return await finish('drafted', null, null, null, draft.id);
   } catch (error: any) {

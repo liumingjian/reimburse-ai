@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 import { App } from '../App';
@@ -363,5 +363,64 @@ describe('写入结果不确定但暂存单内码已知', () => {
     expect(await screen.findByText(`写入报销系统已停止：${REASON}`)).toBeTruthy();
     expect(screen.queryByTestId('erp-review-notice')).toBeNull();
     expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
+  });
+});
+
+// 去报销进度 (#420): the bar names the current step and shows a percentage, both from the snapshot's `erp.progress`.
+// The page computes nothing: no share of its own and no time left.
+describe('去报销进度条', () => {
+  const bar = () => screen.getByTestId('erp-progress');
+
+  test('打开页面就显示当前这一步和百分比（来自快照，刷新页面后也一样）', async () => {
+    const adapter = renderErp();
+    await waitingLogin();
+    const { erp } = await adapter.getSnapshot('T1');
+    expect(erp.progress).toMatchObject({ label: '登录' });
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('登录');
+    expect(screen.getByTestId('erp-progress-percent').textContent).toBe(`${erp.progress!.percent}%`);
+    expect(within(bar()).getByRole('progressbar').getAttribute('aria-valuenow')).toBe(String(erp.progress!.percent));
+  });
+
+  test('填写明细时逐行前进，「填写明细 n/m」，完成时才到 100%', async () => {
+    const adapter = renderErp();
+    const pushed: Array<{ label: string; percent: number; status: string }> = [];
+    adapter.subscribe('T1', (event) => {
+      if (event.type === 'snapshot' && event.snapshot.erp.progress) pushed.push({ ...event.snapshot.erp.progress, status: event.snapshot.erp.status });
+    });
+    fireEvent.click(await waitingLogin());
+    // testing-library 的 waitFor 用 setup.ts 配的 5 秒上限；vi.waitFor 默认只等 1 秒，Mac 忙时走不完 mock 流程。
+    await waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
+    const rows = (await adapter.getSnapshot('T1')).lines.length;
+    const filling = pushed.map((p) => p.label).filter((label) => label.startsWith('填写明细'));
+    expect([...new Set(filling)]).toEqual(Array.from({ length: rows + 1 }, (_, n) => `填写明细 ${n}/${rows}`));
+    const percents = pushed.map((p) => p.percent);
+    expect(percents).toEqual([...percents].sort((a, b) => a - b));
+    expect(pushed.filter((p) => p.percent === 100).every((p) => p.status === 'done')).toBe(true);
+    expect(pushed.filter((p) => p.status !== 'done').every((p) => p.percent < 100)).toBe(true);
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('交接单据');
+  });
+
+  test('显示快照给出的行进度，不估算剩余时间', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status: 'running', externalWait: 'erp_response', progress: { label: '填写明细 3/8', percent: 60 } } };
+    });
+    render(<App adapter={adapter} />);
+    await waitFor(() => expect(screen.getByTestId('erp-progress-label').textContent).toBe('填写明细 3/8'));
+    expect(screen.getByTestId('erp-progress-percent').textContent).toBe('60%');
+    expect(bar().textContent).not.toMatch(/剩余|预计|分钟|秒|ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('没有去报销作业时不显示进度条', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => ({ ...(await original(taskId)), erp: { ...(await original(taskId)).erp, progress: null } }));
+    render(<App adapter={adapter} />);
+    await waitingLogin();
+    expect(screen.queryByTestId('erp-progress')).toBeNull();
   });
 });

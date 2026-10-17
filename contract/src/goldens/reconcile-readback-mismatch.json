@@ -599,6 +599,10 @@
       }
     ],
     "currentStage": "fill",
+    "progress": {
+      "label": "填写明细",
+      "percent": 50
+    },
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [

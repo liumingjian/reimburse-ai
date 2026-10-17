@@ -528,6 +528,7 @@
     "status": "idle",
     "steps": [],
     "currentStage": null,
+    "progress": null,
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [],

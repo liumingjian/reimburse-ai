@@ -599,6 +599,10 @@
       }
     ],
     "currentStage": "handover",
+    "progress": {
+      "label": "交接单据",
+      "percent": 62
+    },
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [

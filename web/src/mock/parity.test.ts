@@ -51,11 +51,16 @@ const UNMATCHED: Readonly<Record<string, string>> = {
 // Differences that come from the server's scripted ERP job (server/src/erp/testing/fake-executor.ts), not from its
 // projection, per scenario.
 const SCRIPTED_STEPS = "the scripted job emits no navigate / receipt step; a real job (and the mock) does";
+// 去报销进度 (#420): with no 明细 row progress on its 填写明细 events the server counts the scripted job coarsely, one unit
+// per shown step; a real job (and the mock) reports each row.
+const SCRIPTED_ROWS = 'the scripted job reports no 明细 row progress and no navigate / receipt step; a real job (and the mock) does';
 const SCENE_UNMATCHED: Partial<Record<GoldenScenario, Readonly<Record<string, string>>>> = {
-  'erp-unknown': { 'erp.steps.3.status': SCRIPTED_STEPS, 'erp.steps.5.status': SCRIPTED_STEPS },
+  'erp-unknown': { 'erp.steps.3.status': SCRIPTED_STEPS, 'erp.steps.5.status': SCRIPTED_STEPS, 'erp.progress.percent': SCRIPTED_ROWS },
   'reconcile-readback-mismatch': {
     'erp.steps.3.status': SCRIPTED_STEPS,
     'erp.steps.5.status': SCRIPTED_STEPS,
+    'erp.progress.label': SCRIPTED_ROWS,
+    'erp.progress.percent': SCRIPTED_ROWS,
     'erp.abortReason': "the read-back totals are invented by the script; the mock's are T1's No.6 (fixtures/erp.ts)",
     'reconcile.reasons': 'as erp.abortReason',
   },

@@ -892,11 +892,25 @@ export const ErpReviewSchema = z.object({
 });
 export type ErpReview = z.infer<typeof ErpReviewSchema>;
 
+// 去报销进度 (spec #412 part A): the bar's words for the two steps the 本地执行器 path runs after 交接单据. They are not
+// rows of the step list (that is 交接单据 / 暂存到报销系统); they name the bar while it counts them.
+export const ERP_DRAFT_PROGRESS_LABELS = { save: '暂存', draftCheck: '核对暂存单' } as const;
+
+// 去报销进度: the bar the 去报销 page shows, worded by the server from the job's events. `label` is the current step,
+// with 「n/m」 while 填写明细 counts rows (「填写明细 3/8」); `percent` counts steps, never time, and is 100 only when the
+// job has finished. Null when no 去报销 job is running or finished for the task.
+export const ErpProgressSchema = z.object({
+  label: z.string().min(1),
+  percent: z.number().int().min(0).max(100),
+});
+export type ErpProgress = z.infer<typeof ErpProgressSchema>;
+
 // idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
   currentStage: ErpProgressStageSchema.nullable(),
+  progress: ErpProgressSchema.nullable(),
   externalWait: ErpExternalWaitSchema,
   outcome: ErpOutcomeSchema,
   allowedActions: z.array(ErpAllowedActionSchema),
