@@ -30,7 +30,16 @@ const server = (release: unknown, program: Uint8Array<ArrayBuffer> = NEW): typeo
   return new Response(null, { status: 404 });
 }) as typeof fetch;
 
-const check = (get: typeof fetch, starts = true) => checkForUpdate({ origin: ORIGIN, token: 'tok', programPath, running: sha256(OLD), runtime: '24.21.0', fetch: get, selfCheck: () => starts });
+const OWN_NODE = '/opt/homebrew/bin/node';
+const DOWNLOADED = '/Users/zhang/.baox/local-executor/app/runtime/node';
+let checkedUnder: string[];
+let downloads: string[];
+beforeEach(() => { checkedUnder = []; downloads = []; });
+const check = (get: typeof fetch, starts = true) => checkForUpdate({
+  origin: ORIGIN, token: 'tok', programPath, running: sha256(OLD), runtime: '24.21.0', node: OWN_NODE, fetch: get,
+  selfCheck: (_path, node) => { checkedUnder.push(node); return starts; },
+  downloadedRuntime: async (major) => { downloads.push(String(major)); return DOWNLOADED; },
+});
 
 describe('checkForUpdate', () => {
   it('does nothing when it already runs the program the app ships', async () => {
@@ -60,8 +69,31 @@ describe('checkForUpdate', () => {
     expect(readFileSync(programPath)).toEqual(OLD);
   });
 
-  it('does not swap in a program for another runtime', async () => {
-    expect(await check(server({ program: sha256(NEW), runtime: '26.0.0' }))).toEqual({ kind: 'runtime', wants: '26.0.0' });
+  it('ignores a change of the server\'s Node minor version', async () => {
+    expect(await check(server({ program: sha256(OLD), runtime: '24.30.1' }))).toEqual({ kind: 'current' });
+    expect(await check(server({ program: sha256(NEW), runtime: '24.30.1' }))).toEqual({ kind: 'restart' });
+    expect(checkedUnder).toEqual([OWN_NODE]);
+    expect(downloads).toEqual([]);
+  });
+
+  it('on a change of major version, switches to the downloaded runtime and checks the new program under it', async () => {
+    expect(await check(server({ program: sha256(NEW), runtime: '26.0.0' }))).toEqual({ kind: 'restart', node: DOWNLOADED });
+    expect(downloads).toEqual(['26']);
+    expect(checkedUnder).toEqual([DOWNLOADED]);
+    expect(readFileSync(programPath)).toEqual(NEW);
+  });
+
+  it('switches the runtime even when the program stays the same', async () => {
+    expect(await check(server({ program: sha256(OLD), runtime: '26.0.0' }))).toEqual({ kind: 'restart', node: DOWNLOADED });
+  });
+
+  it('stays on its Node and its program when the new runtime cannot be fetched', async () => {
+    const result = await checkForUpdate({
+      origin: ORIGIN, token: 'tok', programPath, running: sha256(OLD), runtime: '24.21.0', node: OWN_NODE,
+      fetch: server({ program: sha256(NEW), runtime: '26.0.0' }), selfCheck: () => true,
+      downloadedRuntime: async () => { throw new Error('connect ECONNREFUSED'); },
+    });
+    expect(result).toEqual({ kind: 'failed', reason: 'connect ECONNREFUSED' });
     expect(readFileSync(programPath)).toEqual(OLD);
   });
 
