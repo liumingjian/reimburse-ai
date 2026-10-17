@@ -389,6 +389,27 @@ const recordedEmpty = (el: any) => {
   return !width || !height;
 };
 
+/** Elements jsdom's default stylesheet hides; with no page stylesheet these are the only `display: none` defaults. */
+const HIDDEN_BY_DEFAULT = new Set(['HEAD', 'SCRIPT', 'STYLE', 'TEMPLATE', 'TITLE', 'META', 'LINK', 'BASE', 'NOSCRIPT', 'DATALIST', 'PARAM', 'AREA']);
+
+/**
+ * `display` and `visibility` as jsdom computes them for a document with no stylesheet: the inline style, the
+ * `hidden` attribute, jsdom's defaults, and `visibility` inherited from the nearest ancestor that sets it. Only
+ * `none` and `hidden` are modelled; any other `display` reads `block`.
+ */
+export const inlineDisplay = (el: any): string => {
+  if (el.style?.display) return el.style.display;
+  if (el.hidden || HIDDEN_BY_DEFAULT.has(el.tagName) || (el.tagName === 'INPUT' && el.type === 'hidden')) return 'none';
+  return 'block';
+};
+export const inlineVisibility = (el: any): string => {
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    const v = n.style?.visibility;
+    if (v && v !== 'inherit') return v;
+  }
+  return 'visible';
+};
+
 // @unverified: hand-written pages sit on a fake 10px grid, not on live boxes (recorded pages keep live visibility only) [fake]
 /** One jsdom document with fake layout, visible-only innerText, and CDP-style evaluation. */
 class FakeDocument {
@@ -415,6 +436,24 @@ class FakeDocument {
     // jsdom has no hit testing, so the fake answers `elementFromPoint` with its own layout — the same answer a
     // click at that point gets, which is the whole point of asking.
     this.document.elementFromPoint = (x: number, y: number) => self.elementAt(x, y);
+    // jsdom resolves the whole cascade on every `getComputedStyle`. The executor's visibility scans call it for every
+    // node of `body *`, so one scan of a recorded page took 5 s, synchronously; a few in a row held the vitest worker
+    // long enough under load to time out its RPC and the test (2026-10-17, Mac mini). These documents have no
+    // stylesheet, so the two properties the executor reads come from the inline model above; the rest is jsdom's.
+    if (this.document.styleSheets.length) throw new Error(`fake ERP page ${url} has a stylesheet: inlineDisplay/inlineVisibility no longer match jsdom`);
+    const computed = this.window.getComputedStyle.bind(this.window);
+    this.window.getComputedStyle = (el: any, pseudo?: string) => {
+      if (pseudo) return computed(el, pseudo);
+      return new Proxy({}, {
+        get(_target, prop) {
+          if (prop === 'display') return inlineDisplay(el);
+          if (prop === 'visibility') return inlineVisibility(el);
+          const real = computed(el);
+          const value = real[prop];
+          return typeof value === 'function' ? value.bind(real) : value;
+        },
+      });
+    };
     proto.scrollIntoView = function (this: any) {
       if (!this.isConnected || self.hidden(this)) return;
       const { docY, height } = self.layout(this);
