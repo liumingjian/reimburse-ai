@@ -44,10 +44,13 @@ The fill steps are the same executor code, but pairing, the extension's confirma
 session and cookies, and the extension transport are not exercised in dev mode. QA of those goes through the
 production-build launch in §1 with the extension loaded and paired.
 
-**Dev mode never reaches the 本地执行器 either.** `dev-main.ts` wires only the CDP executor, and the server adds the
-暂存 step (`draft`, `server/src/erp/remote-executor.ts`) only to jobs it sends to a paired 本地执行器. So in dev mode a
-去报销 never 暂存s and never ends in ERP 草稿已交接. QA of 暂存 needs the production build with a 本地执行器 paired to
-it (ADR-0033, ADR-0035); say so before the maintainer starts a QA round on it. The install itself does run: `up` builds
+**The 本地执行器 and 暂存 need `BAOX_DEV_ERP=paired`.** By default `dev-main.ts` wires the CDP executor, and the
+server adds the 暂存 step (`draft`, `server/src/erp/remote-executor.ts`) only to jobs it sends to a paired 本地执行器,
+so a 去报销 never 暂存s and never ends in ERP 草稿已交接. `rexec --background 'BAOX_DEV_ERP=paired qa/dev.sh up'`
+leaves ERP jobs to the server's own routing, as the production build does (`server/src/dev-executors.ts`): a paired
+本地执行器 then 暂存s a real draft in the ERP under baox's marker, and with nothing paired a 去报销 waits for one. Say
+both before the maintainer starts that round. `up` keeps a credential key in `~/.baox-qa-dev/erp-credential-key`, so
+the 设置页 can save the ERP 凭据 the 本地执行器 signs in with; `status` names the mode. The install itself runs either way: `up` builds
 the 本地执行器 program from the tree and caches Node's runtimes in `~/.baox-qa-dev/runtimes`, and Vite passes
 `/install`, `/uninstall` and the channel WebSocket through to the server (`web/src/dev-proxy.ts`). So the 设置页's
 install command, pairing (47319 included) and self-update (`sync` rebuilds the program when executor code changes)

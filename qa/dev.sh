@@ -18,6 +18,9 @@
 # (server, default 4319), BAOX_QA_WEB_PORT (Vite, default 5173), BAOX_QA_DEV_STATE (tree copy, pid file and logs,
 # default ~/.baox-qa-dev). Every other BAOX_* variable (BAOX_ERP_CHROMIUM, BAOX_ERP_STOP_BEFORE_IMPORT, ...) passes
 # through to the server at `up`. One instance per Mac: `up` stops the previous one first, whichever checkout started it.
+#
+# `BAOX_DEV_ERP=paired qa/dev.sh up` sends 去报销 to the paired 浏览器扩展 or 本地执行器 instead of the dedicated
+# Chromium (server/src/dev-executors.ts), so a 本地执行器 installed from the 设置页 暂存s in the real ERP.
 set -euo pipefail
 
 CHECKOUT=$(cd "$(dirname "$0")/.." && pwd)
@@ -28,6 +31,10 @@ export BAOX_PORT=${BAOX_PORT:-4319}
 WEB_PORT=${BAOX_QA_WEB_PORT:-5173}
 # Node's runtimes for the 本地执行器 the install command hands out, kept across restarts: the first `up` downloads them.
 export BAOX_LOCAL_EXECUTOR_RUNTIMES=${BAOX_LOCAL_EXECUTOR_RUNTIMES:-$STATE/runtimes}
+# The key the hosted ERP 凭据 are sealed with. Without one nobody can save 凭据 and no 本地执行器 is sent any; it stays
+# across restarts because the 凭据 sealed with it stay in the data directory.
+export BAOX_ERP_CREDENTIAL_KEY_FILE=${BAOX_ERP_CREDENTIAL_KEY_FILE:-$STATE/erp-credential-key}
+export BAOX_DEV_ERP=${BAOX_DEV_ERP:-cdp}
 URL="http://127.0.0.1:$WEB_PORT/"
 READY_TIMEOUT_S=180
 
@@ -59,7 +66,7 @@ down() {
 status() {
   local pg
   if pg=$(running_pgid); then
-    echo "running: $URL (process group $pg, from $(cat "$STATE/checkout"), data $(cat "$STATE/data"))"
+    echo "running: $URL (process group $pg, from $(cat "$STATE/checkout"), data $(cat "$STATE/data"), 去报销 on $(cat "$STATE/dev-erp" 2>/dev/null || echo cdp))"
     echo "logs: $STATE/server.log $STATE/web.log"
   else
     echo "not running"
@@ -89,6 +96,10 @@ up() {
   done
 
   mkdir -p "$STATE"
+  if [[ ! -s $BAOX_ERP_CREDENTIAL_KEY_FILE ]]; then
+    (umask 077 && node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > "$BAOX_ERP_CREDENTIAL_KEY_FILE")
+  fi
+  echo "$BAOX_DEV_ERP" > "$STATE/dev-erp"
   mirror >/dev/null
   echo "installing dependencies in $SRC (quick when the lockfile is unchanged)"
   (cd "$SRC" && pnpm install --frozen-lockfile --prefer-offline --reporter=silent)
@@ -137,7 +148,7 @@ push() {
   # A dependency change needs an install, which the running watchers cannot do; the data directory survives the restart.
   if grep -Eq '(^|/| )(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$' <<<"$changed"; then
     echo "dependencies changed; restarting the instance"
-    up
+    BAOX_DEV_ERP=$(cat "$STATE/dev-erp" 2>/dev/null || echo cdp) up
     return
   fi
   # A new program is what an installed executor updates itself to (local-executor/src/update.ts).
