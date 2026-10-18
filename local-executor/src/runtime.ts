@@ -59,9 +59,11 @@ export function windowsPath(path: string, userHome: string): string {
 /** Why this Node is not the employee's own Node 24 the executor may use, or null when it may. */
 function refusal({ path, platform, major, probe, userHome }: { path: string; platform: NodeJS.Platform; major: number; probe: NodeProbe; userHome: string }): string | null {
   if (!probe.exists(path)) return '不在了';
+  // On macOS the signature comes first, as in the install script: an unsigned binary is never run, not even for
+  // `--version`.
+  if (platform === 'darwin' && !probe.signed(path)) return '没有 Node.js 官方签名';
   const version = probe.version(path);
   if (!version || majorOf(version) !== major) return `版本是 ${version ?? '未知'}，不是 ${major}`;
-  if (platform === 'darwin' && !probe.signed(path)) return '没有 Node.js 官方签名';
   // The Windows start entry is ASCII; a path it cannot write would never start.
   if (platform === 'win32' && !/^[\x20-\x7e]*$/.test(windowsPath(path, userHome))) return '路径里有启动项写不了的字符';
   return null;

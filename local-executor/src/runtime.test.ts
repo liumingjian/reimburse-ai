@@ -61,6 +61,14 @@ describe('choosing a Node', () => {
     expect(await choose(own, machine({ [own]: { version: 'v24.3.0', signed: false } }))).toMatchObject({ path: downloaded, switched: true });
   });
 
+  it('never runs an unsigned Node on macOS, not even for its version', async () => {
+    const ran: string[] = [];
+    const probe = machine({ [own]: { version: 'v24.3.0', signed: false } });
+    const watched: NodeProbe = { ...probe, version: (path) => { ran.push(path); return probe.version(path); } };
+    expect(await choose(own, watched)).toMatchObject({ path: downloaded, switched: true, why: '没有 Node.js 官方签名' });
+    expect(ran).not.toContain(own);
+  });
+
   it('checks only the version on Windows', async () => {
     const mine = 'C:\\Program Files\\nodejs\\node.exe';
     expect(await choose(mine, machine({ [mine]: { version: 'v24.3.0', signed: false } }), 'win32')).toEqual({ path: mine, switched: false });
