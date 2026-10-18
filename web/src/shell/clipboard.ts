@@ -1,5 +1,6 @@
-// The deployed app is served over plain http (docs/deployment/intranet-phase-1.md), which is no secure context: there
-// `navigator.clipboard` is undefined. The older selection copy still works there; false when neither does.
+// The deployed app is HTTPS only (ADR-0036, #413), where `navigator.clipboard` works. It is undefined where the page is
+// no secure context: plain http in dev and e2e, or an address other than the configured one. A browser may also refuse
+// it (no permission). The older selection copy still works in those cases; false when neither does.
 export async function copyText(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
@@ -14,6 +15,8 @@ export async function copyText(text: string): Promise<boolean> {
 
 function copyBySelection(text: string): boolean {
   if (typeof document.execCommand !== 'function') return false;
+  // Selecting the temporary textarea moves focus to it; put it back on the copy button afterwards.
+  const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const area = document.createElement('textarea');
   area.value = text;
   area.setAttribute('readonly', '');
@@ -27,5 +30,6 @@ function copyBySelection(text: string): boolean {
     return false;
   } finally {
     area.remove();
+    focused?.focus();
   }
 }
