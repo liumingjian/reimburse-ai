@@ -1,5 +1,7 @@
 # The app server serves only HTTPS, under a private CA constrained to its own address
 
+**Amended 2026-10-18 ([ADR-0037](0037-local-executor-is-the-only-way-to-reimburse.md)): the browser extension is gone,** so the address-change migration for its users below no longer applies.
+
 **Status: proposed (2026-10-17).** Decided with the owner in the follow-up to the #412 grill
 ([#413](https://github.com/liumingjian/reimburse-ai/issues/413)). HTTPS on the app server is a release prerequisite
 of the 本地执行器's one-command install (ADR-0035) and of sending ERP 凭据 to employee PCs (ADR-0033). There is no

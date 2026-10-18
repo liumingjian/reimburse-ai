@@ -1,5 +1,7 @@
 # The local app has its own accounts, an admin role and a public project book
 
+**Status (2026-10-18): the Legacy import decision is superseded by [ADR-0038](0038-legacy-import-removed-test-stage-data-not-kept.md); accounts, the admin role and the public project book stand.**
+
 baox v1 stays a single local process, yet it gets real app accounts. The data model then already matches the V2 central deployment, and several people can share one machine. The accounts are independent of ERP accounts (ADR-0016). Decided in [#159](https://github.com/liumingjian/reimburse-ai/issues/159); this redraws the map's earlier ruling that put all auth and data isolation in V2.
 
 ## Decisions

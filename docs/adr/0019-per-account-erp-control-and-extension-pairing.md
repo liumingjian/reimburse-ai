@@ -1,5 +1,7 @@
 # ERP control is per app account, and the extension pairs with a one-time code
 
+**Status (2026-10-18): the browser extension, its download and the page bridge are superseded by [ADR-0037](0037-local-executor-is-the-only-way-to-reimburse.md). Per-account ERP control and the one-time 配对码 stand, now between an 应用账号 and its 本地执行器.**
+
 The ERP browser moves out of the server and into each employee's own browser, driven by a browser extension, so the ERP session never leaves the user's machine. ADR-0016 built the seam for this deliberately; this decides who holds ERP control now that there is more than one browser, and how the server knows whose browser it is talking to. Decided in [#223](https://github.com/liumingjian/reimburse-ai/issues/223); it amends ADR-0016 and ADR-0018.
 
 ## Decisions

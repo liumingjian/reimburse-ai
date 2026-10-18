@@ -1,5 +1,7 @@
 # The extension fills through chrome.debugger and ships unpacked
 
+**Status (2026-10-18): superseded by [ADR-0037](0037-local-executor-is-the-only-way-to-reimburse.md); the extension is gone. The version gate lives on for the 本地执行器 (ADR-0035).**
+
 **Status: amended for browser-extension V1 on 2026-09-21 after live spike #250 passed.**
 The original content-script/debugger hybrid below is superseded for V1.
 [Measured results](../research/spike-250-chrome-debugger-and-datatransfer.md#run-2-both-probes-passed)
