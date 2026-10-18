@@ -1437,6 +1437,32 @@ $doc-frame-block: var(--app-doc-frame-block);
   }
 }
 
+// 「安装遇到问题？」 under each 去报销的方式: collapsed help, quieter than the section's own action.
+.app-install-trouble {
+  inline-size: 100%;
+
+  > summary {
+    min-block-size: 2.5rem;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    color: $link-primary;
+    @include type.type-style('body-compact-01');
+  }
+
+  > .app-install-trouble-body {
+    display: grid;
+    gap: $spacing-04;
+    padding-block: $spacing-03 $spacing-05;
+
+    h3,
+    p,
+    ol {
+      margin: 0;
+    }
+  }
+}
+
 .app-settings-advanced {
   margin-block-start: $spacing-06;
   border-block: 1px solid $border-subtle-01;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { ExtensionHolder, ExtensionPairing } from '@baox/contract';
 import { ConfirmDialog } from '../shell/Dialog';
 
@@ -19,6 +19,7 @@ export const REIMBURSE_METHOD_COPY = {
     extension: '换成浏览器扩展后，本地执行器会断开，不能再替你去报销。',
   } satisfies Record<ReimburseMethod, string>,
   switchConfirm: { local_executor: '换成本地执行器', extension: '换成浏览器扩展' } satisfies Record<ReimburseMethod, string>,
+  trouble: '安装遇到问题？',
 } as const;
 
 /** What holds this account's pairing, or null when nothing is paired (a 配对码 still waiting is no pairing). */
@@ -50,5 +51,16 @@ export function SwitchMethodDialog({ to, busy = false, onConfirm, onCancel }: { 
     <ConfirmDialog title={REIMBURSE_METHOD_COPY.switchTitle[to]} confirmLabel={REIMBURSE_METHOD_COPY.switchConfirm[to]} busy={busy} onConfirm={onConfirm} onCancel={onCancel}>
       <p>{REIMBURSE_METHOD_COPY.switchBody[to]}</p>
     </ConfirmDialog>
+  );
+}
+
+// 「安装遇到问题？」 (#429): each method's install help, collapsed by default so the section stays one sentence, one
+// action and its 配对码.
+export function InstallTrouble({ children }: { children: ReactNode }) {
+  return (
+    <details className="app-install-trouble">
+      <summary>{REIMBURSE_METHOD_COPY.trouble}</summary>
+      <div className="app-install-trouble-body">{children}</div>
+    </details>
   );
 }

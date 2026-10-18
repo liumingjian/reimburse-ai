@@ -96,6 +96,8 @@ export const localExecutorUninstallPath = (system: InstallSystem) => `${LOCAL_EX
 // The command the 设置页 shows, for the address the server admits (`ExtensionPairing.activeOrigin`).
 const pasteCommand = (system: InstallSystem, url: string) => (system === 'windows' ? `powershell -ExecutionPolicy Bypass -c "irm ${url} | iex"` : `curl -fsSL ${url} | sh`);
 export const localExecutorInstallCommand = (system: InstallSystem, origin: string, code: string) => pasteCommand(system, `${origin.replace(/\/+$/, '')}${localExecutorInstallPath(code)}`);
+// The uninstall command the 设置页 shows under 「安装遇到问题？」: the same shape, no 配对码.
+export const localExecutorUninstallCommand = (system: InstallSystem, origin: string) => pasteCommand(system, `${origin.replace(/\/+$/, '')}${localExecutorUninstallPath(system)}`);
 
 // Everything the install and uninstall scripts print: these lines and nothing else (story 29, 30).
 export const LOCAL_EXECUTOR_INSTALL_MESSAGES = {
