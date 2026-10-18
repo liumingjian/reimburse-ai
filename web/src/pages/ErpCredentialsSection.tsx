@@ -28,7 +28,7 @@ export const ERP_CREDENTIALS_COPY = {
   unavailable: '这台服务器还没有配置报销系统账号密码的加密密钥，暂时不能保存。请联系管理员。',
   loading: '正在读取报销系统账号密码情况…',
   loadFailed: '报销系统账号密码情况加载失败',
-  retryLoad: '重试',
+  retryLoad: '重新加载',
   savedAccount: '已保存的账号',
   checkedAt: '最近一次试登录',
 } as const;
