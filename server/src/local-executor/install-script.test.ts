@@ -209,6 +209,22 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     }
   }, 60_000);
 
+  it.each([
+    ['its app folder', () => appDir(), [SAY.checking, SAY.disk]],
+    ['its log folder', () => join(executorHome(), 'logs'), [SAY.disk]],
+  ])('ends a disk failure in %s in one Chinese sentence, with no tool output in the terminal', async (_name, folder, expected) => {
+    ownNode('24.9.0', true);
+    mkdirSync(folder(), { recursive: true });
+    chmodSync(folder(), 0o555);
+    try {
+      const { lines, status } = await run(localExecutorInstallPath(await issue()));
+      expect(lines, installLog()).toEqual(expected);
+      expect(status).not.toBe(0);
+    } finally {
+      chmodSync(folder(), 0o755);
+    }
+  }, 60_000);
+
   it('uninstalls with /uninstall/mac: stops it, removes the LaunchAgent and its home, leaves the Node and the pairing in the app', async () => {
     ownNode('24.9.0', true);
     expect((await run(localExecutorInstallPath(await issue()))).status).toBe(0);

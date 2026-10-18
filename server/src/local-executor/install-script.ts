@@ -51,8 +51,11 @@ export const systemOfAgent = (userAgent: string | undefined): InstallSystem => (
 
 const MAC_PRELUDE = `#!/bin/sh
 set -u
+# The terminal gets the fixed lines only: the sentence a failure ends in goes to the stderr the script started with
+# (fd 3), and every tool's own stderr goes to the install log once it is open (to nowhere before that).
+exec 3>&2
 say() { printf '%s\\n' "$1"; }
-fail() { printf '%s\\n' "$1" >&2; exit 1; }
+fail() { printf '%s\\n' "$1" >&3; exit 1; }
 # Nothing the employee's shell set may make a Node load extra code, or move where the executor lives.
 unset ${CODE_LOADING_ENV.join(' ')} BAOX_LOCAL_EXECUTOR_HOME BAOX_LOCAL_EXECUTOR_PORT
 [ "$(uname -s 2>/dev/null)" = Darwin ] || fail ${sh(SAY.wrongSystem)}
@@ -85,8 +88,10 @@ if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || [ "$(uname -m)" = arm
 elif [ "$(uname -m)" = x86_64 ]; then platform=darwin-x64
 else fail ${sh(SAY.wrongSystem)}
 fi
+exec 2>/dev/null
 (umask 077 && mkdir -p "$home" "$logs") && rm -rf "$work" && mkdir -p "$work" || fail ${sh(SAY.disk)}
-printf '\\n[%s] install for %s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$platform" >>"$log" 2>/dev/null || fail ${sh(SAY.disk)}
+{ printf '\\n[%s] install for %s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$platform" >>"$log"; } 2>/dev/null || fail ${sh(SAY.disk)}
+exec 2>>"$log"
 
 # GET $1 into $2; the HTTP status on stdout, nothing when the app did not answer.
 get() { curl -sS --connect-timeout 20 -o "$2" -w '%{http_code}' "$origin$1" 2>>"$log"; }
@@ -183,6 +188,8 @@ esac
 export function macUninstallScript(): string {
   return `${MAC_PRELUDE}
 # baox 本地执行器 uninstall. Run as: curl -fsSL <应用地址>/uninstall/mac | sh
+# Its home, log included, is what goes: no tool output is kept.
+exec 2>/dev/null
 stop
 rm -f "$agent" && rm -rf "$home" || fail ${sh(SAY.disk)}
 say ${sh(SAY.uninstalled)}
