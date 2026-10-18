@@ -30,6 +30,12 @@ const STATUS_ICON: Readonly<Record<ErpStep['status'], ComponentType | null>> = {
   failed: ErrorFilled,
 };
 
+// Stopped: aborted, or idle with the reason it stopped before writing.
+function progressStatus(erp: TaskSnapshot['erp']): 'active' | 'finished' | 'error' {
+  if (erp.status === 'aborted' || (erp.status === 'idle' && erp.abortReason)) return 'error';
+  return erp.status === 'done' ? 'finished' : 'active';
+}
+
 export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.erp;
@@ -93,13 +99,14 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
       <section className="app-block" aria-label="填报进度">
         {erp.progress ? (
-          // 去报销进度: the server's words and share of steps done; the page adds no estimate of its own.
+          // 去报销进度: the server's words and share of steps done; the page adds no estimate of its own. A run that
+          // stopped keeps its bar where it stopped, marked as failed; a finished one is marked finished.
           <div className="app-erp-progress" data-testid="erp-progress">
             <div className="app-erp-progress-head" aria-hidden="true">
               <span data-testid="erp-progress-label">{erp.progress.label}</span>
               <span data-testid="erp-progress-percent">{erp.progress.percent}%</span>
             </div>
-            <ProgressBar label={erp.progress.label} hideLabel value={erp.progress.percent} max={100} size="small" />
+            <ProgressBar label={erp.progress.label} hideLabel value={erp.progress.percent} max={100} size="small" status={progressStatus(erp)} />
           </div>
         ) : null}
         {erp.steps.length === 0 ? (

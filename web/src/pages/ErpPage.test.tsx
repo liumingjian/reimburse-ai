@@ -414,6 +414,24 @@ describe('去报销进度条', () => {
     expect(bar().textContent).not.toMatch(/剩余|预计|分钟|秒|ERP|重试|[\u2013\u2014]/);
   });
 
+  test('停下的去报销：进度条停在原处、标成出错；做完的标成完成', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    let status: 'idle' | 'done' = 'idle';
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status, abortReason: status === 'idle' ? '报销系统没有应答' : null, progress: { label: '填写明细 3/8', percent: 60 } } };
+    });
+    const { unmount } = render(<App adapter={adapter} />);
+    await waitFor(() => expect(screen.getByTestId('erp-progress-label').textContent).toBe('填写明细 3/8'));
+    expect(bar().querySelector('.cds--progress-bar--error')).not.toBeNull();
+    unmount();
+    status = 'done';
+    render(<App adapter={adapter} />);
+    await waitFor(() => expect(bar().querySelector('.cds--progress-bar--finished')).not.toBeNull());
+  });
+
   test('没有去报销作业时不显示进度条', async () => {
     window.location.hash = '#/task/T1/erp';
     const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
