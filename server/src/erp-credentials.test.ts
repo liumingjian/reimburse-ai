@@ -3,6 +3,7 @@ import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, EXTENSION_PAIR_PAT
 import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
+import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { drafted, handedOver, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
 import { draftMarkOf } from './erp/remote-executor';
@@ -211,6 +212,22 @@ describe('the 去报销 step list follows the route the job ran on', () => {
     expect(await server.db.selectFrom('erp_job').select('route').where('task_id', '=', scene.task.taskId).execute()).toEqual([{ route: 'local_executor' }]);
 
     await executor({ ok: true }, undefined, 'extension');
+    expect(titles(await scene.snapshot())).toEqual(LOCAL);
+  });
+
+  // A job from before routes were recorded (migration 0023, route null) that 暂存'd can only have run on a 本地执行器:
+  // only it gets the draft mark and the 凭据. Its list does not follow the holder the account has now.
+  it('keeps a 暂存 job from before routes were recorded on the 本地执行器 list after the switch', async () => {
+    await executor({ ok: true }, drafted);
+    await save();
+    const scene = await scenario(server, alice).at('actions');
+    await scene.run('start-erp-write');
+    // erp_job is append-only; lift the guard just long enough to make the row look pre-0023.
+    await sql`DROP TRIGGER erp_job_no_update`.execute(server.db);
+    await server.db.updateTable('erp_job').set({ route: null }).where('task_id', '=', scene.task.taskId).execute();
+
+    await executor({ ok: true }, undefined, 'extension');
+
     expect(titles(await scene.snapshot())).toEqual(LOCAL);
   });
 
