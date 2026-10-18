@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, InlineNotification, RadioButton, RadioButtonGroup } from '@carbon/react';
 import { Copy } from '@carbon/icons-react';
-import { INSTALL_SYSTEMS, localExecutorInstallCommand, localExecutorUninstallCommand, type InstallSystem, type LocalExecutorPairAnswer, type LocalExecutorPairingState } from '@baox/contract';
+import { INSTALL_SYSTEMS, LOCAL_EXECUTOR_PAIRING_ERRORS, localExecutorInstallCommand, localExecutorUninstallCommand, type InstallSystem, type LocalExecutorPairAnswer, type LocalExecutorPairingState } from '@baox/contract';
 import { useAppStore, useExtensionPairing, useLocalExecutorPort, useSession } from '../adapter/context';
 import { ActionGroup } from '../shell/ActionGroup';
 import { copyText } from '../shell/clipboard';
@@ -53,7 +53,7 @@ export const LOCAL_EXECUTOR_COPY = {
   connectHere: '连接这台电脑的执行器',
   connecting: '正在连接这台电脑的执行器…',
   silent: '这台电脑上的本地执行器没有应答。请用下面的安装命令再装一次。',
-  pairFailed: '这台电脑上的 baox 本地执行器没能完成配对，请再点一次。',
+  pairFailed: LOCAL_EXECUTOR_PAIRING_ERRORS.failed,
   otherAccountTitle: '换成这个账号',
   otherAccountBody: '这台电脑上的本地执行器正在替另一个应用账号去报销。连接后它改为替这个账号去报销，原来的账号就不能再用它了。',
   otherAccountConfirm: '换成这个账号',
