@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Button, InlineNotification, RadioButton, RadioButtonGroup } from '@carbon/react';
 import { Copy } from '@carbon/icons-react';
-import { localExecutorInstallCommand, type InstallSystem, type LocalExecutorPairingState } from '@baox/contract';
+import { INSTALL_SYSTEMS, localExecutorInstallCommand, localExecutorUninstallCommand, type InstallSystem, type LocalExecutorPairingState } from '@baox/contract';
 import { useAppStore, useExtensionPairing, useLocalExecutorPort, useSession } from '../adapter/context';
 import { ActionGroup } from '../shell/ActionGroup';
 import { copyText } from '../shell/clipboard';
 import { ConfirmDialog } from '../shell/Dialog';
-import { endsOtherMethod, SwitchMethodDialog } from './reimburse-method';
+import { ErpCredentialsSection } from './ErpCredentialsSection';
+import { endsOtherMethod, InstallTrouble, SwitchMethodDialog } from './reimburse-method';
 
 // baox 本地执行器 (ADR-0033, ADR-0035 amended 2026-10-17): the program that does 去报销 on this PC in a browser nobody
 // sees, instead of the 浏览器扩展. The employee picks Mac or Windows (neither is picked for them) and pastes the one
@@ -19,10 +20,14 @@ import { endsOtherMethod, SwitchMethodDialog } from './reimburse-method';
 // about first. An account has one pairing at a time, so pairing the executor replaces the extension's: with the
 // extension paired, both actions ask first (`SwitchMethodDialog`, #428). 已连接 is the server's word: the pairing's
 // holder is the 本地执行器.
+//
+// The section is one sentence, its one action and the 配对码 hint (#429). The 报销系统 account form the executor signs
+// in with sits here too, since only this method uses it; the install steps and the uninstall command are folded into
+// 「安装遇到问题？」.
 
 export const LOCAL_EXECUTOR_COPY = {
   title: 'baox 本地执行器',
-  lead: '在你的电脑后台替你去报销，不用打开浏览器扩展，也不占用你的浏览器窗口。装一次就行：以后每次登录电脑都会自动运行，应用发布新版本时它会自己更新。它会用电脑上已经装好的 Chrome 或 Edge。',
+  lead: '装一次就在你的电脑后台用 Chrome 或 Edge 替你去报销，以后开机自动运行、自己更新，不占用你的浏览器窗口。',
   system: '你的电脑',
   systems: { mac: 'Mac', windows: 'Windows' } satisfies Record<InstallSystem, string>,
   generate: '生成安装命令',
@@ -46,6 +51,17 @@ export const LOCAL_EXECUTOR_COPY = {
   otherAccountBody: '这台电脑上的本地执行器正在替另一个应用账号去报销。连接后它改为替这个账号去报销，原来的账号就不能再用它了。',
   otherAccountConfirm: '换成这个账号',
   replaces: '一个账号同时只有一个配对：本地执行器配对后，原来配对的浏览器扩展会断开。',
+  stepsTitle: '安装步骤',
+  steps: [
+    '在上面选你的电脑是 Mac 还是 Windows，点「生成安装命令」。',
+    'Mac 打开「终端」，Windows 打开「PowerShell」，把命令粘贴进去，按回车。',
+    '窗口里显示「已安装，可以关掉这个窗口」后，这里会自动显示已连接。',
+    '窗口里显示别的提示时，照着提示做。配对码过期了，就回到这里重新生成安装命令。',
+    '已经装好、只是没有连上：这里会显示「连接这台电脑的执行器」，点一下就行，不用再打开终端。',
+  ],
+  uninstallTitle: '卸载本地执行器',
+  uninstallLead: '在终端或 PowerShell 里运行你的系统对应的这条命令。卸载不会动你电脑上原有的运行环境，也不会撤销这里的配对。',
+  uninstallCommand: '卸载命令',
 } as const;
 
 // How often the pairing is read again while an install command's code is pending.
@@ -202,6 +218,25 @@ export function LocalExecutorSection() {
         </>
       ) : null}
       {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
+      <ErpCredentialsSection />
+      <InstallTrouble>
+        <h3>{LOCAL_EXECUTOR_COPY.stepsTitle}</h3>
+        <ol aria-label={LOCAL_EXECUTOR_COPY.stepsTitle}>
+          {LOCAL_EXECUTOR_COPY.steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        <h3>{LOCAL_EXECUTOR_COPY.uninstallTitle}</h3>
+        <p>{LOCAL_EXECUTOR_COPY.uninstallLead}</p>
+        {view
+          ? INSTALL_SYSTEMS.map((each) => (
+              <div key={each} className="app-install-command" aria-label={`${LOCAL_EXECUTOR_COPY.uninstallCommand}（${LOCAL_EXECUTOR_COPY.systems[each]}）`} role="group">
+                <p>{LOCAL_EXECUTOR_COPY.systems[each]}</p>
+                <pre className="app-code app-select-all">{localExecutorUninstallCommand(each, view.activeOrigin)}</pre>
+              </div>
+            ))
+          : null}
+      </InstallTrouble>
       {switching ? (
         <SwitchMethodDialog to="local_executor" onConfirm={() => void (switching === 'generate' ? generate(true) : connect(false, true))} onCancel={() => setSwitching(null)} />
       ) : null}

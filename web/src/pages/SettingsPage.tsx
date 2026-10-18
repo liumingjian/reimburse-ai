@@ -10,11 +10,10 @@ import { AppShell } from '../shell/AppShell';
 import { formatDateTime } from '../format';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
-import { ErpCredentialsSection } from './ErpCredentialsSection';
 import { LocalExecutorSection } from './LocalExecutorSection';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
 import { awaitsPairing, useAutoPair, useExtensionSetup } from './extension-setup';
-import { endsOtherMethod, REIMBURSE_METHOD_COPY, SwitchMethodDialog, useReimburseMethod, type ReimburseMethod } from './reimburse-method';
+import { endsOtherMethod, InstallTrouble, REIMBURSE_METHOD_COPY, SwitchMethodDialog, useReimburseMethod, type ReimburseMethod } from './reimburse-method';
 
 export { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
 
@@ -29,6 +28,13 @@ export { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
 // never auto-updated), and explains that the debugging banner during 去报销 is expected, and what its Cancel does:
 // the job resumes in the same tab when nothing was being written, and goes to 对账 (reconciliation) when it was (#257).
 // 版式：表单页，内容限宽，节与节之间用细分隔线。
+// Each 去报销的方式 is one sentence, its one action and its 配对码 (#429); install help sits in a collapsed
+// 「安装遇到问题？」, which is the only way to the extension's tutorial page.
+
+export const SETTINGS_COPY = {
+  title: '设置',
+  lead: '选择去报销的方式，连接好后回到报销任务去报销。',
+} as const;
 
 export const LEGACY_IMPORT_COPY = {
   title: '旧数据导入',
@@ -146,7 +152,8 @@ function LegacyImportSection() {
 
 export const EXTENSION_PAIRING_COPY = {
   title: '浏览器扩展',
-  lead: '浏览器扩展只连接当前应用地址。先下载当前地址提供的扩展，再生成配对码。',
+  lead: '在你的 Chrome 或 Edge 里替你去报销：先下载当前应用地址提供的扩展，再生成配对码填进扩展。',
+  troubleLead: '安装和升级扩展的详细步骤与图示，在单独的安装教程里。',
   independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会撤销配对。',
   firstTimeTitle: '第一次连接',
   firstTimeLead: (origin: string) => `还没有连接过浏览器扩展。先从 ${origin} 下载报销助手，再生成配对码，在 Chrome 或 Edge 里输入。`,
@@ -249,7 +256,11 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
 
   const view = extensionView(state.data, issued || autoPair.status !== 'idle');
   const activeOrigin = view?.activeOrigin ?? '';
-  const guided = awaitsPairing(step) && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
+  // Upgrade steps for an outdated extension only while it holds the pairing (spec #412 D). Otherwise the first-time
+  // flow, whose download brings the current extension.
+  const holdsPairing = view?.status === 'paired';
+  const outdated = step.kind === 'outdated' && holdsPairing;
+  const guided = (awaitsPairing(step) || (step.kind === 'outdated' && !holdsPairing)) && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
   const next = view?.status === 'paired'
     ? view.connected
       ? { title: EXTENSION_PAIRING_COPY.connectedTitle, lead: EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) }
@@ -320,7 +331,7 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
           {guided && autoPair.status === 'failed' ? (
             <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={EXTENSION_PAIRING_COPY.autoPairFailed} subtitle={autoPair.message} />
           ) : null}
-          {step.kind === 'outdated' ? (
+          {outdated && step.kind === 'outdated' ? (
             <div className="app-extension-next">
               <h3>{EXTENSION_PAIRING_COPY.outdatedTitle}</h3>
               <UpgradeSteps lead={EXTENSION_PAIRING_COPY.outdatedLead(step.installed, step.minimum)} download />
@@ -367,11 +378,8 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
               {view.status === 'paired' && view.version !== null && compareExtensionVersions(view.version, EXTENSION_VERSION) < 0 ? (
                 <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, EXTENSION_VERSION)} />
               ) : null}
-              {/* Tutorial, then download, then the one next step (primary last). Revoking sits apart in its own group. */}
+              {/* Download, then the one next step (primary last). Revoking sits apart in its own group. */}
               <ActionGroup caption={view.status === 'paired' ? EXTENSION_PAIRING_COPY.replaceHint : undefined}>
-                <Button kind="ghost" size="md" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
-                  {EXTENSION_PAIRING_COPY.tutorial}
-                </Button>
                 {view.status !== 'paired' || !view.connected ? (
                   <Button kind="secondary" size="md" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
                     {EXTENSION_PAIRING_COPY.download}
@@ -405,6 +413,14 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
           {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
         </>
       )}
+      <InstallTrouble>
+        <p>{EXTENSION_PAIRING_COPY.troubleLead}</p>
+        <ActionGroup>
+          <Button kind="ghost" size="md" href={SETTINGS_TUTORIAL_HASH} target="_blank" rel="noreferrer" renderIcon={Launch}>
+            {EXTENSION_PAIRING_COPY.tutorial}
+          </Button>
+        </ActionGroup>
+      </InstallTrouble>
       {switching ? <SwitchMethodDialog to="extension" busy={busy === 'issue'} onConfirm={() => void act('issue', true)} onCancel={() => setSwitching(false)} /> : null}
       {confirming ? (
         <ConfirmDialog
@@ -492,7 +508,7 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
   return (
     <AppShell nav="settings">
       <div className="app-form-page">
-        <PageHeader title="设置" lead="先连接浏览器扩展，再回到报销任务开始去报销。" actions={<Button kind="secondary" href={SETTINGS_PASSWORD_HASH}>修改密码</Button>} />
+        <PageHeader title={SETTINGS_COPY.title} lead={SETTINGS_COPY.lead} actions={<Button kind="secondary" href={SETTINGS_PASSWORD_HASH}>修改密码</Button>} />
         {returnTo ? (
           <section aria-label="返回报销任务">
             <p>任务选择已保留。连接完成后或暂时不连接，都可以返回原任务；返回不会自动开始填报。</p>
@@ -504,7 +520,6 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
           </section>
         ) : null}
         <ReimburseMethodSection />
-        <ErpCredentialsSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">
           <summary>高级设置</summary>

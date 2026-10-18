@@ -8,7 +8,8 @@ import { createMockAdapter, type MockOptions } from '../mock/mock-adapter';
 import { extensionSettingsHash } from '../router';
 import { EXTENSION_TUTORIAL_COPY } from './ExtensionTutorialPage';
 import type { LegacyOption } from '../mock/options';
-import { EXTENSION_INSTALL_COPY, EXTENSION_PAIRING_COPY } from './SettingsPage';
+import { EXTENSION_INSTALL_COPY, EXTENSION_PAIRING_COPY, SETTINGS_COPY } from './SettingsPage';
+import { ERP_CREDENTIALS_COPY } from './ErpCredentialsSection';
 import { LOCAL_EXECUTOR_COPY } from './LocalExecutorSection';
 import { REIMBURSE_METHOD_COPY } from './reimburse-method';
 
@@ -55,6 +56,14 @@ const extensionPanel = () => screen.getByRole('region', { name: '浏览器扩展
 
 // With nothing paired the 设置页 opens on the 本地执行器 (#428); the extension's section renders once it is chosen.
 const chooseExtension = async () => fireEvent.click(await screen.findByRole('radio', { name: REIMBURSE_METHOD_COPY.options.extension }));
+
+// The collapsed 「安装遇到问题？」 inside a method's section (#429), and opening it the way the employee does.
+function troubleArea(region: HTMLElement): HTMLDetailsElement {
+  const details = within(region).getByText(REIMBURSE_METHOD_COPY.trouble).closest('details');
+  if (!details) throw new Error('「安装遇到问题？」 is not a details element');
+  return details;
+}
+const openTrouble = (details: HTMLDetailsElement) => fireEvent.click(within(details).getByText(REIMBURSE_METHOD_COPY.trouble));
 
 describe('设置页：旧数据导入', () => {
   test('导入失败：逐个文件说明原因，并给出重试与跳过', async () => {
@@ -166,14 +175,16 @@ describe('设置页：浏览器扩展', () => {
 });
 
 describe('设置页：浏览器扩展的下载、安装与升级', () => {
-  test('常规设置只保留下载入口和独立教程入口', async () => {
+  test('常规设置只保留下载入口，独立教程收在「安装遇到问题？」里', async () => {
     renderPairing();
     await chooseExtension();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
     const section = within(extensionPanel());
 
     expect(section.getByRole('link', { name: EXTENSION_INSTALL_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
-    const tutorial = section.getByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial });
+    const trouble = troubleArea(extensionPanel());
+    openTrouble(trouble);
+    const tutorial = within(trouble).getByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial });
     expect(tutorial.getAttribute('href')).toBe('#/settings/tutorial');
     expect(tutorial.getAttribute('target')).toBe('_blank');
     expect(section.queryByRole('list', { name: '安装扩展' })).toBeNull();
@@ -252,7 +263,7 @@ function fakeBridge(
 async function settledPairedHere(section: ReturnType<typeof within>) {
   await waitFor(() => {
     expect(section.getByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
-    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+    expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.reissue })).toBeNull();
   });
 }
 
@@ -272,13 +283,12 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
-    expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeTruthy();
     expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
   });
 
-  test('扩展比这个应用要求的旧：说出装的版本和要求的版本，只给升级步骤', async () => {
-    renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })));
-    await chooseExtension();
+  // Only while the extension holds the pairing (#429); otherwise the first-time flow, whose download replaces it.
+  test('扩展比这个应用要求的旧、配对在扩展上：说出装的版本和要求的版本，只给升级步骤', async () => {
+    renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })), { paired: true });
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeTruthy();
     const steps = section.getByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle });
@@ -286,16 +296,16 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     expect(steps.textContent).not.toContain('配对');
     expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
     expect(section.queryByRole('button', { name: '生成配对码' })).toBeNull();
-    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+    expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.reconnect })).toBeNull();
     expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
   });
 
-  test('已经和这个账号配对：不显示教程，只显示连接状态', async () => {
+  test('已经和这个账号配对：只显示连接状态，教程留在收起的「安装遇到问题？」里', async () => {
     renderWithExtension(fakeBridge(() => mine()), { paired: true });
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
     expect(section.getByText('已连接')).toBeTruthy();
-    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+    expect(troubleArea(extensionPanel()).open).toBe(false);
     expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.download })).toBeNull();
     expect(section.queryByRole('button', { name: '重新生成配对码' })).toBeNull();
     expect(section.getByRole('button', { name: '撤销配对' })).toBeTruthy();
@@ -412,7 +422,6 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
     expect(issued).toHaveLength(1);
     expect(section.queryByText('K7MQ2PXD')).toBeNull();
     expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
-    expect(section.queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
   });
 
   test('扩展配对失败：说出扩展给的原因，仍可手动输入配对码', async () => {
@@ -681,6 +690,127 @@ describe('设置页：去报销的方式', () => {
 
   test('文案说报销系统，不用破折号，不说重试', () => {
     const copy = JSON.stringify(REIMBURSE_METHOD_COPY);
+    expect(copy).not.toMatch(/ERP|Node|重试|[\u2013\u2014]/);
+  });
+});
+
+// #429 (spec #412 D, stories 47-48, 51-55): each method is one sentence, its action and its 配对码; the 报销系统 account
+// form lives under the 本地执行器 only; install help, the uninstall command and the extension tutorial are folded into
+// a collapsed 「安装遇到问题？」 per method.
+describe('设置页：每种方式一句话与「安装遇到问题？」', () => {
+  const ORIGIN = 'http://10.250.0.222:8888';
+  const localRegion = () => screen.getByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
+  const accountForm = () => screen.queryByRole('region', { name: ERP_CREDENTIALS_COPY.title });
+
+  function renderPage(options: Partial<MockOptions> = {}, bridge: ExtensionBridge = fakeBridge(() => null)) {
+    window.location.hash = '#/settings';
+    const adapter = createMockAdapter({ seed: 'actions', fault: null, localExecutorInstallMs: 60_000, ...options });
+    render(<App adapter={adapter} bridge={bridge} localExecutor={adapter.localExecutor} />);
+    return adapter;
+  }
+
+  test('页头一句话说完整件事', async () => {
+    renderPage();
+    expect(await screen.findByText(SETTINGS_COPY.lead)).toBeTruthy();
+    expect(SETTINGS_COPY.lead).toBe('选择去报销的方式，连接好后回到报销任务去报销。');
+    expect(screen.queryByText(/先连接浏览器扩展/)).toBeNull();
+  });
+
+  test('报销系统账号表单在本地执行器一节里；选浏览器扩展时不出现', async () => {
+    renderPage();
+    const local = await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
+    const form = within(local).getByRole('region', { name: ERP_CREDENTIALS_COPY.title });
+    expect(await within(form).findByRole('button', { name: ERP_CREDENTIALS_COPY.save })).toBeTruthy();
+    expect(screen.getAllByRole('region', { name: ERP_CREDENTIALS_COPY.title })).toHaveLength(1);
+
+    await chooseExtension();
+    expect(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title })).toBeTruthy();
+    expect(accountForm()).toBeNull();
+  });
+
+  test('浏览器扩展配对着：页面打开在浏览器扩展上，没有报销系统账号表单', async () => {
+    renderPage({ extensionPaired: true });
+    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    expect(accountForm()).toBeNull();
+  });
+
+  test('每种方式只有一句话的说明', () => {
+    expect(LOCAL_EXECUTOR_COPY.lead.match(/。/g)).toHaveLength(1);
+    expect(EXTENSION_PAIRING_COPY.lead.match(/。/g)).toHaveLength(1);
+  });
+
+  test('本地执行器的「安装遇到问题？」默认收起，里面是安装步骤和 Mac、Windows 的卸载命令', async () => {
+    renderPage();
+    await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
+    const details = troubleArea(localRegion());
+    expect(details.open).toBe(false);
+    openTrouble(details);
+    expect(details.open).toBe(true);
+    const steps = within(details).getByRole('list', { name: LOCAL_EXECUTOR_COPY.stepsTitle });
+    expect(within(steps).getAllByRole('listitem')).toHaveLength(LOCAL_EXECUTOR_COPY.steps.length);
+    expect(await within(details).findByText(`curl -fsSL ${ORIGIN}/uninstall/mac | sh`)).toBeTruthy();
+    expect(within(details).getByText(`powershell -ExecutionPolicy Bypass -c "irm ${ORIGIN}/uninstall/windows | iex"`)).toBeTruthy();
+    expect(within(details).getByText(LOCAL_EXECUTOR_COPY.uninstallLead)).toBeTruthy();
+    // The extension's tutorial is the extension's help, not the 本地执行器's.
+    expect(within(localRegion()).queryByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial })).toBeNull();
+  });
+
+  test('本地执行器已连接时，「安装遇到问题？」仍在，仍收起', async () => {
+    renderPage({ localExecutor: 'paired' });
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    expect(troubleArea(localRegion()).open).toBe(false);
+  });
+
+  test('浏览器扩展的「安装遇到问题？」默认收起，安装教程只从这里进', async () => {
+    renderPage();
+    await chooseExtension();
+    const region = await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title });
+    await within(region).findByText(EXTENSION_PAIRING_COPY.firstTimeTitle);
+    const details = troubleArea(region);
+    expect(details.open).toBe(false);
+    openTrouble(details);
+    const tutorial = within(details).getByRole('link', { name: EXTENSION_PAIRING_COPY.tutorial });
+    expect(tutorial.getAttribute('href')).toBe('#/settings/tutorial');
+    expect(tutorial.getAttribute('target')).toBe('_blank');
+    // The only way to the tutorial on the page.
+    expect(document.querySelectorAll('a[href="#/settings/tutorial"]')).toHaveLength(1);
+    // The download button and the action stay outside the folded area.
+    expect(within(region).getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).closest('details')).toBeNull();
+    expect(within(region).getByRole('button', { name: EXTENSION_PAIRING_COPY.issue }).closest('details')).toBeNull();
+  });
+
+  test('扩展太旧、但配对不在扩展上：不给升级步骤，照常下载和生成配对码', async () => {
+    renderPage({}, fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })));
+    await chooseExtension();
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(section.queryByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle })).toBeNull();
+    expect(section.queryByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeNull();
+    expect(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.issue })).toBeTruthy();
+    expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
+  });
+
+  test('扩展太旧、本地执行器配对着：切到浏览器扩展也不给升级步骤', async () => {
+    renderPage({ localExecutor: 'paired' }, fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })));
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    await chooseExtension();
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.issue })).toBeTruthy();
+    expect(section.queryByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle })).toBeNull();
+  });
+
+  test('本地执行器配对着：切到浏览器扩展不给改用新地址的迁移步骤', async () => {
+    renderPage({ localExecutor: 'paired' });
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    await chooseExtension();
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    await section.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    expect(section.queryByRole('list', { name: EXTENSION_PAIRING_COPY.migrationTitle })).toBeNull();
+    expect(section.queryByText(EXTENSION_PAIRING_COPY.migrationTitle)).toBeNull();
+  });
+
+  test('新文案说报销系统、运行环境，不用破折号，不说重试', () => {
+    const copy = JSON.stringify([LOCAL_EXECUTOR_COPY, EXTENSION_PAIRING_COPY.lead, EXTENSION_PAIRING_COPY.troubleLead, REIMBURSE_METHOD_COPY, SETTINGS_COPY]);
     expect(copy).not.toMatch(/ERP|Node|重试|[\u2013\u2014]/);
   });
 });
