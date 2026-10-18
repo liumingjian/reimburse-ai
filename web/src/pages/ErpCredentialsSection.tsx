@@ -10,6 +10,7 @@ import { ConfirmDialog } from '../shell/Dialog';
 // password field is write-only: what was saved is never shown, only the account and whether the 试登录 succeeded. Every
 // save runs a 试登录 on the employee's PC through the paired 本地执行器, which takes up to a few minutes, and every
 // login there knocks the ERP account's other logins off, which is said before saving.
+// It renders inside the 本地执行器 section of the 设置页 only (#429): the 浏览器扩展 never uses it.
 
 export const ERP_CREDENTIALS_COPY = {
   title: '报销系统账号密码',
@@ -27,7 +28,7 @@ export const ERP_CREDENTIALS_COPY = {
   unavailable: '这台服务器还没有配置报销系统账号密码的加密密钥，暂时不能保存。请联系管理员。',
   loading: '正在读取报销系统账号密码情况…',
   loadFailed: '报销系统账号密码情况加载失败',
-  retryLoad: '重试',
+  retryLoad: '重新加载',
   savedAccount: '已保存的账号',
   checkedAt: '最近一次试登录',
 } as const;
@@ -85,7 +86,7 @@ export function ErpCredentialsSection() {
   const showForm = view !== null && view.available && (!saved || view.status === 'refused' || editing);
   return (
     <section className="app-form-section" aria-label={ERP_CREDENTIALS_COPY.title}>
-      <h2 className="app-section-title">{ERP_CREDENTIALS_COPY.title}</h2>
+      <h3 className="app-section-title">{ERP_CREDENTIALS_COPY.title}</h3>
       <p>{ERP_CREDENTIALS_COPY.lead}</p>
       {loadError ? (
         <div className="app-empty">
@@ -103,7 +104,7 @@ export function ErpCredentialsSection() {
         <InlineNotification kind="info" lowContrast hideCloseButton title={ERP_CREDENTIALS_COPY.unavailable} />
       ) : (
         <>
-          <h3>{ERP_CREDENTIAL_STATUS_LABELS[view.status]}</h3>
+          <h4>{ERP_CREDENTIAL_STATUS_LABELS[view.status]}</h4>
           {view.erpAccount ? (
             <p>
               {ERP_CREDENTIALS_COPY.savedAccount}：{view.erpAccount}

@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import type { LocalExecutorDist } from '../local-executor/package';
+import type { LocalExecutorDist } from '../local-executor/release';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccountListSchema, SessionSchema, type Account } from '@baox/contract';

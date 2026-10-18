@@ -9,6 +9,8 @@ import type { ErpFacts, ErpPhase } from '../task-policy';
 import type { FrozenJob } from './fill-plan';
 import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import type { DraftLookup } from '@baox/erp-executor/draft';
+import type { ErpRoute } from '@baox/contract';
+import { holderOf } from '../extension/pairing';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
@@ -38,6 +40,10 @@ export type ReconcileState = { jobId: string; result: ResultEvent | null; judged
 export type ErpRecord = {
   // null when the task never started 去报销.
   facts: ErpFacts | null;
+  // The 去报销 route whose step list the snapshot shows (#423): the one the latest job recorded when it started. For a
+  // job from before routes were recorded: 本地执行器 when its record shows a 暂存, else the current pairing's holder.
+  // With no job it is the default, since no steps are shown.
+  route: ErpRoute;
   // Any ERP action attempt of the task (from any job): the freeze point of ADR-0014.
   attempted: boolean;
   job: ErpJobTable | null;
@@ -57,7 +63,7 @@ export type ErpRecord = {
   handOff: ErpHandOffTable | null;
 };
 
-export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
+export const NO_ERP: ErpRecord = { facts: null, route: 'extension', attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
 
 const eventsOf = async (tx: Db, jobId: string): Promise<ExecutorEvent[]> =>
   (await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', jobId).orderBy('seq').execute()).map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
@@ -140,11 +146,20 @@ export function attemptDraftMark(attempt: { action: string; expected_postconditi
   return typeof mark === 'string' ? mark : null;
 }
 
+/**
+ * The route a job starting now runs on (#423): the pairing holder at this moment, recorded with the job. With no
+ * pairing the job goes out on the extension channel without 凭据 or a 暂存 (`remote-executor.ts`), the extension route.
+ */
+export async function jobRouteOf(tx: Db, accountId: string): Promise<ErpRoute> {
+  return (await holderOf(tx, accountId)) ?? 'extension';
+}
+
 export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   const attempt = await tx.selectFrom('erp_attempt').select(['erp_account', 'erp_tenant', 'erp_display_name']).where('task_id', '=', taskId).orderBy('started_at', 'desc').executeTakeFirst();
   const erpAccount = attempt ? { displayName: attempt.erp_display_name, account: attempt.erp_account, tenant: attempt.erp_tenant } : null;
   const handOff = (await tx.selectFrom('erp_hand_off').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst()) ?? null;
   const job = await tx.selectFrom('erp_job').selectAll().where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
+  // No job: no steps are shown, so the route needs no lookup.
   if (!job) return { ...NO_ERP, attempted: attempt !== undefined, erpAccount, handOff };
   const events = await eventsOf(tx, job.job_id);
   let result = lastResult(events);
@@ -163,6 +178,9 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   // The newest reconcile run decides running / its notice; the newest run that read the form decides the bucket.
   let reconcile: ReconcileState | null = null;
   const mark = attemptDraftMark(lastAttempt);
+  // A job from before routes were recorded (null) takes the current holder, unless its record already proves the
+  // route: only a 本地执行器 gets a draft mark with the 凭据, and only it reports `drafted`.
+  const route = job.route ?? (mark !== null || result?.status === 'drafted' ? 'local_executor' : await jobRouteOf(tx, job.account_id));
   for (const run of await tx.selectFrom('erp_reconcile_job').select('job_id').where('fill_job_id', '=', job.job_id).orderBy('revision', 'desc').execute()) {
     const runEvents = await eventsOf(tx, run.job_id);
     reconcile ??= { jobId: run.job_id, result: lastResult(runEvents), judged: null };
@@ -201,6 +219,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   const reconciling = phase === 'unknown' && reconcile !== null && reconcile.result === null;
   return {
     facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign, reconciling, drafting: mark !== null },
+    route,
     attempted: attempt !== undefined,
     job,
     frozen: JSON.parse(job.plan) as FrozenJob,

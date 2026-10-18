@@ -3,8 +3,9 @@ import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, EXTENSION_PAIR_PAT
 import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
+import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { drafted, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
+import { drafted, handedOver, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
 import { draftMarkOf } from './erp/remote-executor';
 import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
 import type { TestClient } from './test/harness';
@@ -189,5 +190,55 @@ describe('去报销 through a baox 本地执行器', () => {
 
     expect(await view(await alice.request('/api/erp-credentials'))).toMatchObject({ status: 'refused', message: 'ERP 拒绝了这组账号密码：密码已过期。' });
     expect((await server.db.selectFrom('erp_credential').select('password_sealed').executeTakeFirstOrThrow()).password_sealed).toBeNull();
+  });
+});
+
+// 按路线的步骤文案 (#423, spec #412 part B): a job records the route it ran on, the pairing holder when it started, and
+// its step list follows that route for good. Switching methods later rewrites no past job.
+describe('the 去报销 step list follows the route the job ran on', () => {
+  const titles = (snapshot: { erp: { steps: Array<{ title: string }> } }) => snapshot.erp.steps.map((step) => step.title);
+  const LOCAL = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
+  const EXTENSION = ['打开报销系统标签页', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '交接单据'];
+
+  it('keeps a 本地执行器 job on the 本地执行器 list after the account switches to the 浏览器扩展', async () => {
+    await executor({ ok: true }, drafted);
+    await save();
+    const scene = await scenario(server, alice).at('actions');
+
+    const done = await scene.run('start-erp-write');
+    expect(titles(done)).toEqual(LOCAL);
+    expect(done.erp.steps.at(-1)).toMatchObject({ description: '你检查后自己提交', status: 'done' });
+    expect(done.erp.progress).toEqual({ label: '核对暂存单', percent: 100 });
+    expect(await server.db.selectFrom('erp_job').select('route').where('task_id', '=', scene.task.taskId).execute()).toEqual([{ route: 'local_executor' }]);
+
+    await executor({ ok: true }, undefined, 'extension');
+    expect(titles(await scene.snapshot())).toEqual(LOCAL);
+  });
+
+  // A job from before routes were recorded (migration 0023, route null) that 暂存'd can only have run on a 本地执行器:
+  // only it gets the draft mark and the 凭据. Its list does not follow the holder the account has now.
+  it('keeps a 暂存 job from before routes were recorded on the 本地执行器 list after the switch', async () => {
+    await executor({ ok: true }, drafted);
+    await save();
+    const scene = await scenario(server, alice).at('actions');
+    await scene.run('start-erp-write');
+    // erp_job is append-only; lift the guard just long enough to make the row look pre-0023.
+    await sql`DROP TRIGGER erp_job_no_update`.execute(server.db);
+    await server.db.updateTable('erp_job').set({ route: null }).where('task_id', '=', scene.task.taskId).execute();
+
+    await executor({ ok: true }, undefined, 'extension');
+
+    expect(titles(await scene.snapshot())).toEqual(LOCAL);
+  });
+
+  it('gives a 浏览器扩展 job the list it always had, ending in 交接单据', async () => {
+    await executor({ ok: true }, handedOver(), 'extension');
+    const scene = await scenario(server, alice).at('actions');
+
+    const done = await scene.run('start-erp-write');
+
+    expect(titles(done)).toEqual(EXTENSION);
+    expect(done.erp.progress).toEqual({ label: '交接单据', percent: 100 });
+    expect(await server.db.selectFrom('erp_job').select('route').where('task_id', '=', scene.task.taskId).execute()).toEqual([{ route: 'extension' }]);
   });
 });

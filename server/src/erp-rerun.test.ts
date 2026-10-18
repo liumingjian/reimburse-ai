@@ -6,7 +6,7 @@ import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FrozenJob } from './erp/fill-plan';
 import { draftMarkOf } from './erp/remote-executor';
-import { drafted, readbackMismatch, uncertainDraft } from './erp/testing/fake-executor';
+import { drafted, gated, readbackMismatch, uncertainDraft } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
@@ -74,6 +74,31 @@ describe('自动重新去报销', () => {
     expect(fills(extension).map((fill) => fill.trigger)).toEqual(['start', 'rerun']);
     expect(fills(extension)[1]!.plan).toMatchObject({ draft: { mark: draftMarkOf(second!.jobId) } });
     expect(snapshot).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted' } });
+  });
+
+  // The bar of the new run (spec #412 A, conflict review): it starts again from the new job's own events, not from
+  // where the stopped job froze.
+  it('starts the bar again from the new run, not from where the stopped run froze', async () => {
+    const stopsMidFill: FillRunner = async (plan, channel) => {
+      for (const step of ['chromium', 'login', 'catalog', 'compatibility', 'navigate', 'import', 'readback'] as const) {
+        await channel.emit({ type: 'step', step, status: 'running' });
+        await channel.emit({ type: 'step', step, status: 'done' });
+      }
+      await channel.emit({ type: 'step', step: 'fill', status: 'running', progress: { done: 1, total: 2 } });
+      return readbackMismatch(plan, channel);
+    };
+    const next = gated(drafted);
+    await executor([stopsMidFill, next.script]);
+    const scene = await scenario(server, alice).at('actions');
+    await scene.accept('start-erp-write');
+
+    await next.running;
+    const live = await scene.snapshot();
+
+    expect(live.erp.progress).toEqual({ label: '启动后台浏览器', percent: 0 });
+    next.release();
+    const { snapshot } = await after(scene, 2);
+    expect(snapshot.erp).toMatchObject({ outcome: 'drafted', progress: { percent: 100 } });
   });
 
   it('starts over at most twice in a row, then waits in 对账 as before', async () => {

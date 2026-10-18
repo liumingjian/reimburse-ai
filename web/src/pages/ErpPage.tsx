@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ComponentType } from 'react';
-import { Button, InlineNotification } from '@carbon/react';
+import { Button, InlineNotification, ProgressBar } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, InProgress, Renew, WarningAltFilled } from '@carbon/icons-react';
 import { DRAFT_HANDOVER_NOTICE, ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
@@ -29,6 +29,12 @@ const STATUS_ICON: Readonly<Record<ErpStep['status'], ComponentType | null>> = {
   done: CheckmarkFilled,
   failed: ErrorFilled,
 };
+
+// Stopped: aborted, or idle with the reason it stopped before writing.
+function progressStatus(erp: TaskSnapshot['erp']): 'active' | 'finished' | 'error' {
+  if (erp.status === 'aborted' || (erp.status === 'idle' && erp.abortReason)) return 'error';
+  return erp.status === 'done' ? 'finished' : 'active';
+}
 
 export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
@@ -92,6 +98,17 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
       ) : null}
 
       <section className="app-block" aria-label="填报进度">
+        {erp.progress ? (
+          // 去报销进度: the server's words and share of steps done; the page adds no estimate of its own. A run that
+          // stopped keeps its bar where it stopped, marked as failed; a finished one is marked finished.
+          <div className="app-erp-progress" data-testid="erp-progress">
+            <div className="app-erp-progress-head" aria-hidden="true">
+              <span data-testid="erp-progress-label">{erp.progress.label}</span>
+              <span data-testid="erp-progress-percent">{erp.progress.percent}%</span>
+            </div>
+            <ProgressBar label={erp.progress.label} hideLabel value={erp.progress.percent} max={100} size="small" status={progressStatus(erp)} />
+          </div>
+        ) : null}
         {erp.steps.length === 0 ? (
           <p className="app-caption">还没有填报进度。</p>
         ) : (

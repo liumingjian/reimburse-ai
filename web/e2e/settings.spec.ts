@@ -10,9 +10,22 @@ const DESKTOP_VIEWPORTS = [
 async function openSettings(page: Page, viewport: (typeof DESKTOP_VIEWPORTS)[number], query = '') {
   await page.setViewportSize(viewport);
   await page.goto(open(query, '#/settings'));
+  // 去报销的方式 (#428): with nothing paired the page opens on the 本地执行器; the extension's section needs choosing.
+  const choice = page.getByRole('radio', { name: '浏览器扩展' });
+  if (!query.includes('extension=')) {
+    await expect(page.getByRole('radio', { name: '本地执行器（推荐）' })).toBeChecked();
+    await expect(page.getByRole('region', { name: '浏览器扩展' })).toHaveCount(0);
+    // #429: the 报销系统 account form sits inside the 本地执行器 section.
+    await expect(page.getByRole('region', { name: 'baox 本地执行器' }).getByRole('region', { name: '报销系统账号密码' })).toBeVisible();
+    await choice.check({ force: true });
+  }
+  await expect(choice).toBeChecked();
+  await expect(page.getByRole('region', { name: 'baox 本地执行器' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '报销系统账号密码' })).toHaveCount(0);
   const extension = page.getByRole('region', { name: '浏览器扩展' });
   await expect(extension).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: '设置' })).toBeVisible();
+  await expect(page.getByText('选择去报销的方式，连接好后回到报销任务去报销。')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   return extension;
 }
@@ -20,8 +33,8 @@ async function openSettings(page: Page, viewport: (typeof DESKTOP_VIEWPORTS)[num
 test('first-time settings leads with the extension connection action at both desktop widths', async ({ page }, testInfo) => {
   for (const viewport of DESKTOP_VIEWPORTS) {
     const extension = await openSettings(page, viewport);
-    await expect(extension.getByRole('heading', { name: '还没有配对' })).toBeVisible();
-    await expect(extension.getByRole('heading', { name: '第一次连接' })).toBeVisible();
+    await expect(extension.getByRole('heading', { name: '还没有配对' })).toHaveCount(0);
+    await expect(extension.getByRole('heading', { name: '第一次连接' })).toHaveCount(0);
     await expect(extension.getByRole('button', { name: '生成配对码' })).toBeVisible();
     await expect(extension.getByText('扩展暂时没有连接')).toHaveCount(0);
     await expect(extension.getByRole('button', { name: '撤销配对' })).toHaveCount(0);
@@ -69,11 +82,15 @@ test('a disconnected extension gets the active-origin migration path for the def
   }
 });
 
-test('tutorial opens in a separate tab and remains readable at both desktop widths', async ({ page }, testInfo) => {
+test('tutorial opens in a separate tab from 安装遇到问题 and remains readable at both desktop widths', async ({ page }, testInfo) => {
   for (const viewport of DESKTOP_VIEWPORTS) {
     const extension = await openSettings(page, viewport);
+    // #429: the tutorial is reachable only from the collapsed 「安装遇到问题？」.
+    const tutorialLink = extension.getByRole('link', { name: '打开安装教程' });
+    await expect(tutorialLink).toBeHidden();
+    await extension.getByText('安装遇到问题？').click();
     const popupPromise = page.waitForEvent('popup');
-    await extension.getByRole('link', { name: '打开安装教程' }).click();
+    await tutorialLink.click();
     const tutorial = await popupPromise;
     await tutorial.waitForLoadState();
     await expect(tutorial).toHaveURL(/#\/settings\/tutorial$/);

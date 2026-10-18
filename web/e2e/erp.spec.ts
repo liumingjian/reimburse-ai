@@ -7,6 +7,7 @@ const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
 const STEP_TITLES = ['打开报销系统标签页', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '交接单据'];
+const LOCAL_STEP_TITLES = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
 const HUMAN_REVIEW = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
 
 const progress = (page: Page) => page.getByRole('region', { name: '填报进度' });
@@ -87,6 +88,24 @@ test('去报销：在整单确认页点去报销，打开报销系统标签页�
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
   await page.getByRole('link', { name: '查看完成结果' }).click();
   await expectDone(page);
+});
+
+// 按路线的步骤文案 (#423): on the 本地执行器 route the list is its own, there is no login wait, and the run ends 暂存'd.
+test('本地执行器（?route=local_executor）：启动后台浏览器起步，暂存到报销系统收尾，完成页可去报销系统查看暂存单', async ({ page }) => {
+  await page.goto(open('?seed=actions&route=local_executor', '#/task/T1/review'));
+  await page.getByRole('button', { name: '去报销', exact: true }).click();
+  await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
+  await expect(progress(page).locator('.step-title')).toHaveText(LOCAL_STEP_TITLES);
+  await expect(stepItem(page, '启动后台浏览器')).toContainText('在你的电脑上启动一个看不见的浏览器，专门用于这次报销。');
+  await expect(stepItem(page, '登录')).toContainText('用你在设置页保存的报销系统账号登录。');
+  await expect(stepItem(page, '暂存到报销系统')).toContainText('你检查后自己提交');
+  await expect(page.getByTestId('erp-progress-percent')).toHaveText('100%');
+  await expect(page.getByTestId('erp-progress-label')).toHaveText('核对暂存单');
+  await expect(progress(page).locator('li .status')).toHaveText(LOCAL_STEP_TITLES.map(() => '完成'));
+  await expect(loginButton(page)).toHaveCount(0);
+  await page.getByRole('link', { name: '查看完成结果' }).click();
+  await expect(page.getByTestId('handover-completed')).toHaveText('已暂存到报销系统，请打开检查，确认无误后由你自己提交。');
+  await expect(page.getByRole('link', { name: '去报销系统查看' })).toBeVisible();
 });
 
 test('?seed=done 直接打开完成页：固定句逐字一致', async ({ page }) => {

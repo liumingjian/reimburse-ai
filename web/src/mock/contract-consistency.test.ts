@@ -2,7 +2,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   ALLOCATION_ERRORS,
-  ERP_PROGRESS_STEPS,
+  ERP_EXTENSION_STEPS,
+  ERP_LOCAL_EXECUTOR_STEPS,
   ErpStepSchema,
   PENDING_ANSWER_ERRORS,
   PendingAnswerSchema,
@@ -16,7 +17,7 @@ import {
   validatePendingAnswer,
 } from '@baox/contract';
 import { GOLDEN_SCENARIOS, GOLDENS } from '@baox/contract/goldens';
-import { ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
+import { ERP_LOCAL_STEP_DEFS, ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from './fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createMockAdapter } from './mock-adapter';
@@ -39,10 +40,15 @@ describe('契约 schema', () => {
   });
 
   test('mock 的写入步骤清单与契约同源', () => {
-    expect(ERP_STEP_DEFS).toEqual(ERP_PROGRESS_STEPS);
+    expect(ERP_STEP_DEFS).toEqual(ERP_EXTENSION_STEPS);
+    expect(ERP_LOCAL_STEP_DEFS).toEqual(ERP_LOCAL_EXECUTOR_STEPS);
+    // Both routes hold the same stage keys in the same order (the mock indexes either by ERP_STEP_INDEX).
+    expect(ERP_LOCAL_STEP_DEFS.map((step) => step.key)).toEqual(ERP_STEP_DEFS.map((step) => step.key));
     expect(ERP_STEP_INDEX.handover).toBe(ERP_STEP_DEFS.length - 1);
-    expect(ERP_STEP_DEFS.some((step) => step.title.includes('保存'))).toBe(false);
-    for (const step of erpSteps(ERP_STEP_DEFS.length)) expect(() => ErpStepSchema.parse(step)).not.toThrow();
+    expect([...ERP_STEP_DEFS, ...ERP_LOCAL_STEP_DEFS].some((step) => step.title.includes('保存'))).toBe(false);
+    for (const route of ['extension', 'local_executor'] as const) {
+      for (const step of erpSteps(ERP_STEP_DEFS.length, 'running', route)) expect(() => ErpStepSchema.parse(step)).not.toThrow();
+    }
   });
 
   test('由快照投影出的任务列表通过任务列表 schema', () => {

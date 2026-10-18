@@ -1,4 +1,4 @@
-import { EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION_TOO_OLD_CODE, ExtensionPairInputSchema, extensionVersionRefusal, HTTP_ENDPOINTS, type ExtensionPairingState } from '@baox/contract';
+import { CreatePairingCodeInputSchema, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION_TOO_OLD_CODE, ExtensionPairInputSchema, extensionVersionRefusal, HTTP_ENDPOINTS, type ExtensionPairingState } from '@baox/contract';
 import type { Context, Hono } from 'hono';
 import { AuthRefusal } from '../accounts/accounts';
 import { accountOf, type AppEnv } from '../accounts/http';
@@ -17,6 +17,7 @@ import type { PairingService } from './pairing';
 // unusable pairing is written down at all.
 
 const PAIRING_PATH = HTTP_ENDPOINTS.getExtensionPairing.path;
+const INSTALL_SYSTEM_INVALID = '请选择 Mac 或 Windows。';
 
 export function bearer(c: Context): string | undefined {
   const [scheme, value] = (c.req.header('authorization') ?? '').split(' ');
@@ -61,6 +62,11 @@ export function mountExtensionPairRoutes(app: Hono<AppEnv>, pairings: PairingSer
 export function mountPairingRoutes(app: Hono<AppEnv>, pairings: PairingService, publicOrigin: PublicOrigin | null): void {
   const view = (c: Context, pairing: ExtensionPairingState) => ({ ...pairing, activeOrigin: activeOrigin(publicOrigin, c.req.url) });
   app.get(PAIRING_PATH, async (c) => c.json(view(c, await pairings.view(accountOf(c).accountId))));
-  app.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, async (c) => c.json(view(c, await pairings.issue(accountOf(c).accountId))));
+  // The body may name the system the code is for (the one-command install, #425); the 浏览器扩展's code names none.
+  app.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, async (c) => {
+    const input = CreatePairingCodeInputSchema.safeParse((await c.req.json().catch(() => null)) ?? {});
+    if (!input.success) return c.json({ error: { code: 'invalid_input', message: INSTALL_SYSTEM_INVALID } }, 400);
+    return c.json(view(c, await pairings.issue(accountOf(c).accountId, input.data.system ?? null)));
+  });
   app.post(HTTP_ENDPOINTS.revokeExtensionPairing.path, async (c) => c.json(view(c, await pairings.revoke(accountOf(c).accountId))));
 }

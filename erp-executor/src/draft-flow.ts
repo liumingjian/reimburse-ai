@@ -276,8 +276,10 @@ export type FillResult =
  */
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {}, causa = null,
-  witnessReads = 8, witnessDelayMs = 900, settleReads = 12, settleDelayMs = 250,
+  witnessReads = 8, witnessDelayMs = 900, settleReads = 12, settleDelayMs = 250, onRowWritten = null,
 }: {
+  /** Told after each 明细 row is written and witnessed: how many rows are done out of the preview's (去报销进度). */
+  onRowWritten?: ((done: number, total: number) => Promise<void>) | null;
   approvedPreview: ApprovedPreview; approval: Approval | null | undefined; freshGate: FreshGate | null | undefined;
   readCurrent: (expected: ApprovedPreview | null) => Promise<CurrentReadings>;
   addRow?: ((page: P, detail: { line: ApprovedPreview['lines'][number]; current: CurrentReadings }) => Promise<ActionResult>) | null;
@@ -394,6 +396,7 @@ export async function fillApprovedPreview<P>(page: P, {
       return fail('fill', [{ code: 'computed_total_mismatch', message: witness, lineId: line.lineId }], { readings, rowsWritten });
     }
     rowsWritten.push({ lineId: line.lineId, rowIndex });
+    await onRowWritten?.(rowsWritten.length, approvedPreview.lines.length);
   }
   const left = await leaveEdit(page, { label: '明细信息' }, writeDeps);
   if (!left || !left.ok || left.stillEditing === true) {

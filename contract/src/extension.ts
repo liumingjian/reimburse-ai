@@ -121,6 +121,8 @@ export const ExtensionPairingStateSchema = z.object({
   connected: z.boolean(),
   // The version the paired extension last reported, or null when nothing has paired yet.
   version: z.string().nullable(),
+  // What holds the pairing (#428): the 设置页 derives 去报销的方式 from it. Null unless paired.
+  holder: z.enum(EXTENSION_HOLDERS).nullable(),
   // The freshly issued 配对码, and only in the answer to issuing one: the server keeps nothing but its sha256, so it
   // can never be shown a second time.
   code: z.string().nullable(),

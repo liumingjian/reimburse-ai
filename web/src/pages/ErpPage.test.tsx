@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 import { App } from '../App';
@@ -363,5 +363,121 @@ describe('写入结果不确定但暂存单内码已知', () => {
     expect(await screen.findByText(`写入报销系统已停止：${REASON}`)).toBeTruthy();
     expect(screen.queryByTestId('erp-review-notice')).toBeNull();
     expect(screen.queryByRole('link', { name: '去报销系统查看' })).toBeNull();
+  });
+});
+
+// 去报销进度 (#420): the bar names the current step and shows a percentage, both from the snapshot's `erp.progress`.
+// The page computes nothing: no share of its own and no time left.
+describe('去报销进度条', () => {
+  const bar = () => screen.getByTestId('erp-progress');
+
+  test('打开页面就显示当前这一步和百分比（来自快照，刷新页面后也一样）', async () => {
+    const adapter = renderErp();
+    await waitingLogin();
+    const { erp } = await adapter.getSnapshot('T1');
+    expect(erp.progress).toMatchObject({ label: '登录' });
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('登录');
+    expect(screen.getByTestId('erp-progress-percent').textContent).toBe(`${erp.progress!.percent}%`);
+    expect(within(bar()).getByRole('progressbar').getAttribute('aria-valuenow')).toBe(String(erp.progress!.percent));
+  });
+
+  test('填写明细时逐行前进，「填写明细 n/m」，完成时才到 100%', async () => {
+    const adapter = renderErp();
+    const pushed: Array<{ label: string; percent: number; status: string }> = [];
+    adapter.subscribe('T1', (event) => {
+      if (event.type === 'snapshot' && event.snapshot.erp.progress) pushed.push({ ...event.snapshot.erp.progress, status: event.snapshot.erp.status });
+    });
+    fireEvent.click(await waitingLogin());
+    // testing-library 的 waitFor 用 setup.ts 配的 5 秒上限；vi.waitFor 默认只等 1 秒，Mac 忙时走不完 mock 流程。
+    await waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
+    const rows = (await adapter.getSnapshot('T1')).lines.length;
+    const filling = pushed.map((p) => p.label).filter((label) => label.startsWith('填写明细'));
+    expect([...new Set(filling)]).toEqual(Array.from({ length: rows + 1 }, (_, n) => `填写明细 ${n}/${rows}`));
+    const percents = pushed.map((p) => p.percent);
+    expect(percents).toEqual([...percents].sort((a, b) => a - b));
+    expect(pushed.filter((p) => p.percent === 100).every((p) => p.status === 'done')).toBe(true);
+    expect(pushed.filter((p) => p.status !== 'done').every((p) => p.percent < 100)).toBe(true);
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('交接单据');
+  });
+
+  test('显示快照给出的行进度，不估算剩余时间', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status: 'running', externalWait: 'erp_response', progress: { label: '填写明细 3/8', percent: 60 } } };
+    });
+    render(<App adapter={adapter} />);
+    await waitFor(() => expect(screen.getByTestId('erp-progress-label').textContent).toBe('填写明细 3/8'));
+    expect(screen.getByTestId('erp-progress-percent').textContent).toBe('60%');
+    expect(bar().textContent).not.toMatch(/剩余|预计|分钟|秒|ERP|重试|[\u2013\u2014]/);
+  });
+
+  test('停下的去报销：进度条停在原处、标成出错；做完的标成完成', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    let status: 'idle' | 'done' = 'idle';
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+      const snapshot = await original(taskId);
+      return { ...snapshot, erp: { ...snapshot.erp, status, abortReason: status === 'idle' ? '报销系统没有应答' : null, progress: { label: '填写明细 3/8', percent: 60 } } };
+    });
+    const { unmount } = render(<App adapter={adapter} />);
+    await waitFor(() => expect(screen.getByTestId('erp-progress-label').textContent).toBe('填写明细 3/8'));
+    expect(bar().querySelector('.cds--progress-bar--error')).not.toBeNull();
+    unmount();
+    status = 'done';
+    render(<App adapter={adapter} />);
+    await waitFor(() => expect(bar().querySelector('.cds--progress-bar--finished')).not.toBeNull());
+  });
+
+  test('没有去报销作业时不显示进度条', async () => {
+    window.location.hash = '#/task/T1/erp';
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const original = adapter.getSnapshot.bind(adapter);
+    vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => ({ ...(await original(taskId)), erp: { ...(await original(taskId)).erp, progress: null } }));
+    render(<App adapter={adapter} />);
+    await waitingLogin();
+    expect(screen.queryByTestId('erp-progress')).toBeNull();
+  });
+});
+
+// 按路线的步骤文案 (#423): the page shows the step list of the route the job ran on, as the snapshot words it. The
+// 本地执行器 starts a background browser, signs in with the saved account and ends 暂存'd; the 浏览器扩展 keeps its list.
+describe('按路线的步骤文案', () => {
+  const steps = () => within(progress()).getAllByRole('listitem').map((item) => [item.querySelector('.step-title')?.textContent, item.querySelector('.desc')?.textContent]);
+  const MIDDLE = ['报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细'];
+
+  test('本地执行器：第一步「启动后台浏览器」，登录用设置页保存的账号，最后一步「暂存到报销系统」，到 100% 时是核对暂存单', async () => {
+    window.location.hash = '#/task/T1/review';
+    render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, erpStepMs: 5, erpRoute: 'local_executor' })} />);
+    fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
+    await screen.findByRole('heading', { name: '填写报销单' });
+
+    const shown = steps();
+    expect(shown.map(([title]) => title)).toEqual(['启动后台浏览器', '登录', ...MIDDLE, '暂存到报销系统']);
+    expect(shown[0]![1]).toBe('在你的电脑上启动一个看不见的浏览器，专门用于这次报销。');
+    expect(shown[1]![1]).toBe('用你在设置页保存的报销系统账号登录。');
+    expect(shown.at(-1)![1]).toBe('你检查后自己提交');
+    expect(progress().textContent).not.toMatch(/浏览器扩展|标签页|交接单据|ERP|重试|[\u2013\u2014]/);
+
+    // No login wait on this route: it runs through to the 暂存单.
+    await waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('核对暂存单');
+    expect(screen.queryByRole('button', { name: '我已登录，继续' })).toBeNull();
+    expect(steps().map(([title]) => title)).toEqual(['启动后台浏览器', '登录', ...MIDDLE, '暂存到报销系统']);
+  });
+
+  test('浏览器扩展：步骤清单不变，第一步打开报销系统标签页，最后一步交接单据', async () => {
+    renderErp();
+    await waitingLogin();
+
+    const shown = steps();
+    expect(shown.map(([title]) => title)).toEqual(STEP_TITLES);
+    expect(shown[0]![1]).toBe('通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。');
+    expect(shown[1]![1]).toBe('在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。');
+    expect(shown.at(-1)![1]).toBe('不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。');
+    expect(progress().textContent).not.toMatch(/启动后台浏览器|暂存到报销系统/);
   });
 });

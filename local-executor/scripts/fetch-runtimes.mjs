@@ -10,7 +10,7 @@ import { createGunzip, createInflateRaw } from 'node:zlib';
 // Fetches Node's own runtime for every platform the 本地执行器 ships to (ADR-0035) into `runtime/<version>/<platform>/`
 // (or under the directory given as the first argument), and names the version served in `runtime/VERSION`. The version is the repo's (.nvmrc), the one the
 // program is built and tested on. Each archive is checked against the release's SHASUMS256.txt before anything is
-// taken out of it, and only the node binary is kept: Node signs it (Authenticode on Windows, Developer ID and
+// taken out of it, and only the node binary is kept, with its own sha256 in `node[.exe].sha256` beside it: Node signs it (Authenticode on Windows, Developer ID and
 // notarisation on macOS), and baox ships it untouched, so neither system has to be told to trust a binary of ours.
 //
 // Run by the operator's candidate prepare on each deploy (deploy/operator, phase `host`), through curl so the deployment's proxy settings apply. A platform
@@ -28,7 +28,8 @@ const PLATFORMS = {
   'darwin-x64': { archive: `node-v${version}-darwin-x64.tar.gz`, member: `node-v${version}-darwin-x64/bin/node`, binary: 'node' },
 };
 
-const curl = (url, file) => execFileSync('curl', ['-fsSL', '--retry', '3', '-o', file, url], { stdio: ['ignore', 'inherit', 'inherit'] });
+// A mirror that cannot be reached fails within the connect timeout instead of curl's own five minutes per try.
+const curl = (url, file) => execFileSync('curl', ['-fsSL', '--retry', '3', '--connect-timeout', '20', '-o', file, url], { stdio: ['ignore', 'inherit', 'inherit'] });
 const sha256Of = async (file) => {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(file)) hash.update(chunk);
@@ -132,7 +133,9 @@ try {
   const versionFile = join(out, 'VERSION');
   const current = existsSync(versionFile) ? readFileSync(versionFile, 'utf8').trim() : null;
   const home = join(out, version);
-  const todo = Object.entries(PLATFORMS).filter(([platform, p]) => !existsSync(join(home, platform, p.binary)));
+  // A runtime counts as present only with its sha256 beside it. One cached before the sha256 was recorded is fetched
+  // again rather than hashed where it lies: only a binary just taken out of a checked archive gets a sha256.
+  const todo = Object.entries(PLATFORMS).filter(([platform, p]) => !existsSync(join(home, platform, p.binary)) || !existsSync(join(home, platform, `${p.binary}.sha256`)));
   if (todo.length > 0) {
     curl(`${mirror}/v${version}/SHASUMS256.txt`, join(scratch, 'SHASUMS256.txt'));
     const sums = new Map(readFileSync(join(scratch, 'SHASUMS256.txt'), 'utf8').split('\n').map((line) => line.trim().split(/\s+/)).filter((p) => p.length === 2).map(([sum, file]) => [file, sum]));
@@ -149,7 +152,12 @@ try {
       if (p.archive.endsWith('.zip')) await fromZip(archive, p.member, partial);
       else await fromTarGz(archive, p.member, partial);
       chmodSync(partial, 0o755);
+      // The binary's own sha256, which the server serves beside it (`server/src/local-executor/release.ts`): the
+      // official sums cover the archive, which is discarded. The binary is named before its sha256, so a run cut off
+      // in between leaves a binary without one, which the next run fetches again.
+      writeFileSync(join(dir, `${p.binary}.sha256.partial`), `${await sha256Of(partial)}\n`);
       renameSync(partial, join(dir, p.binary));
+      renameSync(join(dir, `${p.binary}.sha256.partial`), join(dir, `${p.binary}.sha256`));
       rmSync(archive, { force: true });
     }
   }

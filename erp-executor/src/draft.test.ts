@@ -36,6 +36,19 @@ describe('暂存 on the unattended path', () => {
     expect(fake.mutations.some((m) => m.kind === 'save')).toBe(false);
   });
 
+  // 去报销进度 (#420): 暂存 and the check of the draft it left (核对暂存单) are two steps the page counts and names.
+  const stepTrail = () => server.events.flatMap((e) => (e.type === 'step' ? [`${e.step}:${e.status}`] : []));
+  it('reports 暂存 and 核对暂存单 as their own steps, after the hand-over read-back', async () => {
+    await drafting();
+    const steps = stepTrail();
+    expect(steps.slice(steps.indexOf('handover:done'))).toEqual(['handover:done', 'save:running', 'save:done', 'draft_check:running', 'draft_check:done']);
+  });
+
+  it('fails 核对暂存单, not 暂存, when the press landed and the lookup by the marker does not settle it', async () => {
+    await drafting({ draftMarkTaken: true });
+    expect(stepTrail().slice(-3)).toEqual(['save:done', 'draft_check:running', 'draft_check:failed']);
+  });
+
   it('hands over unsaved, as before, when the plan carries no draft', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), channel: server.channel, pace: FAST_PACE, probeWaitMs: 0 });

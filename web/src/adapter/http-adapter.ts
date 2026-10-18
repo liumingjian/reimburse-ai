@@ -325,10 +325,10 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseLegacyImportActionResponse(response.status, await readJson(response));
   }
-  async function pairingAction(target: string): Promise<ExtensionPairingOutcome> {
+  async function pairingAction(target: string, payload: Record<string, unknown> = {}): Promise<ExtensionPairingOutcome> {
     let response: Response;
     try {
-      response = await fetch(target, { method: 'POST', body: JSON.stringify({}), headers: { 'content-type': 'application/json' } });
+      response = await fetch(target, { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } });
     } catch {
       return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, pairing: null };
     }
@@ -439,7 +439,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       }
       return parseExtensionPairingResponse(response.status, await readJson(response));
     },
-    createExtensionPairingCode: () => pairingAction(url(E.createExtensionPairingCode.path)),
+    createExtensionPairingCode: (input) => pairingAction(url(E.createExtensionPairingCode.path), input?.system ? { system: input.system } : {}),
     revokeExtensionPairing: () => pairingAction(url(E.revokeExtensionPairing.path)),
     async getErpCredentials() {
       let response: Response;

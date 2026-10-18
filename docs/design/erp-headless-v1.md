@@ -261,6 +261,7 @@ Chrome 或 Edge；自动替换升级。
 - **升级：** 运行时只比大版本。用员工自己的 Node 时，服务端换小版本不理会，换大版本自动改用下载的运行时，不再让员工重新下载。
 - **重新配对：** 47319 上加配对接口，只收应用自己来源（`Origin`）的请求；设置页探到本机执行器时给「连接这台电脑的执行器」，一键重新配对。
 - **旧安装：** 从 zip 装的本地执行器照常运行、照常自动升级，不迁移、不重装。部署不再提供安装包，只保留三个运行时的缓存。
+  设置页已改用安装命令（#427）：zip 下载路由、按需打包和它的缓存、双击用的启动文件和程序的 `setup` 都已删除。
 - **上线前提：** 应用服务器先上 HTTPS（2026-10-17 定，ADR-0036：内网自建、只限本机地址的 CA，222 只走 https，员工按上线通知里的命令信任一次根证书；开发实例和 e2e 仍用 http）；在真实 Mac 和真实 Windows 电脑上各跑一遍安装、重新配对、卸载，
   含公司杀毒软件是否拦 `irm … | iex`。
 - **补充决定（2026-10-17，所有者，#412 的缺口）：**
@@ -279,7 +280,8 @@ Chrome 或 Edge；自动替换升级。
   要在那里重新签名得另装第三方签名工具，而且只能是临时签名。Mac 上 Node 的 Developer ID 签名已核实；
   浏览器下载后 Gatekeeper 是否直接放行（公证）、Windows 上的 Authenticode 签名都还没核实。
 - **运行时：** 部署时 operator 准备候选版本（`host` 阶段）从 Node 镜像下载三个平台的运行时，按 SHASUMS256.txt 核对，
-  放在 `cache/local-executor-runtime`，跨版本保留，`.nvmrc` 变了才重新下载。
+  放在 `cache/local-executor-runtime`，跨版本保留，`.nvmrc` 变了才重新下载。核对通过后记下取出的二进制自己的 sha256
+  （`node[.exe].sha256`），应用服务器公开提供运行时和这个值（`/api/local-executor/runtime/<平台>`、`…/<平台>/sha256`）。
 - **安装：** 员工解压后双击 `start-baox.cmd`（Windows）或 `start-baox.command`（Mac），输入设置页上的配对码。程序把自己复制到
   `~/.baox/local-executor/app`，登记随登录启动（Windows 的「启动」文件夹、Mac 的 LaunchAgent），随即在后台启动。不需要管理员权限。
   首次运行要过一次 SmartScreen 或 Gatekeeper，设置页写了怎么点。
