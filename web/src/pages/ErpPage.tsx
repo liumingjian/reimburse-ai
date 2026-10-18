@@ -41,7 +41,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const copy = PAGE_COPY.erp;
   const { erp, step, stage } = snapshot;
   const store = useAppStore();
-  const { busy, error, run } = useAction(taskId);
+  const { busy, error, errorLink, run } = useAction(taskId);
 
   // Follow the server-selected task stage after a terminal result. This component does not infer a result from steps.
   const previousStatus = useRef(erp.status);
@@ -186,7 +186,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
             ) : null}
           </>
         ) : null}
-        <ActionError message={error} />
+        <ActionError message={error} link={errorLink} />
       </section>
     </>
   );

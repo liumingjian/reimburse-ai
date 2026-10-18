@@ -1,6 +1,5 @@
 import {
   ERP_DRAFT_CHECK_PROGRESS_LABEL,
-  ERP_EXTENSION_STEPS,
   ERP_STEPS,
   HUMAN_REVIEW_NOTICE,
   READBACK_FIELD_LABELS,
@@ -18,35 +17,28 @@ import {
   type TaskSnapshot,
 } from '@baox/contract';
 
-// Mock execution reuses the contract's factual stage lists, one per 去报销 route (#423). Its timers only advance the
+// Mock execution reuses the contract's one factual stage list, the 本地执行器's (ADR-0037). Its timers only advance the
 // simulated server; no duration is presented as ERP progress, and the percentage counts steps the way the server does.
-// The mock plays the 浏览器扩展 route unless `?route=local_executor` asks for the 本地执行器.
-// The server words every job with ERP_STEPS (ADR-0037); the mock's extension route goes with the 设置页 choice (#437).
-export type ErpRoute = 'extension' | 'local_executor';
 type StepDef = Pick<ErpStep, 'key' | 'title' | 'description'>;
-const ROUTE_STEPS: Readonly<Record<ErpRoute, ReadonlyArray<StepDef>>> = { extension: ERP_EXTENSION_STEPS, local_executor: ERP_STEPS };
-export const erpStepDefs = (route: ErpRoute = 'extension'): ReadonlyArray<StepDef> => ROUTE_STEPS[route];
-export const ERP_STEP_DEFS = erpStepDefs('extension');
-export const ERP_LOCAL_STEP_DEFS = erpStepDefs('local_executor');
+export const ERP_STEP_DEFS: ReadonlyArray<StepDef> = ERP_STEPS;
 
 export const ERP_STEP_INDEX = { chromium: 0, login: 1, catalog: 2, navigate: 3, import: 4, receipt: 5, fill: 6, handover: 7 } as const;
 
-// Both routes hold the same stage keys in the same order; only the words differ.
 export function erpStageAt(active: number): Erp['currentStage'] {
   return (ERP_STEP_DEFS[active]?.key ?? null) as Erp['currentStage'];
 }
 
 /**
- * 去报销进度 as the server counts it (server/src/task-snapshot/erp.ts `progressOf`) over the route's list: every shown
- * step once, 填写明细 once per 明细 row, and on the 本地执行器 暂存到报销系统 as two (暂存, then 核对暂存单). Step
+ * 去报销进度 as the server counts it (server/src/task-snapshot/erp.ts `progressOf`): every shown step once, 填写明细 once
+ * per 明细 row, and 暂存到报销系统 as two (暂存, then 核对暂存单). Step
  * `active` is current with `rowsDone` rows written (when it is 填写明细); everything before it is done. `active` past
  * the last step is a finished job, at 100.
  */
-export function erpProgress(active: number, rowCount: number, rowsDone = 0, route: ErpRoute = 'extension'): NonNullable<Erp['progress']> {
-  const defs = erpStepDefs(route);
+export function erpProgress(active: number, rowCount: number, rowsDone = 0): NonNullable<Erp['progress']> {
+  const defs = ERP_STEP_DEFS;
   const rows = Math.max(1, rowCount);
-  if (active >= defs.length) return { label: route === 'local_executor' ? ERP_DRAFT_CHECK_PROGRESS_LABEL : defs.at(-1)!.title, percent: 100 };
-  const weight = (index: number) => (index === ERP_STEP_INDEX.fill ? rows : index === ERP_STEP_INDEX.handover && route === 'local_executor' ? 2 : 1);
+  if (active >= defs.length) return { label: ERP_DRAFT_CHECK_PROGRESS_LABEL, percent: 100 };
+  const weight = (index: number) => (index === ERP_STEP_INDEX.fill ? rows : index === ERP_STEP_INDEX.handover ? 2 : 1);
   const total = defs.reduce((sum, _def, index) => sum + weight(index), 0);
   const before = defs.slice(0, active).reduce((sum, _def, index) => sum + weight(index), 0);
   const done = before + (active === ERP_STEP_INDEX.fill ? Math.min(rows, rowsDone) : 0);
@@ -55,8 +47,8 @@ export function erpProgress(active: number, rowCount: number, rowsDone = 0, rout
 }
 
 // 第 active 步处于 status，之前的都已完成，之后的待开始；active 超出范围即全部完成。
-export function erpSteps(active: number, status: ErpStep['status'] = 'running', route: ErpRoute = 'extension'): ErpStep[] {
-  return erpStepDefs(route).map((def, index) => ({
+export function erpSteps(active: number, status: ErpStep['status'] = 'running'): ErpStep[] {
+  return ERP_STEP_DEFS.map((def, index) => ({
     ...def,
     status: index < active ? 'done' : index === active ? status : 'todo',
   }));
@@ -81,13 +73,13 @@ export function idleErp(): Erp {
 }
 
 // `rowCount`: the task's 明细 rows, which 填写明细 counts one by one (去报销进度).
-export function erpRunning(active: number, rowCount: number, route: ErpRoute = 'extension'): Erp {
+export function erpRunning(active: number, rowCount: number): Erp {
   return {
     ...idleErp(),
     status: 'running',
-    steps: erpSteps(active, 'running', route),
+    steps: erpSteps(active, 'running'),
     currentStage: erpStageAt(active),
-    progress: erpProgress(active, rowCount, 0, route),
+    progress: erpProgress(active, rowCount, 0),
     externalWait: 'erp_response',
     allowedActions: ['refresh'],
   };
@@ -231,18 +223,17 @@ export function reconcileVerdict(
 // The 暂存单 a 本地执行器 run leaves (虚构): the 报销系统 entry page the review button opens, and its 内码.
 export const MOCK_ERP_REVIEW = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119946' } as const;
 
-// 写入完成：严格回读逐行一致、单据已交接，阶段推到 done。
-// 交接时单据还没有保存，所以没有单据编号（服务端 fill-state.ts 的 handed_over 一样给 null）。只有员工自己保存过、
-// 再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
-// 本地执行器（route local_executor）暂存后结束：ERP 草稿已交接（drafted），同样没有单据编号，有暂存单可查看。
-export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null, route: ErpRoute = 'extension'): void {
-  const drafted = route === 'local_executor' && draftNo === null;
+// 写入完成：严格回读逐行一致，阶段推到 done。本地执行器暂存后结束：ERP 草稿已交接（drafted），没有单据编号，
+// 有暂存单可查看。只有员工自己提交过、再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
+// `filled`：对账读到一张填好、没保存、逐行一致的单据，服务端（fill-state.ts）今天仍把它当单据交接完成；随 #436 去掉。
+export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null, filled = false): void {
+  const drafted = draftNo === null && !filled;
   snapshot.erp = {
-    ...erpRunning(ERP_STEP_INDEX.handover, snapshot.lines.length, route),
+    ...erpRunning(ERP_STEP_INDEX.handover, snapshot.lines.length),
     status: 'done',
-    steps: erpSteps(ERP_STEP_INDEX.handover + 1, 'running', route),
+    steps: erpSteps(ERP_STEP_INDEX.handover + 1, 'running'),
     currentStage: 'handover',
-    progress: erpProgress(ERP_STEP_INDEX.handover + 1, snapshot.lines.length, 0, route),
+    progress: erpProgress(ERP_STEP_INDEX.handover + 1, snapshot.lines.length, 0),
     externalWait: 'none',
     outcome: drafted ? 'drafted' : draftNo === null ? 'filled' : 'saved',
     draftNo,
@@ -290,14 +281,14 @@ export function unjudgedReconcile(reasons: readonly string[]): Reconcile {
 }
 
 // 写入在 stage 这一步停下、结果不确定：停在对账，等第一次对账。进度条停在这一步（填写明细停在写完的最后一行）。
-function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', abortReason: string, reason: string, capture: Reconcile['capture'] = null, route: ErpRoute = 'extension'): void {
+function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', abortReason: string, reason: string, capture: Reconcile['capture'] = null): void {
   const rows = snapshot.lines.length;
   snapshot.erp = {
-    ...erpRunning(ERP_STEP_INDEX[stage], rows, route),
+    ...erpRunning(ERP_STEP_INDEX[stage], rows),
     status: 'aborted',
-    steps: erpSteps(ERP_STEP_INDEX[stage], 'failed', route),
+    steps: erpSteps(ERP_STEP_INDEX[stage], 'failed'),
     currentStage: stage,
-    progress: erpProgress(ERP_STEP_INDEX[stage], rows, rows, route),
+    progress: erpProgress(ERP_STEP_INDEX[stage], rows, rows),
     externalWait: 'none',
     outcome: 'none',
     abortReason,
@@ -311,29 +302,29 @@ function applyUncertainStop(snapshot: TaskSnapshot, stage: 'fill' | 'handover', 
 }
 
 // 严格回读不一致（`?fault=readback-mismatch`）：填写明细后的回读对不上，写入就此停下，结果不确定（服务端同此）。
-export function applyReadbackStop(snapshot: TaskSnapshot, route: ErpRoute = 'extension'): void {
-  applyUncertainStop(snapshot, 'fill', MISMATCH_ABORT_REASON, MISMATCH_STOP_REASON, null, route);
+export function applyReadbackStop(snapshot: TaskSnapshot): void {
+  applyUncertainStop(snapshot, 'fill', MISMATCH_ABORT_REASON, MISMATCH_STOP_REASON, null);
 }
 
 // 写入前就停下：阶段退回「去打印 / 去报销」，状态回到 idle 而 abortReason 有值（见合同 ErpSchema），
 // 所以这不是 aborted。填报页要认得这一种停下，否则用户会被留在一个已经关上的页面上。
 // 没有一次写入尝试走到报销系统，所以也没有记下报销系统账号（服务端同此）。
-export function applyStopBeforeWrite(snapshot: TaskSnapshot, route: ErpRoute = 'extension'): void {
+export function applyStopBeforeWrite(snapshot: TaskSnapshot): void {
   snapshot.stage = 'actions';
   snapshot.erp = {
     ...idleErp(),
-    steps: erpSteps(ERP_STEP_INDEX.navigate, 'failed', route),
+    steps: erpSteps(ERP_STEP_INDEX.navigate, 'failed'),
     currentStage: 'navigate',
-    progress: erpProgress(ERP_STEP_INDEX.navigate, snapshot.lines.length, 0, route),
+    progress: erpProgress(ERP_STEP_INDEX.navigate, snapshot.lines.length, 0),
     abortReason: BEFORE_WRITE_ABORT_REASON,
     allowedActions: ['refresh'],
   };
 }
 
 // 交接步中止（`?fault=erp-write-aborted`）：写入结果未知，停在对账等第一次对账。
-export function applyAbortAtHandover(snapshot: TaskSnapshot, route: ErpRoute = 'extension'): void {
+export function applyAbortAtHandover(snapshot: TaskSnapshot): void {
   // The mock has no ERP screenshot to serve, only the captured text.
-  applyUncertainStop(snapshot, 'handover', HANDOVER_ABORT_REASON, HANDOVER_STOP_REASON, { erpText: [HANDOVER_PAGE_TEXT], screenshotUrl: null }, route);
+  applyUncertainStop(snapshot, 'handover', HANDOVER_ABORT_REASON, HANDOVER_STOP_REASON, { erpText: [HANDOVER_PAGE_TEXT], screenshotUrl: null });
 }
 
 // T2（对账中）：原型 §1.10 的五行，No.3 的申请报销金额不一致（182.00 / 128.00）；合计 1264.00。

@@ -147,15 +147,13 @@ const STATES = [
   ['12-projects-book-empty', '?book=empty', '#/projects'],
   ['13-settings', '', '#/settings'],
   ['13-settings-legacy-failed', '?legacy=failed', '#/settings'],
-  ['13-settings-extension-paired', '?extension=paired', '#/settings'],
-  ['13-settings-extension-disconnected', '?extension=disconnected', '#/settings'],
+  ['13-settings-unpaired', '?pairing=none', '#/settings'],
   ['13-settings-reset-dialog', '', '#/settings', async (p, shot) => {
     await click(p, p.getByText('高级设置', { exact: true }));
     await shot('-advanced-open');
     await click(p, btn(p, '完全重置'));
   }],
   ['13-settings-password', '', '#/settings/password'],
-  ['14-extension-tutorial', '', '#/settings/tutorial'],
   ['15-admin', '', '#/admin'],
   ['16-auth-signed-out', '?auth=signed-out', '#/tasks'],
   ['16-auth-setup', '?auth=setup', '#/tasks'],

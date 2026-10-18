@@ -1,15 +1,16 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE } from '@baox/contract';
 import { App } from '../App';
 import { createMockAdapter, type Fault } from '../mock/mock-adapter';
 
-const STEP_TITLES = ['打开报销系统标签页', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '交接单据'];
+const STEP_TITLES = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
 
-// ?seed=erp has opened the task's ERP tab and is waiting for login. There is no separate start action.
-function renderErp(fault: Fault | null = null, erpLoginAutoMs = 60_000) {
+// ?seed=erp has started the browser and is waiting for login (the attended path, removed with #436). There is no
+// separate start action.
+function renderErp(fault: Fault | null = null) {
   window.location.hash = '#/task/T1/erp';
-  const adapter = createMockAdapter({ seed: 'erp', fault, erpStepMs: 5, erpLoginAutoMs });
+  const adapter = createMockAdapter({ seed: 'erp', fault, erpStepMs: 5 });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -87,13 +88,13 @@ describe('ERP 填报', () => {
     expect(screen.queryByRole('link', { name: '返回确认页' })).toBeNull();
   });
 
-  test('八个事实阶段按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页显示交接事实与逐条回读 9/9 一致', async () => {
+  test('八个事实阶段按顺序可见、没有「开始填报」；登录步有「我已登录，继续」并回传 stepToken；登录后自动写完，完成页显示暂存事实与逐条回读 9/9 一致', async () => {
     const adapter = renderErp();
     const confirmLogin = vi.spyOn(adapter, 'confirmLogin');
     const button = await waitingLogin();
     expect(within(progress()).getAllByRole('listitem').map((item) => item.getAttribute('aria-label'))).toEqual(STEP_TITLES);
     expect(screen.queryByRole('button', { name: '开始填报' })).toBeNull();
-    expect(stepItem('打开报销系统标签页').textContent).toContain('完成');
+    expect(stepItem('启动后台浏览器').textContent).toContain('完成');
     expect(stepItem('登录').textContent).toContain('等待你登录');
     expect(stepItem('导入发票').textContent).not.toContain('完成');
 
@@ -106,12 +107,12 @@ describe('ERP 填报', () => {
 
     window.location.hash = '#/task/T1/done';
     expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
-    // ADR-0028：交接时单据还没有保存，所以完成页没有单据编号。
+    // 暂存后单据还没有提交，所以完成页没有单据编号。
     expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
     expect(screen.getByTestId('erp-account').textContent).toBe('林颂宜（lin.songyi）');
     expect(screen.getByTestId('erp-tenant').textContent).toBe('安图特科技');
     expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
-    expect(screen.getByTestId('handover-completed').textContent).toBe(HANDOVER_COMPLETED_NOTICE);
+    expect(screen.getByTestId('handover-completed').textContent).toBe(DRAFT_HANDOVER_NOTICE);
     expect(screen.queryByTestId('human-review')).toBeNull();
     const table = screen.getByRole('table', { name: '逐条回读' });
     const bodyRows = within(table).getAllByRole('row').filter((row) => row.closest('tbody'));
@@ -136,15 +137,16 @@ describe('ERP 填报', () => {
     expect(stepItem('导入发票').textContent).toContain('5');
   });
 
-  test('从整单确认页点「去报销」：打开报销系统标签页后等待登录，服务端自己探测到登录也会自动写完', async () => {
+  test('从整单确认页点「去报销」：本地执行器自己登录，不等登录，一直写到暂存', async () => {
     window.location.hash = '#/task/T1/review';
-    const adapter = createMockAdapter({ seed: 'actions', fault: null, erpStepMs: 5, erpLoginAutoMs: 20 });
+    const adapter = createMockAdapter({ seed: 'actions', fault: null, erpStepMs: 5 });
     const start = vi.spyOn(adapter, 'startErpWrite');
     render(<App adapter={adapter} />);
     fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
     expect(await screen.findByRole('heading', { name: '填写报销单' })).toBeTruthy();
     expect(start).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: '开始填报' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '我已登录，继续' })).toBeNull();
     expect(await screen.findByRole('link', { name: '查看完成结果' })).toBeTruthy();
   });
 
@@ -174,7 +176,7 @@ describe('ERP 填报', () => {
     window.location.hash = '#/task/T1/erp';
     render(<App adapter={createMockAdapter({ seed: 'reconcile', fault: null })} />);
     expect(await screen.findByRole('heading', { name: '填写报销单' })).toBeTruthy();
-    expect(stepItem('交接单据').textContent).toContain('已中止');
+    expect(stepItem('暂存到报销系统').textContent).toContain('已中止');
     expect(screen.getByRole('alert').textContent).toContain('写入报销系统已停止');
     expect(screen.getByRole('link', { name: '进入对账' }).getAttribute('href')).toBe('#/task/T1/reconcile');
   });
@@ -223,7 +225,7 @@ describe('ERP 填报', () => {
 
   test('自动重新去报销时说明这是应用自己换了一张新单，第几次', async () => {
     window.location.hash = '#/task/T1/erp';
-    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
     const original = adapter.getSnapshot.bind(adapter);
     const notice = '上一次没有填完，应用已自动换一张新单重新填报（第 1 次）。';
     vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
@@ -244,7 +246,7 @@ describe('去报销系统查看暂存单', () => {
 
   function renderDone(review: typeof REVIEW | null) {
     window.location.hash = '#/task/T1/erp';
-    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
     const original = adapter.getSnapshot.bind(adapter);
     vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
       const snapshot = await original(taskId);
@@ -333,7 +335,7 @@ describe('写入结果不确定但暂存单内码已知', () => {
 
   function renderUnknown(review: typeof REVIEW | null) {
     window.location.hash = '#/task/T1/erp';
-    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
     const original = adapter.getSnapshot.bind(adapter);
     vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
       const snapshot = await original(taskId);
@@ -397,12 +399,12 @@ describe('去报销进度条', () => {
     expect(percents).toEqual([...percents].sort((a, b) => a - b));
     expect(pushed.filter((p) => p.percent === 100).every((p) => p.status === 'done')).toBe(true);
     expect(pushed.filter((p) => p.status !== 'done').every((p) => p.percent < 100)).toBe(true);
-    expect(screen.getByTestId('erp-progress-label').textContent).toBe('交接单据');
+    expect(screen.getByTestId('erp-progress-label').textContent).toBe('核对暂存单');
   });
 
   test('显示快照给出的行进度，不估算剩余时间', async () => {
     window.location.hash = '#/task/T1/erp';
-    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
     const original = adapter.getSnapshot.bind(adapter);
     vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
       const snapshot = await original(taskId);
@@ -416,7 +418,7 @@ describe('去报销进度条', () => {
 
   test('停下的去报销：进度条停在原处、标成出错；做完的标成完成', async () => {
     window.location.hash = '#/task/T1/erp';
-    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
     const original = adapter.getSnapshot.bind(adapter);
     let status: 'idle' | 'done' = 'idle';
     vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
@@ -434,7 +436,7 @@ describe('去报销进度条', () => {
 
   test('没有去报销作业时不显示进度条', async () => {
     window.location.hash = '#/task/T1/erp';
-    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+    const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
     const original = adapter.getSnapshot.bind(adapter);
     vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => ({ ...(await original(taskId)), erp: { ...(await original(taskId)).erp, progress: null } }));
     render(<App adapter={adapter} />);
@@ -443,15 +445,15 @@ describe('去报销进度条', () => {
   });
 });
 
-// 按路线的步骤文案 (#423): the page shows the step list of the route the job ran on, as the snapshot words it. The
-// 本地执行器 starts a background browser, signs in with the saved account and ends 暂存'd; the 浏览器扩展 keeps its list.
-describe('按路线的步骤文案', () => {
+// 步骤文案 (#423, ADR-0037): the page shows the one step list as the snapshot words it. The 本地执行器 starts a
+// background browser, signs in with the saved account and ends 暂存'd.
+describe('步骤文案', () => {
   const steps = () => within(progress()).getAllByRole('listitem').map((item) => [item.querySelector('.step-title')?.textContent, item.querySelector('.desc')?.textContent]);
   const MIDDLE = ['报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细'];
 
   test('本地执行器：第一步「启动后台浏览器」，登录用设置页保存的账号，最后一步「暂存到报销系统」，到 100% 时是核对暂存单', async () => {
     window.location.hash = '#/task/T1/review';
-    render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, erpStepMs: 5, erpRoute: 'local_executor' })} />);
+    render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, erpStepMs: 5 })} />);
     fireEvent.click(await screen.findByRole('button', { name: '去报销' }));
     await screen.findByRole('heading', { name: '填写报销单' });
 
@@ -460,24 +462,12 @@ describe('按路线的步骤文案', () => {
     expect(shown[0]![1]).toBe('在你的电脑上启动一个看不见的浏览器，专门用于这次报销。');
     expect(shown[1]![1]).toBe('用你在设置页保存的报销系统账号登录。');
     expect(shown.at(-1)![1]).toBe('你检查后自己提交');
-    expect(progress().textContent).not.toMatch(/浏览器扩展|标签页|交接单据|ERP|重试|[\u2013\u2014]/);
+    expect(progress().textContent).not.toMatch(/扩展|标签页|交接单据|ERP|重试|[\u2013\u2014]/);
 
-    // No login wait on this route: it runs through to the 暂存单.
+    // No login wait: it runs through to the 暂存单.
     await waitFor(() => expect(screen.getByTestId('erp-progress-percent').textContent).toBe('100%'));
     expect(screen.getByTestId('erp-progress-label').textContent).toBe('核对暂存单');
     expect(screen.queryByRole('button', { name: '我已登录，继续' })).toBeNull();
     expect(steps().map(([title]) => title)).toEqual(['启动后台浏览器', '登录', ...MIDDLE, '暂存到报销系统']);
-  });
-
-  test('浏览器扩展：步骤清单不变，第一步打开报销系统标签页，最后一步交接单据', async () => {
-    renderErp();
-    await waitingLogin();
-
-    const shown = steps();
-    expect(shown.map(([title]) => title)).toEqual(STEP_TITLES);
-    expect(shown[0]![1]).toBe('通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。');
-    expect(shown[1]![1]).toBe('在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。');
-    expect(shown.at(-1)![1]).toBe('不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。');
-    expect(progress().textContent).not.toMatch(/启动后台浏览器|暂存到报销系统/);
   });
 });

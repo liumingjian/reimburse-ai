@@ -1,4 +1,4 @@
-import { PAIRING_ERRORS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingFailureSchema, PairingTokenSchema, type PairingHolderKind } from '@baox/contract';
+import { PAIRING_ERRORS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingFailureSchema, PairingTokenSchema } from '@baox/contract';
 import { APP_UNREACHABLE } from './messages';
 
 // Redeeming the 配对码 (pairing code) the employee typed into the popup, and 撤销配对 (revoking the pairing) from it.
@@ -16,21 +16,19 @@ export type RedeemOptions = {
   code: string;
   browser?: string | null;
   version?: string;
-  // Only the baox 本地执行器 says what it is (`local_executor`); the extension leaves it out.
-  holder?: PairingHolderKind;
   // Injected so the test does not need a network; the service worker passes the global.
   fetchImpl?: typeof fetch;
 };
 
 const NETWORK_REFUSAL = { ok: false as const, code: 'network_error', message: `${APP_UNREACHABLE}然后再点一次配对。` };
 
-export async function redeemPairingCode({ origin, code, browser = null, version = CLIENT_VERSION, holder, fetchImpl = fetch }: RedeemOptions): Promise<PairingOutcome> {
+export async function redeemPairingCode({ origin, code, browser = null, version = CLIENT_VERSION, fetchImpl = fetch }: RedeemOptions): Promise<PairingOutcome> {
   let response: Response;
   try {
     response = await fetchImpl(`${origin}${PAIRING_PATH}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code, browser, version, ...(holder ? { holder } : {}) }),
+      body: JSON.stringify({ code, browser, version }),
     });
   } catch {
     return NETWORK_REFUSAL;

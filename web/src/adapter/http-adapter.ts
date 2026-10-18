@@ -180,7 +180,7 @@ export function parseLegacyImportActionResponse(status: number, body: unknown): 
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, legacyImport: null };
 }
 
-// 扩展配对 (extension pairing): the GET is a read (401 throws UnauthenticatedError).
+// 配对 (pairing with the 本地执行器): the GET is a read (401 throws UnauthenticatedError).
 export function parseExtensionPairingResponse(status: number, body: unknown): PairingView {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`配对情况加载失败（HTTP ${status}）`);

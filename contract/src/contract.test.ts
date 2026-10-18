@@ -5,7 +5,7 @@ import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached, type TaskStage } from '.
 import { UrlSchema } from './primitives';
 import { clientVersionRefusal } from './channel';
 import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema } from './extension';
-import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_EXTENSION_STEPS, ERP_HANDOVER_STEP_COPY, ERP_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
+import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
 describe('整单确认表', () => {
@@ -115,8 +115,7 @@ describe('交接文案', () => {
   });
 
   test('交接步、全部写入步骤与任务列表徽标都不再说草稿', () => {
-    expect(ERP_HANDOVER_STEP_COPY.key).toBe('handover');
-    for (const text of [...[...ERP_EXTENSION_STEPS, ...ERP_STEPS].flatMap((step) => [step.title, step.description]), ...KERNEL_PHASES]) {
+    for (const text of [...ERP_STEPS.flatMap((step) => [step.title, step.description]), ...KERNEL_PHASES]) {
       expect(text).not.toContain('草稿');
     }
   });

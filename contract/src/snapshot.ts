@@ -842,14 +842,6 @@ export const ERP_ALLOWED_ACTIONS = ['refresh', 'confirm_login', 'cancel'] as con
 export const ErpAllowedActionSchema = z.enum(ERP_ALLOWED_ACTIONS);
 export type ErpAllowedAction = z.infer<typeof ErpAllowedActionSchema>;
 
-// The hand-over step (交接单据, hand over the bill) closes 去报销: baox fills the form, runs the strict read-back and
-// releases automation control. It never clicks 保存 or submits the claim (ADR-0028).
-export const ERP_HANDOVER_STEP_COPY = {
-  key: 'handover',
-  title: '交接单据',
-  description: '不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。',
-} as const;
-
 // The 本地执行器's last step: the strict read-back, 暂存 (the `save` event, ADR-0029) and 核对暂存单. The bill waits in
 // the 报销系统 as a 暂存单 and submitting it is the employee's job. It holds the `handover` slot, the step that closes
 // 去报销.
@@ -866,15 +858,6 @@ const ERP_SHARED_STEPS = [
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。' },
-] as const;
-
-// The 浏览器扩展's list, ending in 交接单据. No job is worded with it (ADR-0037): it stays only for the web mock's
-// extension route and goes with it (#437).
-export const ERP_EXTENSION_STEPS = [
-  { key: 'chromium', title: '打开报销系统标签页', description: '通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。' },
-  { key: 'login', title: '登录', description: '在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。' },
-  ...ERP_SHARED_STEPS,
-  ERP_HANDOVER_STEP_COPY,
 ] as const;
 
 // The one 去报销 step list (ADR-0037), every job's.

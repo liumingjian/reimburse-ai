@@ -35,7 +35,7 @@ import { createPendingFlow } from './flows/pending';
 import { createPrintFlow } from './flows/print';
 import { createProjectFlow } from './flows/project';
 import { createErpCredentialsFlow } from './erp-credentials';
-import { createExtensionPairingFlow } from './extension';
+import { createPairingFlow } from './pairing';
 import { createLegacyImportFlow } from './legacy-import';
 import type { MockOptions } from './options';
 import type { LocalExecutorPort } from '../adapter/local-executor-port';
@@ -59,7 +59,7 @@ declare global {
   }
 }
 
-// `localExecutor`: the 本地执行器 the mock plays on this PC (`./extension.ts`), for `App`'s `localExecutor`.
+// `localExecutor`: the 本地执行器 the mock plays on this PC (`./pairing.ts`), for `App`'s `localExecutor`.
 export type MockAdapter = AppAdapter & MockHooks & { localExecutor: LocalExecutorPort };
 
 export function installMockHooks(target: Window, adapter: MockAdapter): void {
@@ -146,7 +146,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     return { value: HOME_CITY, source: 'network' };
   };
 
-  const pairing = createExtensionPairingFlow(options);
+  const pairing = createPairingFlow(options);
   const adapter: AppAdapter = {
     // The session reads memory, like snapshots: a disconnect shows up on the task list (banner), not at the gate.
     getSession: async () => auth.session(),
@@ -263,7 +263,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...pairing.flow,
     ...createErpCredentialsFlow(),
     ...createPrintFlow(bus),
-    ...createErpFlow(bus),
+    ...createErpFlow(bus, pairing.paired),
   };
 
   // 断开期间动作不送达：统一包一层，失败原因由页面就地显示。

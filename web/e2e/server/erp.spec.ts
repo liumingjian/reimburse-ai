@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
@@ -45,26 +45,32 @@ async function confirmedTask(page: Page): Promise<string> {
   return taskId;
 }
 
-test('浏览器扩展不可用时，设置页返回原报销任务并保留选择', async ({ page }) => {
+// Without a paired 本地执行器 the server refuses 去报销 with a link to the 设置页 (ADR-0037, #435). The e2e server
+// always has an executor injected, so the refusal is played by the route; the page shows it in place, links to the
+// 设置页, and the 设置页 offers the way back without starting anything (#437).
+test('没有配对本地执行器时，去报销被拒绝并给出去设置页的链接，设置页返回原报销任务并保留选择', async ({ page }) => {
   await signIn(page);
   const taskId = await confirmedTask(page);
   const before = await snapshotOf(page, taskId);
   let starts = 0;
   await page.route(`**/api/tasks/${taskId}/actions/start-erp-write`, async (route) => {
     starts += 1;
-    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'extension_not_paired', message: '还没有配对浏览器扩展，所以现在去报销不了。' } }) });
+    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' } }) });
   });
 
   await page.goto(`/#/task/${taskId}/review`);
-  await page.getByRole('button', { name: '去报销', exact: true }).click();
+  const card = page.getByRole('region', { name: '去报销' });
+  await card.getByRole('button', { name: '去报销', exact: true }).click();
+  await expect(card.getByRole('alert')).toContainText(ERP_ACTION_ERRORS.notPaired);
+  await expect(page).toHaveURL(new RegExp(`/#/task/${taskId}/review$`));
 
+  await card.getByRole('link', { name: '去设置页' }).click();
   const returnTo = `#/task/${taskId}/review`;
   await expect(page).toHaveURL(new RegExp(`/#/settings\\?returnTo=${encodeURIComponent(returnTo)}$`));
+  await expect(page.getByRole('region', { name: 'baox 本地执行器' })).toBeVisible();
   await page.getByRole('link', { name: '返回报销任务' }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/#/task/${taskId}/review\\?extensionSetup=1$`));
-  await expect(page.getByRole('region', { name: '扩展连接检查' })).toContainText('扩展尚未连接');
-  await expect(page.getByRole('link', { name: '设置浏览器扩展' })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/#/task/${taskId}/review$`));
   await expect(page.getByTestId('review-purpose')).toContainText(before.projectAssignment.purpose ?? '');
 
   const after = await snapshotOf(page, taskId);

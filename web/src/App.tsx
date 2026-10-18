@@ -3,7 +3,6 @@ import { merge as mergeCarbonFlags } from '@carbon/feature-flags';
 import { FeatureFlags } from '@carbon/react';
 import { type AppAdapter } from '@baox/contract';
 import { AppProvider, useSession } from './adapter/context';
-import type { ExtensionBridge } from './adapter/extension-bridge';
 import type { LocalExecutorPort } from './adapter/local-executor-port';
 import { AppStore } from './adapter/store';
 import { VALIDATE_SNAPSHOTS } from './env';
@@ -11,7 +10,6 @@ import { AdminPage, ADMIN_COPY } from './pages/AdminPage';
 import { AuthPage, AuthPending, ChangePasswordPage } from './pages/AuthPage';
 import { ProjectBookPage } from './pages/ProjectBookPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { ExtensionTutorialPage } from './pages/ExtensionTutorialPage';
 import { TaskListPage } from './pages/TaskListPage';
 import { PAGE_COPY, TaskRoute } from './pages/TaskRoute';
 import { navigate, useRoute, type Route } from './router';
@@ -32,8 +30,6 @@ function titleOf(route: Route): string {
       return '设置';
     case 'password':
       return '修改密码';
-    case 'settingsTutorial':
-      return '浏览器扩展安装教程';
     case 'admin':
       return ADMIN_COPY.title;
     case 'task':
@@ -64,12 +60,10 @@ function Routes() {
       return <SettingsPage {...(route.returnTo ? { returnTo: route.returnTo } : {})} />;
     case 'password':
       return <ChangePasswordPage required={false} />;
-    case 'settingsTutorial':
-      return <ExtensionTutorialPage />;
     case 'admin':
       return <AdminPage />;
     case 'task':
-      return <TaskRoute key={route.taskId} taskId={route.taskId} page={route.page} fromExtensionSetup={route.fromExtensionSetup ?? false} />;
+      return <TaskRoute key={route.taskId} taskId={route.taskId} page={route.page} />;
     case 'redirect':
       return null;
   }
@@ -84,15 +78,15 @@ function AuthGate({ children }: { children: ReactNode }) {
   return <AuthPending error={session.status === 'error' ? session.error : null} />;
 }
 
-// `bridge`: how pages reach the 浏览器扩展 (browser extension), see `adapter/extension-bridge.ts`; `localExecutor`: how
-// they reach the 本地执行器 on this PC, see `adapter/local-executor-port.ts`. Left out, nothing ever answers.
-export function App({ adapter, bridge, localExecutor }: { adapter: AppAdapter; bridge?: ExtensionBridge; localExecutor?: LocalExecutorPort }) {
+// `localExecutor`: how pages reach the 本地执行器 on this PC, see `adapter/local-executor-port.ts`. Left out, nothing
+// ever answers.
+export function App({ adapter, localExecutor }: { adapter: AppAdapter; localExecutor?: LocalExecutorPort }) {
   const store = useMemo(() => new AppStore(adapter, { validate: VALIDATE_SNAPSHOTS }), [adapter]);
   // Carbon 弹层默认用两个写着英文「Focus sentinel」的隐藏元素兜住焦点；打开这个开关改用不带哨兵元素的焦点循环。
   // 弹层（Modal）读这里的上下文开关；OverflowMenu 的浮层读全局开关，见文件顶部的 mergeCarbonFlags。
   return (
     <FeatureFlags enableFocusWrapWithoutSentinels>
-      <AppProvider store={store} {...(bridge ? { bridge } : {})} {...(localExecutor ? { localExecutor } : {})}>
+      <AppProvider store={store} {...(localExecutor ? { localExecutor } : {})}>
         <AuthGate>
           <Routes />
         </AuthGate>
