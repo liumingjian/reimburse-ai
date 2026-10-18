@@ -1,5 +1,7 @@
 # The local app keeps append-only facts in one SQLite file and imports only what outlives a legacy task
 
+**Status (2026-10-18): the legacy-import half is superseded by [ADR-0038](0038-legacy-import-removed-test-stage-data-not-kept.md); the SQLite facts half stands.**
+
 The new baox local app stores structured facts in SQLite and file bytes on disk, content-addressed, under a new data directory `~/.baox-app/`. Almost every table is append-only, each 报销任务 (reimbursement task) pins the rules it was created with by content hash, and a one-time import carries over from the legacy `~/.baox` only what still matters without its tasks: identities, 常驻城市 (home city), 个人项目簿 (personal project book), and the 发票占用 (invoice occupancy) of legacy tasks that touched ERP. Decided in [#151](https://github.com/liumingjian/reimburse-ai/issues/151).
 
 ## Decisions

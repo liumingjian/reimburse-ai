@@ -1,5 +1,7 @@
 # The 本地执行器 is installed on its own, and keeps itself on the server's program
 
+**Amended 2026-10-18 ([ADR-0037](0037-local-executor-is-the-only-way-to-reimburse.md)): the browser extension is gone.** Mentions of it below are history: there is no switch to the extension, and the version gate is the 本地执行器's own.
+
 **Status: proposed (2026-10-15).** Decided with the owner while settling line 2 item 6 of `docs/design/erp-headless-v1.md`:
 how the 本地执行器 of ADR-0033 reaches an employee's PC and stays current. Employees use both Windows and macOS.
 
