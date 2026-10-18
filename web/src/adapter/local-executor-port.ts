@@ -20,8 +20,11 @@ export type LocalExecutorPort = {
 /** A port nothing ever answers on: pages rendered without one. */
 export const SILENT_LOCAL_EXECUTOR_PORT: LocalExecutorPort = { probe: async () => null, pair: async () => null };
 
-// The executor answers at once; anything slower is not there. Pairing waits for its round trip to the app.
-export const LOCAL_EXECUTOR_PROBE_TIMEOUT_MS = 1_500;
+// The executor answers at once, and with nothing on 47319 the browser refuses at once. A question can still hang:
+// Chrome and Edge may hold a page's first request to this PC behind a permission prompt (local network access) until the
+// employee answers it. So a probe waits long enough for that answer, and the 设置页 shows the install command in the
+// meantime and asks again when the employee comes back to the window. Pairing waits for its round trip to the app.
+export const LOCAL_EXECUTOR_PROBE_TIMEOUT_MS = 60_000;
 export const LOCAL_EXECUTOR_PAIR_TIMEOUT_MS = 15_000;
 
 export type LoopbackPortOptions = { fetch?: typeof fetch; probeTimeoutMs?: number; pairTimeoutMs?: number };

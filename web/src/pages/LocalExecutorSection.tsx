@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, InlineNotification, RadioButton, RadioButtonGroup } from '@carbon/react';
 import { Copy } from '@carbon/icons-react';
-import { INSTALL_SYSTEMS, localExecutorInstallCommand, localExecutorUninstallCommand, type InstallSystem, type LocalExecutorPairingState } from '@baox/contract';
+import { INSTALL_SYSTEMS, localExecutorInstallCommand, localExecutorUninstallCommand, type InstallSystem, type LocalExecutorPairAnswer, type LocalExecutorPairingState } from '@baox/contract';
 import { useAppStore, useExtensionPairing, useLocalExecutorPort, useSession } from '../adapter/context';
 import { ActionGroup } from '../shell/ActionGroup';
 import { copyText } from '../shell/clipboard';
@@ -12,14 +12,19 @@ import { endsOtherMethod, InstallTrouble, SwitchMethodDialog } from './reimburse
 // baox 本地执行器 (ADR-0033, ADR-0035 amended 2026-10-17): the program that does 去报销 on this PC in a browser nobody
 // sees, instead of the 浏览器扩展. The employee picks Mac or Windows (neither is picked for them) and pastes the one
 // command this section shows into Terminal or PowerShell; the 配对码 is inside it, and the script installs, pairs and
-// starts the executor. While that code is pending this section reads the pairing again and again, and turns to 已连接
-// by itself when the pairing lands.
+// starts the executor. While a 配对码 is pending this section reads the pairing again and again, and turns to 已连接
+// by itself when the pairing lands. A code that expires or is replaced takes its command off the page with one
+// sentence. The command lives in the 设置页 (`InstallCommand`), so flipping to the 浏览器扩展 and back keeps it.
 //
-// An executor already running on this PC answers on 47319 (`adapter/local-executor-port.ts`): then the section offers
-// one click instead, which issues a code and hands it straight over. An executor paired to another 应用账号 is asked
-// about first. An account has one pairing at a time, so pairing the executor replaces the extension's: with the
-// extension paired, both actions ask first (`SwitchMethodDialog`, #428). 已连接 is the server's word: the pairing's
-// holder is the 本地执行器.
+// An executor running on this PC answers on 47319 (`adapter/local-executor-port.ts`): then the section offers one click
+// instead, which issues a code and hands it straight over. It is asked again whenever the employee comes back to the
+// window, since a browser may hold the first question behind its own permission prompt (Chrome's local network
+// access) and answer late or not at all. An executor paired to another 应用账号, and an account connected through
+// another PC's executor, are asked about first. An account has one pairing at a time, so pairing the executor replaces
+// the extension's: with the extension paired, both actions ask first (`SwitchMethodDialog`, #428). 已连接 is the
+// server's word: the pairing's holder is the 本地执行器. Connected, the section offers 撤销配对 (uninstalling never
+// revokes, story 35), and generating a new install command moves into 「安装遇到问题？」 and asks first, since it
+// disconnects the executor that works.
 //
 // The section is one sentence, its one action and the 配对码 hint (#429). The 报销系统 account form the executor signs
 // in with sits here too, since only this method uses it; the install steps and the uninstall command are folded into
@@ -41,16 +46,30 @@ export const LOCAL_EXECUTOR_COPY = {
   copied: '命令已复制。',
   copyByHand: '没能复制，请选中上面的命令手动复制。',
   waiting: '等待安装完成…',
+  expired: '配对码已过期，请重新生成安装命令。',
   connected: '已连接',
   connectedLead: '本地执行器已经连上这个账号，回到报销任务就可以去报销。',
   found: '这台电脑上已经装好了本地执行器，点一下就能把它连到这个账号，不用再打开终端。',
   connectHere: '连接这台电脑的执行器',
   connecting: '正在连接这台电脑的执行器…',
   silent: '这台电脑上的本地执行器没有应答。请用下面的安装命令再装一次。',
+  pairFailed: '这台电脑上的 baox 本地执行器没能完成配对，请再点一次。',
   otherAccountTitle: '换成这个账号',
   otherAccountBody: '这台电脑上的本地执行器正在替另一个应用账号去报销。连接后它改为替这个账号去报销，原来的账号就不能再用它了。',
   otherAccountConfirm: '换成这个账号',
+  otherPcTitle: '换成这台电脑',
+  otherPcBody: '这个账号现在连着另一台电脑上的本地执行器。连接这台电脑的执行器后，那一台就断开了，不能再替你去报销。',
+  otherPcConfirm: '换成这台电脑',
   replaces: '一个账号同时只有一个配对：本地执行器配对后，原来配对的浏览器扩展会断开。',
+  revoke: '撤销配对',
+  revokeTitle: '撤销配对',
+  revokeBody: '撤销之后，本地执行器不能再替你去报销，要重新连接才行。你在这里仍然是登录状态。',
+  revokeConfirm: '确定撤销',
+  reinstallTitle: '重新安装',
+  reinstallLead: '本地执行器出了问题、要重新装一次时，在这里生成新的安装命令。',
+  reinstallDialogTitle: '重新生成安装命令',
+  reinstallBody: '重新生成后，现在连着的本地执行器会断开，要运行新的安装命令才能再连上。',
+  reinstallConfirm: '重新生成',
   stepsTitle: '安装步骤',
   steps: [
     '在上面选你的电脑是 Mac 还是 Windows，点「生成安装命令」。',
@@ -64,10 +83,25 @@ export const LOCAL_EXECUTOR_COPY = {
   uninstallCommand: '卸载命令',
 } as const;
 
-// How often the pairing is read again while an install command's code is pending.
+// How often the pairing is read again while a 配对码 is pending.
 export const LOCAL_EXECUTOR_POLL_MS = 1_500;
 
-export function LocalExecutorSection() {
+/** The install command this section generated, and when its 配对码 expires (the pairing read names the same time). */
+export type InstallCommand = { system: InstallSystem; text: string; expiresAt: string | null };
+
+const HAN = /\p{Script=Han}/u;
+
+// The executor's refusals (busy, pairing, a code the app did not take) carry a Chinese sentence. An unexpected error
+// on the executor, or anything that is not a Chinese sentence, is never shown as it came.
+function refusalSentence(answer: Extract<LocalExecutorPairAnswer, { ok: false }>): string {
+  return answer.code !== 'local_executor_error' && HAN.test(answer.message) ? answer.message : LOCAL_EXECUTOR_COPY.pairFailed;
+}
+
+const unexpired = (expiresAt: string | null) => !expiresAt || Date.parse(expiresAt) > Date.now();
+
+type Agreed = { switched?: boolean; otherPc?: boolean; otherAccount?: boolean };
+
+export function LocalExecutorSection({ command, onCommand }: { command: InstallCommand | null; onCommand: (command: InstallCommand | null) => void }) {
   const store = useAppStore();
   const port = useLocalExecutorPort();
   const pairing = useExtensionPairing();
@@ -75,43 +109,78 @@ export function LocalExecutorSection() {
   // What the executor on this PC said: undefined while asking, null when nothing answered.
   const [probe, setProbe] = useState<LocalExecutorPairingState | null | undefined>(undefined);
   const [system, setSystem] = useState<InstallSystem | null>(null);
-  const [command, setCommand] = useState<{ system: InstallSystem; text: string } | null>(null);
-  // This section issued the code now pending, so it reads the pairing until that code lands.
-  const [mine, setMine] = useState(false);
-  const [busy, setBusy] = useState<'generate' | 'connect' | null>(null);
+  const [busy, setBusy] = useState<'generate' | 'connect' | 'revoke' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  // Which action waits for the employee to agree to end the extension's pairing.
-  const [switching, setSwitching] = useState<'generate' | 'connect' | null>(null);
+  // Which question the employee is answering before an action goes ahead.
+  const [asking, setAsking] = useState<'switchGenerate' | 'switchConnect' | 'otherPc' | 'otherAccount' | 'reinstall' | 'revoke' | null>(null);
+  const agreedSoFar = useRef<Agreed>({});
   const [copied, setCopied] = useState<boolean | null>(null);
+  // Re-renders once a pending 配对码 reaches its expiry.
+  const [, setTick] = useState(0);
+
+  // One question to 47319 at a time. A slow answer (the browser asking the employee first) is kept when it comes.
+  const live = useRef(true);
+  const probing = useRef(false);
+  const reprobe = useCallback(() => {
+    if (probing.current) return;
+    probing.current = true;
+    void port.probe().then((state) => {
+      probing.current = false;
+      if (live.current) setProbe(state);
+    });
+  }, [port]);
 
   useEffect(() => {
-    let live = true;
-    void port.probe().then((state) => {
-      if (live) setProbe(state);
-    });
-    return () => {
-      live = false;
+    live.current = true;
+    reprobe();
+    const onFocus = () => reprobe();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') reprobe();
     };
-  }, [port]);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      live.current = false;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [reprobe]);
 
   const view = pairing.data;
   const connected = view?.status === 'paired' && view.holder === 'local_executor';
-  const pending = mine && view?.status === 'waiting' && (!view.codeExpiresAt || Date.parse(view.codeExpiresAt) > Date.now());
+  const thisPcHolds = probe?.paired === true && probe.accountId === accountId;
+  const waiting = view?.status === 'waiting' && unexpired(view.codeExpiresAt);
+  const pending = command !== null && waiting && view.codeExpiresAt === command.expiresAt;
 
   useEffect(() => {
-    if (!pending) return;
+    if (!waiting) return;
     const timer = setInterval(() => void store.loadExtensionPairing(), LOCAL_EXECUTOR_POLL_MS);
     return () => clearInterval(timer);
-  }, [pending, store]);
+  }, [waiting, store]);
+
+  const expiresAt = waiting ? view.codeExpiresAt : null;
+  useEffect(() => {
+    if (!expiresAt) return;
+    const timer = setTimeout(() => setTick((tick) => tick + 1), Math.max(0, Date.parse(expiresAt) - Date.now()) + 50);
+    return () => clearTimeout(timer);
+  }, [expiresAt]);
+
+  // The command did its job once the executor holds the pairing.
+  useEffect(() => {
+    if (connected && command) onCommand(null);
+  }, [connected, command, onCommand]);
 
   const generate = async (agreed: boolean) => {
     if (!system) return;
     if (!agreed && endsOtherMethod(view, 'local_executor')) {
-      setSwitching('generate');
+      setAsking('switchGenerate');
       return;
     }
-    setSwitching(null);
+    if (!agreed && connected) {
+      setAsking('reinstall');
+      return;
+    }
+    setAsking(null);
     setBusy('generate');
     setError(null);
     setCopied(null);
@@ -121,22 +190,25 @@ export function LocalExecutorSection() {
       setError(outcome.error.message);
       return;
     }
-    setMine(true);
-    setCommand(outcome.pairing.code ? { system, text: localExecutorInstallCommand(system, outcome.pairing.activeOrigin, outcome.pairing.code) } : null);
+    const code = outcome.pairing.code;
+    onCommand(code ? { system, text: localExecutorInstallCommand(system, outcome.pairing.activeOrigin, code), expiresAt: outcome.pairing.codeExpiresAt } : null);
   };
 
-  // `switched`: the employee agreed to end the extension's pairing; `agreed`: to take the executor from another account.
-  const connect = async (agreed: boolean, switched = false) => {
-    if (!switched && endsOtherMethod(view, 'local_executor')) {
-      setSwitching('connect');
+  const connect = async (agreed: Agreed = {}) => {
+    agreedSoFar.current = agreed;
+    if (!agreed.switched && endsOtherMethod(view, 'local_executor')) {
+      setAsking('switchConnect');
       return;
     }
-    setSwitching(null);
-    if (!agreed && probe?.paired && probe.accountId !== accountId) {
-      setConfirming(true);
+    if (!agreed.otherPc && connected && !thisPcHolds) {
+      setAsking('otherPc');
       return;
     }
-    setConfirming(false);
+    if (!agreed.otherAccount && probe?.paired && probe.accountId !== accountId) {
+      setAsking('otherAccount');
+      return;
+    }
+    setAsking(null);
     setBusy('connect');
     setError(null);
     const outcome = await store.extensionPairingAction((adapter) => adapter.createExtensionPairingCode());
@@ -156,24 +228,81 @@ export function LocalExecutorSection() {
     }
     if (!answer.ok) {
       setBusy(null);
-      setError(answer.message);
+      setError(refusalSentence(answer));
       return;
     }
-    setMine(true);
     setProbe({ paired: true, accountId: answer.accountId });
     await store.awaitExtensionConnected();
     setBusy(null);
   };
 
+  const agreeAndConnect = (more: Agreed) => void connect({ ...agreedSoFar.current, ...more });
+
+  const revoke = async () => {
+    setBusy('revoke');
+    setError(null);
+    const outcome = await store.extensionPairingAction((adapter) => adapter.revokeExtensionPairing());
+    setBusy(null);
+    if (!outcome.ok) {
+      setError(outcome.error.message);
+      return;
+    }
+    setAsking(null);
+    // The executor here, if any, has just lost its pairing: ask it again.
+    reprobe();
+  };
+
   const answering = probe !== undefined && probe !== null;
+  const offerConnect = answering && !(connected && thisPcHolds);
+  const install = (
+    <>
+      <RadioButtonGroup legendText={LOCAL_EXECUTOR_COPY.system} name="local-executor-system" orientation="horizontal" valueSelected={system ?? ''} onChange={(value) => setSystem(value as InstallSystem)}>
+        <RadioButton id="local-executor-system-mac" value="mac" labelText={LOCAL_EXECUTOR_COPY.systems.mac} />
+        <RadioButton id="local-executor-system-windows" value="windows" labelText={LOCAL_EXECUTOR_COPY.systems.windows} />
+      </RadioButtonGroup>
+      <ActionGroup caption={endsOtherMethod(view, 'local_executor') ? LOCAL_EXECUTOR_COPY.replaces : undefined}>
+        <Button kind={command || connected ? 'secondary' : 'primary'} size="md" disabled={system === null || busy !== null} onClick={() => void generate(false)}>
+          {LOCAL_EXECUTOR_COPY.generate}
+        </Button>
+      </ActionGroup>
+      {command && pending ? (
+        <div className="app-install-command" aria-label={LOCAL_EXECUTOR_COPY.command} role="group">
+          <p>{LOCAL_EXECUTOR_COPY.pasteHint[command.system]}</p>
+          <pre className="app-code app-select-all">{command.text}</pre>
+          <ActionGroup
+            caption={
+              <span role="status" aria-live="polite">
+                {copied === null ? LOCAL_EXECUTOR_COPY.codeHint : copied ? LOCAL_EXECUTOR_COPY.copied : LOCAL_EXECUTOR_COPY.copyByHand}
+              </span>
+            }
+          >
+            <Button kind="secondary" size="md" renderIcon={Copy} onClick={() => void copyText(command.text).then(setCopied)}>
+              {LOCAL_EXECUTOR_COPY.copy}
+            </Button>
+          </ActionGroup>
+          <p className="app-loading" role="status">
+            {LOCAL_EXECUTOR_COPY.waiting}
+          </p>
+        </div>
+      ) : null}
+      {command && !pending && !connected ? <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={LOCAL_EXECUTOR_COPY.expired} /> : null}
+    </>
+  );
   return (
     <section className="app-form-section" aria-label={LOCAL_EXECUTOR_COPY.title}>
       <h2 className="app-section-title">{LOCAL_EXECUTOR_COPY.title}</h2>
       <p>{LOCAL_EXECUTOR_COPY.lead}</p>
       {connected ? (
-        <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={LOCAL_EXECUTOR_COPY.connected} subtitle={LOCAL_EXECUTOR_COPY.connectedLead} />
+        <>
+          <InlineNotification kind="success" role="status" lowContrast hideCloseButton statusIconDescription="成功" title={LOCAL_EXECUTOR_COPY.connected} subtitle={LOCAL_EXECUTOR_COPY.connectedLead} />
+          <ActionGroup className="app-revoke-group">
+            <Button kind="danger--tertiary" size="md" disabled={busy !== null} onClick={() => setAsking('revoke')}>
+              {LOCAL_EXECUTOR_COPY.revoke}
+            </Button>
+          </ActionGroup>
+        </>
       ) : null}
-      {answering && !connected ? (
+      {offerConnect ? (
         <>
           <p>{LOCAL_EXECUTOR_COPY.found}</p>
           {busy === 'connect' ? (
@@ -181,45 +310,24 @@ export function LocalExecutorSection() {
               {LOCAL_EXECUTOR_COPY.connecting}
             </p>
           ) : null}
-          <ActionGroup caption={LOCAL_EXECUTOR_COPY.replaces}>
-            <Button kind="primary" size="md" disabled={busy !== null} onClick={() => void connect(false)}>
+          <ActionGroup caption={endsOtherMethod(view, 'local_executor') ? LOCAL_EXECUTOR_COPY.replaces : undefined}>
+            <Button kind="primary" size="md" disabled={busy !== null} onClick={() => void connect()}>
               {LOCAL_EXECUTOR_COPY.connectHere}
             </Button>
           </ActionGroup>
         </>
       ) : null}
-      {!answering ? (
-        <>
-          <RadioButtonGroup legendText={LOCAL_EXECUTOR_COPY.system} name="local-executor-system" orientation="horizontal" valueSelected={system ?? ''} onChange={(value) => setSystem(value as InstallSystem)}>
-            <RadioButton id="local-executor-system-mac" value="mac" labelText={LOCAL_EXECUTOR_COPY.systems.mac} />
-            <RadioButton id="local-executor-system-windows" value="windows" labelText={LOCAL_EXECUTOR_COPY.systems.windows} />
-          </RadioButtonGroup>
-          <ActionGroup caption={LOCAL_EXECUTOR_COPY.replaces}>
-            <Button kind={command ? 'secondary' : 'primary'} size="md" disabled={system === null || busy !== null} onClick={() => void generate(false)}>
-              {LOCAL_EXECUTOR_COPY.generate}
-            </Button>
-          </ActionGroup>
-          {command && !connected ? (
-            <div className="app-install-command" aria-label={LOCAL_EXECUTOR_COPY.command} role="group">
-              <p>{LOCAL_EXECUTOR_COPY.pasteHint[command.system]}</p>
-              <pre className="app-code app-select-all">{command.text}</pre>
-              <ActionGroup caption={copied === null ? LOCAL_EXECUTOR_COPY.codeHint : copied ? LOCAL_EXECUTOR_COPY.copied : LOCAL_EXECUTOR_COPY.copyByHand}>
-                <Button kind="secondary" size="md" renderIcon={Copy} onClick={() => void copyText(command.text).then(setCopied)}>
-                  {LOCAL_EXECUTOR_COPY.copy}
-                </Button>
-              </ActionGroup>
-              {pending ? (
-                <p className="app-loading" role="status">
-                  {LOCAL_EXECUTOR_COPY.waiting}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </>
-      ) : null}
-      {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
+      {!answering && !connected ? install : null}
+      {error && asking !== 'revoke' ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
       <ErpCredentialsSection />
       <InstallTrouble>
+        {connected ? (
+          <>
+            <h3>{LOCAL_EXECUTOR_COPY.reinstallTitle}</h3>
+            <p>{LOCAL_EXECUTOR_COPY.reinstallLead}</p>
+            {install}
+          </>
+        ) : null}
         <h3>{LOCAL_EXECUTOR_COPY.stepsTitle}</h3>
         <ol aria-label={LOCAL_EXECUTOR_COPY.stepsTitle}>
           {LOCAL_EXECUTOR_COPY.steps.map((step) => (
@@ -237,18 +345,38 @@ export function LocalExecutorSection() {
             ))
           : null}
       </InstallTrouble>
-      {switching ? (
-        <SwitchMethodDialog to="local_executor" onConfirm={() => void (switching === 'generate' ? generate(true) : connect(false, true))} onCancel={() => setSwitching(null)} />
+      {asking === 'switchGenerate' || asking === 'switchConnect' ? (
+        <SwitchMethodDialog to="local_executor" onConfirm={() => (asking === 'switchGenerate' ? void generate(true) : agreeAndConnect({ switched: true }))} onCancel={() => setAsking(null)} />
       ) : null}
-      {confirming ? (
-        <ConfirmDialog
-          title={LOCAL_EXECUTOR_COPY.otherAccountTitle}
-          confirmLabel={LOCAL_EXECUTOR_COPY.otherAccountConfirm}
-          busy={busy === 'connect'}
-          onConfirm={() => void connect(true, true)}
-          onCancel={() => setConfirming(false)}
-        >
+      {asking === 'otherPc' ? (
+        <ConfirmDialog title={LOCAL_EXECUTOR_COPY.otherPcTitle} confirmLabel={LOCAL_EXECUTOR_COPY.otherPcConfirm} busy={busy === 'connect'} onConfirm={() => agreeAndConnect({ otherPc: true })} onCancel={() => setAsking(null)}>
+          <p>{LOCAL_EXECUTOR_COPY.otherPcBody}</p>
+        </ConfirmDialog>
+      ) : null}
+      {asking === 'otherAccount' ? (
+        <ConfirmDialog title={LOCAL_EXECUTOR_COPY.otherAccountTitle} confirmLabel={LOCAL_EXECUTOR_COPY.otherAccountConfirm} busy={busy === 'connect'} onConfirm={() => agreeAndConnect({ otherAccount: true })} onCancel={() => setAsking(null)}>
           <p>{LOCAL_EXECUTOR_COPY.otherAccountBody}</p>
+        </ConfirmDialog>
+      ) : null}
+      {asking === 'reinstall' ? (
+        <ConfirmDialog title={LOCAL_EXECUTOR_COPY.reinstallDialogTitle} confirmLabel={LOCAL_EXECUTOR_COPY.reinstallConfirm} busy={busy === 'generate'} onConfirm={() => void generate(true)} onCancel={() => setAsking(null)}>
+          <p>{LOCAL_EXECUTOR_COPY.reinstallBody}</p>
+        </ConfirmDialog>
+      ) : null}
+      {asking === 'revoke' ? (
+        <ConfirmDialog
+          danger
+          title={LOCAL_EXECUTOR_COPY.revokeTitle}
+          confirmLabel={LOCAL_EXECUTOR_COPY.revokeConfirm}
+          busy={busy === 'revoke'}
+          error={error}
+          onConfirm={() => void revoke()}
+          onCancel={() => {
+            setAsking(null);
+            setError(null);
+          }}
+        >
+          <p>{LOCAL_EXECUTOR_COPY.revokeBody}</p>
         </ConfirmDialog>
       ) : null}
     </section>

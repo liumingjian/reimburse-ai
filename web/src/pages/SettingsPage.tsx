@@ -10,7 +10,7 @@ import { AppShell } from '../shell/AppShell';
 import { formatDateTime } from '../format';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
-import { LocalExecutorSection } from './LocalExecutorSection';
+import { LocalExecutorSection, type InstallCommand } from './LocalExecutorSection';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
 import { awaitsPairing, useAutoPair, useExtensionSetup } from './extension-setup';
 import { endsOtherMethod, InstallTrouble, REIMBURSE_METHOD_COPY, SwitchMethodDialog, useReimburseMethod, type ReimburseMethod } from './reimburse-method';
@@ -155,8 +155,6 @@ export const EXTENSION_PAIRING_COPY = {
   lead: '在你的 Chrome 或 Edge 里替你去报销：先下载当前应用地址提供的扩展，再生成配对码填进扩展。',
   troubleLead: '安装和升级扩展的详细步骤与图示，在单独的安装教程里。',
   independence: '配对与登录互不影响：撤销配对不会退出登录，退出登录也不会撤销配对。',
-  firstTimeTitle: '第一次连接',
-  firstTimeLead: (origin: string) => `还没有连接过浏览器扩展。先从 ${origin} 下载报销助手，再生成配对码，在 Chrome 或 Edge 里输入。`,
   firstTimeAction: '生成配对码',
   waitingTitle: '在扩展里输入配对码',
   waitingLead: (origin: string) => `打开从 ${origin} 下载的 Chrome 或 Edge 报销助手，把下面这串配对码填进去。填好后这里会自动显示已连接。`,
@@ -207,7 +205,7 @@ export const EXTENSION_PAIRING_COPY = {
   autoPairDeclined: '你在扩展的窗口里选了保留原来的账号，这台浏览器没有任何改动。以后要换成这个账号，刷新这一页再确认一次就行。',
   loading: '正在读取配对情况…',
   loadFailed: '配对情况加载失败',
-  retryLoad: '重试',
+  retryLoad: '重新加载',
 } as const;
 
 // The pairing panel renders the state from the existing adapter. The page never tracks a second connected flag: the
@@ -261,13 +259,16 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
   const holdsPairing = view?.status === 'paired';
   const outdated = step.kind === 'outdated' && holdsPairing;
   const guided = (awaitsPairing(step) || (step.kind === 'outdated' && !holdsPairing)) && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
+  // With nothing paired the section's one sentence already says what to do: no second heading or sentence (#429).
   const next = view?.status === 'paired'
     ? view.connected
       ? { title: EXTENSION_PAIRING_COPY.connectedTitle, lead: EXTENSION_PAIRING_COPY.connectedLead(activeOrigin) }
       : { title: EXTENSION_PAIRING_COPY.disconnectedTitle, lead: EXTENSION_PAIRING_COPY.disconnectedLead(activeOrigin) }
     : view?.status === 'waiting'
       ? { title: EXTENSION_PAIRING_COPY.waitingTitle, lead: EXTENSION_PAIRING_COPY.waitingLead(activeOrigin) }
-      : { title: EXTENSION_PAIRING_COPY.firstTimeTitle, lead: EXTENSION_PAIRING_COPY.firstTimeLead(activeOrigin) };
+      : null;
+  // The app's address matters only when the extension paired is one for another address (the migration case).
+  const migrating = view?.status === 'paired' && !view.connected;
   return (
     <section className="app-form-section" aria-label={EXTENSION_PAIRING_COPY.title}>
       <h2 className="app-section-title">{EXTENSION_PAIRING_COPY.title}</h2>
@@ -286,30 +287,32 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
         </p>
       ) : (
         <>
-          <div className="app-extension-state">
-            <div className="app-extension-state-heading">
-              <div>
-                <h3>{EXTENSION_PAIRING_STATUS_LABELS[view.status]}</h3>
+          {view.status !== 'none' ? (
+            <div className="app-extension-state">
+              <div className="app-extension-state-heading">
+                <div>
+                  <h3>{EXTENSION_PAIRING_STATUS_LABELS[view.status]}</h3>
+                </div>
+                <span className={`app-extension-state-mark app-extension-state-mark-${view.status}`} aria-hidden="true" />
               </div>
-              <span className={`app-extension-state-mark app-extension-state-mark-${view.status}`} aria-hidden="true" />
+              <FieldGroup
+                columns={2}
+                fields={[
+                  ...(migrating ? [{ label: EXTENSION_PAIRING_COPY.activeOrigin, value: view.activeOrigin }] : []),
+                  ...(view.status === 'paired'
+                    ? [
+                        { label: EXTENSION_PAIRING_COPY.browser, value: view.browser ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
+                        { label: EXTENSION_PAIRING_COPY.extensionVersion, value: view.version ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
+                        { label: EXTENSION_PAIRING_COPY.connection, value: view.connected ? EXTENSION_PAIRING_COPY.connected : EXTENSION_PAIRING_COPY.disconnected },
+                        { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ? formatDateTime(view.pairedAt) : '' },
+                        { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ? formatDateTime(view.lastConnectedAt) : <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
+                      ]
+                    : []),
+                  ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: formatDateTime(view.codeExpiresAt) }] : []),
+                ]}
+              />
             </div>
-            <FieldGroup
-              columns={2}
-              fields={[
-                { label: EXTENSION_PAIRING_COPY.activeOrigin, value: view.activeOrigin },
-                ...(view.status === 'paired'
-                  ? [
-                      { label: EXTENSION_PAIRING_COPY.browser, value: view.browser ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
-                      { label: EXTENSION_PAIRING_COPY.extensionVersion, value: view.version ?? <span className="app-muted">{EXTENSION_PAIRING_COPY.unknownBrowser}</span> },
-                      { label: EXTENSION_PAIRING_COPY.connection, value: view.connected ? EXTENSION_PAIRING_COPY.connected : EXTENSION_PAIRING_COPY.disconnected },
-                      { label: EXTENSION_PAIRING_COPY.pairedAt, value: view.pairedAt ? formatDateTime(view.pairedAt) : '' },
-                      { label: EXTENSION_PAIRING_COPY.lastConnectedAt, value: view.lastConnectedAt ? formatDateTime(view.lastConnectedAt) : <span className="app-muted">{EXTENSION_PAIRING_COPY.neverConnected}</span> },
-                    ]
-                  : []),
-                ...(view.status === 'waiting' && view.codeExpiresAt ? [{ label: EXTENSION_PAIRING_COPY.codeExpiresAt, value: formatDateTime(view.codeExpiresAt) }] : []),
-              ]}
-            />
-          </div>
+          ) : null}
           {step.kind === 'checking' ? (
             <p className="app-loading" role="status">
               {EXTENSION_PAIRING_COPY.checking}
@@ -352,10 +355,12 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
           ) : null}
           {guided ? (
             <>
-              <div className="app-extension-next">
-                <h3>{next.title}</h3>
-                <p>{next.lead}</p>
-              </div>
+              {next ? (
+                <div className="app-extension-next">
+                  <h3>{next.title}</h3>
+                  <p>{next.lead}</p>
+                </div>
+              ) : null}
               {view.code ? (
                 <>
                   {autoPair.status === 'silent' ? <p>{EXTENSION_PAIRING_COPY.autoPairSilent}</p> : null}
@@ -363,7 +368,7 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
                   <p className="app-caption">{EXTENSION_PAIRING_COPY.codeHint}</p>
                 </>
               ) : null}
-              {view.status === 'paired' && !view.connected ? (
+              {migrating ? (
                 <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_PAIRING_COPY.migrationTitle}>
                   <p>{EXTENSION_PAIRING_COPY.migrationLead(view.activeOrigin)}</p>
                   <ol aria-label={EXTENSION_PAIRING_COPY.migrationTitle}>
@@ -456,6 +461,8 @@ function ReimburseMethodSection() {
   const store = useAppStore();
   const pairing = useExtensionPairing();
   const [method, setMethod] = useReimburseMethod(pairing.data);
+  // The 本地执行器's install command outlives a flip to the 浏览器扩展 and back (its 配对码 is shown only once).
+  const [installCommand, setInstallCommand] = useState<InstallCommand | null>(null);
   if (!pairing.data) {
     return pairing.status === 'error' ? (
       <div className="app-empty">
@@ -477,7 +484,7 @@ function ReimburseMethodSection() {
         <RadioButton id="reimburse-method-local-executor" value="local_executor" labelText={REIMBURSE_METHOD_COPY.options.local_executor} />
         <RadioButton id="reimburse-method-extension" value="extension" labelText={REIMBURSE_METHOD_COPY.options.extension} />
       </RadioButtonGroup>
-      {method === 'extension' ? <ExtensionPairingSection autoPair={pairing.data.status === 'paired' && pairing.data.holder === 'extension'} /> : <LocalExecutorSection />}
+      {method === 'extension' ? <ExtensionPairingSection autoPair={pairing.data.status === 'paired' && pairing.data.holder === 'extension'} /> : <LocalExecutorSection command={installCommand} onCommand={setInstallCommand} />}
     </>
   );
 }

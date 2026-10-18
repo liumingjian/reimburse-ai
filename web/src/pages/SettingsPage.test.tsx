@@ -107,13 +107,15 @@ describe('设置页：旧数据导入', () => {
 });
 
 describe('设置页：浏览器扩展', () => {
-  test('还没有配对时给出第一次连接指导；生成后把那一串显示出来，并说明只显示这一次', async () => {
+  test('还没有配对时只有一句话、下载和生成配对码；生成后把那一串显示出来，并说明只显示这一次', async () => {
     renderPairing();
     await chooseExtension();
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
-    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
-    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeLead('http://10.250.0.222:8888'))).toBeTruthy();
-    expect(within(extensionPanel()).getByText('http://10.250.0.222:8888')).toBeTruthy();
+    await screen.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction });
+    // One sentence (#429): no status heading, no address field, no second lead outside 「安装遇到问题？」.
+    const shown = [...extensionPanel().querySelectorAll('p, h3, dt, dd')].filter((element) => element.closest('details, [role="status"]') === null).map((element) => element.textContent);
+    expect(shown).toEqual([EXTENSION_PAIRING_COPY.lead]);
+    expect(within(extensionPanel()).queryByText('http://10.250.0.222:8888')).toBeNull();
+    expect(within(extensionPanel()).getByRole('link', { name: EXTENSION_PAIRING_COPY.download })).toBeTruthy();
     expect(within(extensionPanel()).queryByText(EXTENSION_PAIRING_COPY.migrationTitle)).toBeNull();
     expect(within(extensionPanel()).queryByRole('button', { name: '撤销配对' })).toBeNull();
     expect(within(extensionPanel()).queryByRole('button', { name: '重新生成配对码' })).toBeNull();
@@ -135,7 +137,7 @@ describe('设置页：浏览器扩展', () => {
     fireEvent.click(within(extensionPanel()).getByRole('button', { name: '撤销配对' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确定撤销' }));
 
-    expect(await within(extensionPanel()).findByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(await within(extensionPanel()).findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     // 撤销配对 is not a logout: the settings page stays, with no return to the sign-in gate.
     expect(panel()).toBeTruthy();
   });
@@ -162,7 +164,7 @@ describe('设置页：浏览器扩展', () => {
   test('重置藏在高级设置里，第一次连接时不会和恢复操作混在一起', async () => {
     renderPairing();
     await chooseExtension();
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    await screen.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction });
     const advanced = screen.getByText('高级设置').closest('details');
     expect(advanced?.open).toBe(false);
     expect(screen.getByRole('button', { name: RESET_COPY.button })).toBeTruthy();
@@ -178,7 +180,7 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
   test('常规设置只保留下载入口，独立教程收在「安装遇到问题？」里', async () => {
     renderPairing();
     await chooseExtension();
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    await screen.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction });
     const section = within(extensionPanel());
 
     expect(section.getByRole('link', { name: EXTENSION_INSTALL_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
@@ -281,7 +283,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     renderWithExtension(fakeBridge(() => null));
     await chooseExtension();
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
-    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
     expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
   });
@@ -297,7 +299,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
     expect(section.queryByRole('button', { name: '生成配对码' })).toBeNull();
     expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.reconnect })).toBeNull();
-    expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
+    expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeNull();
   });
 
   test('已经和这个账号配对：只显示连接状态，教程留在收起的「安装遇到问题？」里', async () => {
@@ -334,10 +336,10 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     fireEvent.click(section.getByRole('button', { name: '撤销配对' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确定撤销' }));
 
-    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     expect(bridge.probes()).toBeGreaterThan(before);
     expect(section.queryByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeNull();
-    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
   });
 
   test('独立教程也跟着走：扩展太旧只给升级步骤，已配对不给安装步骤', async () => {
@@ -421,7 +423,7 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
     expect(bridge.switches).toEqual([]);
     expect(issued).toHaveLength(1);
     expect(section.queryByText('K7MQ2PXD')).toBeNull();
-    expect(section.queryByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeNull();
+    expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeNull();
   });
 
   test('扩展配对失败：说出扩展给的原因，仍可手动输入配对码', async () => {
@@ -457,7 +459,7 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
     render(<App adapter={{ ...adapter, createExtensionPairingCode: async () => { issued += 1; return adapter.createExtensionPairingCode(); } }} bridge={fakeBridge(() => null)} />);
     await chooseExtension();
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
-    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     expect(issued).toBe(0);
   });
 });
@@ -593,7 +595,7 @@ describe('设置页：去报销的方式', () => {
     await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
     fireEvent.click(await choice('extension'));
     const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
-    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.revoke })).toBeNull();
   });
 
@@ -739,6 +741,13 @@ describe('设置页：每种方式一句话与「安装遇到问题？」', () =
     expect(EXTENSION_PAIRING_COPY.lead.match(/。/g)).toHaveLength(1);
   });
 
+  test('什么都没配对时，本地执行器一节不说会断开浏览器扩展', async () => {
+    renderPage();
+    const region = await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
+    await within(region).findByRole('button', { name: LOCAL_EXECUTOR_COPY.generate });
+    expect(within(region).queryByText(LOCAL_EXECUTOR_COPY.replaces)).toBeNull();
+  });
+
   test('本地执行器的「安装遇到问题？」默认收起，里面是安装步骤和 Mac、Windows 的卸载命令', async () => {
     renderPage();
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
@@ -765,7 +774,7 @@ describe('设置页：每种方式一句话与「安装遇到问题？」', () =
     renderPage();
     await chooseExtension();
     const region = await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title });
-    await within(region).findByText(EXTENSION_PAIRING_COPY.firstTimeTitle);
+    await within(region).findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction });
     const details = troubleArea(region);
     expect(details.open).toBe(false);
     openTrouble(details);
@@ -783,7 +792,7 @@ describe('设置页：每种方式一句话与「安装遇到问题？」', () =
     renderPage({}, fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })));
     await chooseExtension();
     const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
-    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     expect(section.queryByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle })).toBeNull();
     expect(section.queryByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeNull();
     expect(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.issue })).toBeTruthy();
@@ -804,7 +813,7 @@ describe('设置页：每种方式一句话与「安装遇到问题？」', () =
     await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
     await chooseExtension();
     const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
-    await section.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
+    await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction });
     expect(section.queryByRole('list', { name: EXTENSION_PAIRING_COPY.migrationTitle })).toBeNull();
     expect(section.queryByText(EXTENSION_PAIRING_COPY.migrationTitle)).toBeNull();
   });

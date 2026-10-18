@@ -33,8 +33,8 @@ async function openSettings(page: Page, viewport: (typeof DESKTOP_VIEWPORTS)[num
 test('first-time settings leads with the extension connection action at both desktop widths', async ({ page }, testInfo) => {
   for (const viewport of DESKTOP_VIEWPORTS) {
     const extension = await openSettings(page, viewport);
-    await expect(extension.getByRole('heading', { name: '还没有配对' })).toBeVisible();
-    await expect(extension.getByRole('heading', { name: '第一次连接' })).toBeVisible();
+    await expect(extension.getByRole('heading', { name: '还没有配对' })).toHaveCount(0);
+    await expect(extension.getByRole('heading', { name: '第一次连接' })).toHaveCount(0);
     await expect(extension.getByRole('button', { name: '生成配对码' })).toBeVisible();
     await expect(extension.getByText('扩展暂时没有连接')).toHaveCount(0);
     await expect(extension.getByRole('button', { name: '撤销配对' })).toHaveCount(0);
