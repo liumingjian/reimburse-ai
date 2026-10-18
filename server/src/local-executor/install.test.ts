@@ -41,7 +41,7 @@ const issue = async (body: unknown = { system: 'mac' }) => {
 const POWERSHELL = { 'user-agent': 'Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.1' };
 const fetchScript = (code: string, headers: Record<string, string> = { 'user-agent': 'curl/8.7.1' }) => server.app.request(localExecutorInstallPath(code), { headers });
 const redeem = (code: string) => server.app.request(PAIRING_PATH, {
-  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, holder: 'local_executor', version: '9.9.9' }),
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, version: '9.9.9' }),
 });
 const expiredScript = (body: string) => {
   expect(body.startsWith('#!/bin/sh\n')).toBe(true);

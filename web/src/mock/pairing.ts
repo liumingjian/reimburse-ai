@@ -1,17 +1,16 @@
-import { PAIRING_CODE_TTL_MS, PAIRING_ERRORS, CLIENT_VERSION, type CreatePairingCodeInput, type PairingHolderKind, type PairingView, type PairingChangeOutcome, type LocalExecutorPairingState } from '@baox/contract';
+import { PAIRING_CODE_TTL_MS, PAIRING_ERRORS, CLIENT_VERSION, type CreatePairingCodeInput, type PairingView, type PairingChangeOutcome, type LocalExecutorPairingState } from '@baox/contract';
 import type { LocalExecutorPort } from '../adapter/local-executor-port';
 import { MOCK_ACCOUNT } from './auth';
 import type { MockOptions } from './options';
 
-// 扩展配对 (extension pairing) as the mock server plays it. There is no real 浏览器扩展 (browser extension) in the
-// mock, so `?extension=paired` starts out paired and anything else starts unpaired. Issuing a 配对码 (pairing code)
-// voids the old pairing (the server's rule), and revoking returns to no pairing.
+// 配对 (pairing) as the mock server plays it, between the 应用账号 and its 本地执行器 (ADR-0037). The account starts
+// paired, so 去报销 runs; `?pairing=none` starts it with nothing paired, and 去报销 is refused (`paired`). Issuing a
+// 配对码 (pairing code) voids the old pairing (the server's rule), and revoking returns to no pairing.
 //
 // The mock also plays the 本地执行器 on this PC. A code issued for an install (with a system) pairs by itself a little
 // later, as if the employee had pasted the command and the script had finished. `?localExecutor=unpaired|paired|other`
 // puts an executor on 47319 (`localExecutor`), unpaired, paired to this account, or to another one; a code handed to it
-// pairs at once. Without the option nothing answers there, until an install has paired one. `paired` also starts the
-// account's pairing held by the 本地执行器 (`holder`), so the 设置页 opens on that method.
+// pairs at once. Without the option nothing answers there, until an install has paired one.
 
 const PAIRED_AT = '2026-02-01T09:05:00Z';
 const LAST_CONNECTED_AT = '2026-02-03T14:20:00Z';
@@ -23,24 +22,18 @@ const DEFAULT_INSTALL_MS = 4_000;
 const OTHER_ACCOUNT_ID = 'A9';
 const EXECUTOR_BROWSER = 'baox 本地执行器（darwin）';
 
-const unpaired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, holder: null, code: null });
-// Paired counts as connected in the normal mock state: there is no real extension to connect.
-const paired = (activeOrigin: string, connected: boolean, holder: PairingHolderKind = 'extension', browser = 'Chrome 142 · Windows 11'): PairingView => ({ activeOrigin, status: 'paired', browser, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected, version: CLIENT_VERSION, holder, code: null });
+const unpaired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null });
+const paired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'paired', browser: EXECUTOR_BROWSER, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected: true, version: CLIENT_VERSION, code: null });
 
-export type ExtensionPairingFlow = {
+export type PairingFlow = {
   getExtensionPairing(): Promise<PairingView>;
   createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
   revokeExtensionPairing(): Promise<PairingChangeOutcome>;
 };
 
-export function createExtensionPairingFlow(options: MockOptions): { flow: ExtensionPairingFlow; localExecutor: LocalExecutorPort } {
-  const activeOrigin = options.extensionOrigin ?? DEFAULT_ACTIVE_ORIGIN;
-  // An executor paired to this account holds the account's pairing too, unless `?extension=` says the extension does.
-  let current: PairingView = options.extensionPaired
-    ? paired(activeOrigin, options.extensionConnected ?? true)
-    : options.localExecutor === 'paired'
-      ? paired(activeOrigin, true, 'local_executor', EXECUTOR_BROWSER)
-      : unpaired(activeOrigin);
+export function createPairingFlow(options: MockOptions): { flow: PairingFlow; localExecutor: LocalExecutorPort; paired: () => boolean } {
+  const activeOrigin = options.appOrigin ?? DEFAULT_ACTIVE_ORIGIN;
+  let current: PairingView = options.pairing === 'none' ? unpaired(activeOrigin) : paired(activeOrigin);
   // The executor on this PC: null when none answers on 47319.
   let executor: LocalExecutorPairingState | null = options.localExecutor === undefined
     ? null
@@ -50,7 +43,7 @@ export function createExtensionPairingFlow(options: MockOptions): { flow: Extens
   let installing: ReturnType<typeof setTimeout> | null = null;
 
   const landExecutorPairing = () => {
-    current = paired(activeOrigin, true, 'local_executor', EXECUTOR_BROWSER);
+    current = paired(activeOrigin);
     executor = { paired: true, accountId: MOCK_ACCOUNT.accountId };
   };
   const cancelInstall = () => {
@@ -58,13 +51,13 @@ export function createExtensionPairingFlow(options: MockOptions): { flow: Extens
     installing = null;
   };
 
-  const flow: ExtensionPairingFlow = {
+  const flow: PairingFlow = {
     getExtensionPairing: async () => current,
     // The code appears only in the answer that issued it; no later read returns it, as on the server.
     async createExtensionPairingCode(input) {
       cancelInstall();
       const codeExpiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
-      current = { activeOrigin, status: 'waiting', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt, connected: false, version: null, holder: null, code: null };
+      current = { activeOrigin, status: 'waiting', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt, connected: false, version: null, code: null };
       if (input?.system) {
         installing = setTimeout(() => {
           installing = null;
@@ -89,5 +82,5 @@ export function createExtensionPairingFlow(options: MockOptions): { flow: Extens
       return { ok: true, accountId: MOCK_ACCOUNT.accountId };
     },
   };
-  return { flow, localExecutor };
+  return { flow, localExecutor, paired: () => current.status === 'paired' };
 }

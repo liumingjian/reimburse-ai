@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { extensionSettingsHash, parseHash, taskHash } from './router';
+import { parseHash, settingsHash, taskHash } from './router';
 
 describe('hash 路由', () => {
-  test('extension setup preserves only a valid local task destination', () => {
-    expect(parseHash(extensionSettingsHash('task with spaces', 'review'))).toEqual({ kind: 'settings', returnTo: '#/task/task%20with%20spaces/review' });
-    expect(parseHash('#/task/T1/review?extensionSetup=1')).toEqual({ kind: 'task', taskId: 'T1', page: 'review', fromExtensionSetup: true });
+  test('the 设置页 opened from a task keeps only a valid local task destination', () => {
+    expect(parseHash(settingsHash({ taskId: 'task with spaces', page: 'review' }))).toEqual({ kind: 'settings', returnTo: '#/task/task%20with%20spaces/review' });
+    expect(parseHash(settingsHash())).toEqual({ kind: 'settings' });
+    expect(parseHash('#/task/T1/review?extensionSetup=1')).toEqual({ kind: 'task', taskId: 'T1', page: 'review' });
     for (const returnTo of ['https://example.com', '//example.com', '#/admin', '#/task/T1/unknown', '#/task/%/review', '#/task/T1/review?next=elsewhere']) {
       expect(parseHash(`#/settings?${new URLSearchParams({ returnTo })}`)).toEqual({ kind: 'settings' });
     }
@@ -15,10 +16,10 @@ describe('hash 路由', () => {
     expect(parseHash('#/tasks/new')).toEqual({ kind: 'new' });
   });
 
-  test('设置页的密码修改与安装教程使用独立路由', () => {
+  test('设置页的密码修改使用独立路由；浏览器扩展的安装教程已经没有了', () => {
     expect(parseHash('#/settings')).toEqual({ kind: 'settings' });
     expect(parseHash('#/settings/password')).toEqual({ kind: 'password' });
-    expect(parseHash('#/settings/tutorial')).toEqual({ kind: 'settingsTutorial' });
+    expect(parseHash('#/settings/tutorial')).toEqual({ kind: 'redirect', to: '#/tasks' });
   });
 
   test('#/task/:id/<页面> 解析出任务与页面；不带页面时页面为空', () => {

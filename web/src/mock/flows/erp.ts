@@ -1,11 +1,12 @@
-import { ERP_ACTION_ERRORS, type AppAdapter, type TaskSnapshot } from '@baox/contract';
+import { ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, type ActionError, type AppAdapter, type TaskSnapshot } from '@baox/contract';
 import type { MockBus } from '../bus';
 import { ERP_STEP_INDEX, applyAbortAtHandover, applyErpDone, applyReadbackMismatch, applyReadbackStop, applyStopBeforeWrite, emptyReconcile, erpProgress, erpRunning, erpStageAt, erpSteps, handedOffBanner, idleErp } from '../fixtures/erp';
 import { catalogMismatch } from '../fixtures/preparation';
 import { T1_DRAFT_NO } from '../fixtures/tasks';
 
-// The mock simulates the server-owned ERP fill, strict read-back, and reconciliation states.
-// 去报销 runs by itself from start to end: nothing waits for the employee to log in (ADR-0037).
+// The mock simulates the server-owned ERP fill, strict read-back, and reconciliation states, the way the 本地执行器 runs
+// them (ADR-0037): 去报销 starts a background browser, signs in with the saved account and ends 暂存'd, with no login wait.
+// Without a paired 本地执行器 (`?pairing=none`) 去报销 and 重新去报销 are refused, as on the server, and nothing starts.
 // 写入的结局按故障决定：erp-stopped-before-write 在打开报销单时停下（退回去报销前）；readback-mismatch 在填写明细后的
 // 严格回读停下、erp-write-aborted 在交接步中止，两者都停在对账，等第一次对账（readback-mismatch 对账后读到逐行不一致的草稿，只能转人工）。
 
@@ -13,11 +14,11 @@ const DEFAULT_ERP_STEP_MS = 300;
 
 export type ErpFlow = Pick<AppAdapter, 'startErpWrite' | 'reconcile' | 'handOff' | 'refill'>;
 
-export function createErpFlow(bus: MockBus): ErpFlow {
+// The server's refusal of an action that needs the 本地执行器 when the account has none paired (task-policy.ts).
+const NOT_PAIRED: ActionError = { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' };
+
+export function createErpFlow(bus: MockBus, paired: () => boolean): ErpFlow {
   const { options } = bus;
-  // 去报销的方式 the mock plays (#423): the 浏览器扩展 by default, or `?route=local_executor`, which shows its own steps
-  // and ends with the bill 暂存'd. Neither waits for a login.
-  const route = options.erpRoute ?? 'extension';
   const erpStepMs = options.erpStepMs ?? DEFAULT_ERP_STEP_MS;
   // 每个任务当前这一轮 ERP 写入的编号与重新对账次数；定时器只推进自己那一轮。
   const erpRuns = new Map<string, number>();
@@ -48,27 +49,27 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     // 写入前就停下：报销系统没有被改动，阶段退回整单确认页，这一轮结束。
     if (index === ERP_STEP_INDEX.navigate && options.fault === 'erp-stopped-before-write') {
       erpRuns.delete(taskId);
-      applyStopBeforeWrite(current, route);
+      applyStopBeforeWrite(current);
       current.step = { kind: 'choose_action', stepToken: bus.rotateToken(`tok-${taskId}-actions`) };
       bus.push(current);
       return;
     }
     if (index === ERP_STEP_INDEX.fill && options.fault === 'readback-mismatch') {
       erpRuns.delete(taskId);
-      applyReadbackStop(current, route);
+      applyReadbackStop(current);
       bus.push(current);
       return;
     }
     if (index === ERP_STEP_INDEX.handover) {
-      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current, route);
-      // 本地执行器暂存后结束（drafted，ERP 草稿已交接）：暂存单还没有单据编号。浏览器扩展这条路线随 #437 删除。
-      else applyErpDone(current, null, route);
+      if (options.fault === 'erp-write-aborted') applyAbortAtHandover(current);
+      // 暂存后结束（drafted）：单据还没有提交，所以没有单据编号。
+      else applyErpDone(current);
       bus.push(current);
       return;
     }
-    current.erp.steps = erpSteps(index + 1, 'running', route);
+    current.erp.steps = erpSteps(index + 1, 'running');
     current.erp.currentStage = erpStageAt(index + 1);
-    current.erp.progress = erpProgress(index + 1, current.lines.length, 0, route);
+    current.erp.progress = erpProgress(index + 1, current.lines.length, 0);
     current.erp.externalWait = 'erp_response';
     current.erp.outcome = 'none';
     current.erp.allowedActions = ['refresh'];
@@ -84,7 +85,7 @@ export function createErpFlow(bus: MockBus): ErpFlow {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     const rows = Math.max(1, current.lines.length);
-    current.erp.progress = erpProgress(ERP_STEP_INDEX.fill, rows, rowsDone, route);
+    current.erp.progress = erpProgress(ERP_STEP_INDEX.fill, rows, rowsDone);
     bus.push(current);
     if (rowsDone >= rows) setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.fill), rowMs(current));
     else setTimeout(() => fillRow(taskId, run, rowsDone + 1), rowMs(current));
@@ -98,28 +99,30 @@ export function createErpFlow(bus: MockBus): ErpFlow {
   };
 
   return {
-    // A confirmed claim enters the ERP stage and the fill runs through by itself.
-    // 写入进行中没有待答 step（none），也没有「开始填报」这道确认。
+    // A confirmed claim enters the ERP stage and the 本地执行器 runs it to the end; there is no 「开始填报」.
+    // 写入进行中没有待答 step（none）。
     startErpWrite: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'choose_action' || snapshot.confirmation.status !== 'confirmed') {
           return { error: { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady } };
         }
+        if (!paired()) return { error: NOT_PAIRED };
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length, route);
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length);
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();
         setTimeout(() => finishErpStep(taskId, run, ERP_STEP_INDEX.chromium), erpStepMs);
         return snapshot;
       }),
     // 开始对账 / 重新对账（原地等待）：只读报销系统再判定一次，只在对账结果允许原地等待时接受。
-    // readback-mismatch 下第一次对账读到员工保存过、逐行不一致的草稿 ⇒ 只能转人工；否则留在原地，结果写进横幅。
-    // 读到填好、没保存的单据也不算完成：没有暂存就没有交接（ADR-0037，服务端同此）。
+    // readback-mismatch 下第一次对账读到员工保存过、逐行不一致的草稿 ⇒ 只能转人工；
+    // 否则留在原地，结果写进横幅。读到填好没保存的单据也不算完成：没有暂存就没有交接（ADR-0037，服务端同此）。
     reconcile: async (taskId, stepToken) =>
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
         if (!snapshot.reconcile.allowedActions.includes('wait')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
+        if (!paired()) return { error: NOT_PAIRED };
         const count = (reconcileCounts.get(taskId) ?? 0) + 1;
         reconcileCounts.set(taskId, count);
         snapshot.task.updatedAt = bus.now();
@@ -137,9 +140,10 @@ export function createErpFlow(bus: MockBus): ErpFlow {
       bus.withStep(taskId, stepToken, (snapshot) => {
         if (snapshot.step.kind !== 'reconcile') return { error: { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling } };
         if (!snapshot.reconcile.allowedActions.includes('refill')) return { error: { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed } };
+        if (!paired()) return { error: NOT_PAIRED };
         const run = newRun(taskId);
         snapshot.stage = 'erp';
-        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length, route);
+        snapshot.erp = erpRunning(ERP_STEP_INDEX.chromium, snapshot.lines.length);
         snapshot.reconcile = emptyReconcile();
         snapshot.step = { kind: 'none', stepToken: `tok-${taskId}-erp-run-${run}` };
         snapshot.task.updatedAt = bus.now();

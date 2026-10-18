@@ -46,7 +46,6 @@ const UNMATCHED: Readonly<Record<string, string>> = {
   'erp.erpAccount.account': 'as erp.erpAccount.displayName',
   'erp.erpAccount.tenant': 'as erp.erpAccount.displayName',
   'reconcile.capture.screenshotUrl': 'the mock has no ERP screenshot to serve',
-  'erp.review.url': "the 报销系统 the draft went to: the mock's fictional one, the server scenario's configured ERP",
 };
 
 // Differences that come from the server's scripted ERP job (server/src/erp/testing/fake-executor.ts), not from its
@@ -66,6 +65,7 @@ const SCENE_UNMATCHED: Partial<Record<GoldenScenario, Readonly<Record<string, st
     'reconcile.reasons': 'as erp.abortReason',
   },
   done: {
+    'erp.review.url': "the 报销系统 the draft went to: the mock's fictional one, the server scenario's configured ERP",
     'readback.rows.*.fields.7.local': 'the scripted job reads back no 收票单号 (receipt number); a real one (and the mock) does',
     'readback.rows.*.fields.7.erp': 'as readback.rows.*.fields.7.local',
   },
@@ -144,9 +144,8 @@ function compared(value: unknown, unmatched: readonly string[], path: readonly s
   );
 }
 
-// Timers of the simulated server, shortened. The mock plays the 本地执行器, the only way to 去报销 (ADR-0037), as
-// the server scenario does.
-const FAST: Partial<MockOptions> = { inventoryPhaseMs: 1, erpStepMs: 1, erpRoute: 'local_executor' };
+// Timers of the simulated server, shortened.
+const FAST: Partial<MockOptions> = { inventoryPhaseMs: 1, erpStepMs: 1 };
 
 async function settled(adapter: MockAdapter, taskId: string, done: (snapshot: TaskSnapshot) => boolean): Promise<TaskSnapshot> {
   await vi.waitFor(async () => expect(done(await adapter.getSnapshot(taskId))).toBe(true));
@@ -217,6 +216,7 @@ const ladder = {
 };
 
 // 去报销 (claim) from choose_action, with `fault` playing the server's scripted ERP outcome, until `done`.
+// The mock signs in by itself, like the 本地执行器 and the scenario builder's scripts do.
 async function afterErpWrite(fault: MockOptions['fault'], done: (snapshot: TaskSnapshot) => boolean): Promise<TaskSnapshot> {
   const { adapter, taskId, snapshot } = await ladder.actions(fault);
   ok(await adapter.startErpWrite(taskId, snapshot.step.stepToken));

@@ -50,7 +50,7 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const confirmed = snapshot.confirmation.status === 'confirmed';
   const generated = sheet.status === 'generated';
   // 失败原因显示在触发它的按钮旁：generate（页头下载按钮旁）、<pageId>-<slot>（该放置的按钮旁）、crop（裁剪编辑器旁）。
-  const { busy, run, errorAt } = useAction(taskId);
+  const { busy, run, errorAt, linkAt } = useAction(taskId);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   const [perRow, setPerRow] = useState<PerRow>(readPerRow);
@@ -127,12 +127,12 @@ export function PrintPage({ snapshot }: { snapshot: TaskSnapshot }) {
       {/* Header action errors sit under the header, not between its buttons. */}
       {errorAt('erp') || errorAt('generate') ? (
         <p className="app-notice-block">
-          <ActionError message={errorAt('erp')} />
+          <ActionError message={errorAt('erp')} link={linkAt('erp')} />
           <ActionError message={errorAt('generate')} />
         </p>
       ) : null}
 
-      <p className="app-caption">去报销会自动填写已确认的明细，完成后请在报销系统中自行保存并提交。</p>
+      <p className="app-caption">去报销会自动填写已确认的明细并暂存到报销系统，你检查后自己提交。</p>
       <div className="app-print-toolbar" role="toolbar" aria-label="打印稿查看">
         <ContentSwitcher
           className="app-per-row-switcher"

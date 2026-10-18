@@ -5,10 +5,10 @@ import { App } from '../App';
 import { SILENT_LOCAL_EXECUTOR_PORT, type LocalExecutorPort } from '../adapter/local-executor-port';
 import { createMockAdapter, type MockOptions } from '../mock/mock-adapter';
 import { LOCAL_EXECUTOR_COPY, LOCAL_EXECUTOR_POLL_MS } from './LocalExecutorSection';
-import { REIMBURSE_METHOD_COPY } from './reimburse-method';
 
 // 设置页的 baox 本地执行器一节（spec #412 C，ADR-0035）：选 Mac 或 Windows，生成一条安装命令贴进终端；装好后这一节
 // 自己变成已连接。这台电脑上已经有执行器在 47319 应答时，改成一键「连接这台电脑的执行器」。
+// The mock account starts with nothing paired here (`pairing: 'none'`) unless a test says it is paired.
 // 安装命令背后的脚本由服务端的 HTTP 缝检查（server/src/local-executor/install.test.ts）。
 
 // navigator.clipboard as one test sets it, put back afterwards (jsdom has none).
@@ -19,13 +19,13 @@ afterEach(() => {
   restoreClipboard = null;
 });
 
-// The mock's active address and fixed 配对码 (mock/extension.ts).
+// The mock's active address and fixed 配对码 (mock/pairing.ts).
 const ORIGIN = 'http://10.250.0.222:8888';
 const CODE = 'K7MQ2PXD';
 
 function renderSection(options: Partial<MockOptions> = {}) {
   window.location.hash = '#/settings';
-  const adapter = createMockAdapter({ seed: 'actions', fault: null, localExecutorInstallMs: 50, ...options });
+  const adapter = createMockAdapter({ seed: 'actions', fault: null, pairing: 'none', localExecutorInstallMs: 50, ...options });
   render(<App adapter={adapter} localExecutor={adapter.localExecutor} />);
   return { adapter, section: () => within(screen.getByRole('region', { name: LOCAL_EXECUTOR_COPY.title })) };
 }
@@ -133,12 +133,11 @@ function fakePort(first: LocalExecutorPairingState | null, pair: LocalExecutorPo
 
 function renderWithPort(port: LocalExecutorPort, options: Partial<MockOptions> = {}) {
   window.location.hash = '#/settings';
-  const adapter = createMockAdapter({ seed: 'actions', fault: null, localExecutorInstallMs: 50, ...options });
+  const adapter = createMockAdapter({ seed: 'actions', fault: null, pairing: 'none', localExecutorInstallMs: 50, ...options });
   render(<App adapter={adapter} localExecutor={port} />);
   return { adapter, section: () => within(screen.getByRole('region', { name: LOCAL_EXECUTOR_COPY.title })) };
 }
 
-const methodRadio = () => screen.getByRole('radio', { name: REIMBURSE_METHOD_COPY.options.local_executor }) as HTMLInputElement;
 const insideTrouble = (element: HTMLElement) => element.closest('details') !== null;
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAC_COMMAND = `curl -fsSL ${ORIGIN}/install/${CODE} | sh`;
@@ -152,7 +151,7 @@ async function generateMac(section: () => ReturnType<typeof within>) {
 
 describe('设置页：撤销本地执行器的配对', () => {
   test('已连接时可以撤销，要先确认；撤销后仍停在本地执行器，这台电脑的执行器还在就一键重连', async () => {
-    const { adapter, section } = renderSection({ localExecutor: 'paired' });
+    const { adapter, section } = renderSection({ pairing: 'paired', localExecutor: 'paired' });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
     fireEvent.click(section().getByRole('button', { name: LOCAL_EXECUTOR_COPY.revoke }));
@@ -162,11 +161,10 @@ describe('设置页：撤销本地执行器的配对', () => {
     expect(await section().findByRole('button', { name: LOCAL_EXECUTOR_COPY.connectHere })).toBeTruthy();
     expect(section().queryByText(LOCAL_EXECUTOR_COPY.connected)).toBeNull();
     expect((await adapter.getExtensionPairing()).status).toBe('none');
-    expect(methodRadio().checked).toBe(true);
   });
 
   test('这台电脑没有执行器应答：撤销后给出「生成安装命令」', async () => {
-    const { adapter, section } = renderWithPort(SILENT_LOCAL_EXECUTOR_PORT, { localExecutor: 'paired' });
+    const { adapter, section } = renderWithPort(SILENT_LOCAL_EXECUTOR_PORT, { pairing: 'paired', localExecutor: 'paired' });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
     fireEvent.click(section().getByRole('button', { name: LOCAL_EXECUTOR_COPY.revoke }));
@@ -174,11 +172,10 @@ describe('设置页：撤销本地执行器的配对', () => {
     await waitFor(() => expect(section().queryByText(LOCAL_EXECUTOR_COPY.connected)).toBeNull());
     expect(insideTrouble(section().getByRole('button', { name: LOCAL_EXECUTOR_COPY.generate }))).toBe(false);
     expect((await adapter.getExtensionPairing()).status).toBe('none');
-    expect(methodRadio().checked).toBe(true);
   });
 
   test('取消撤销就什么都不变', async () => {
-    const { adapter, section } = renderSection({ localExecutor: 'paired' });
+    const { adapter, section } = renderSection({ pairing: 'paired', localExecutor: 'paired' });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     fireEvent.click(await section().findByRole('button', { name: LOCAL_EXECUTOR_COPY.revoke }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '取消' }));
@@ -190,7 +187,7 @@ describe('设置页：撤销本地执行器的配对', () => {
 
 describe('设置页：已连接时不会一点就断开', () => {
   test('「生成安装命令」收进「安装遇到问题？」，生成前先问；取消就还连着', async () => {
-    const { adapter, section } = renderWithPort(SILENT_LOCAL_EXECUTOR_PORT, { localExecutor: 'paired' });
+    const { adapter, section } = renderWithPort(SILENT_LOCAL_EXECUTOR_PORT, { pairing: 'paired', localExecutor: 'paired' });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
     const generate = section().getByRole('button', { name: LOCAL_EXECUTOR_COPY.generate });
@@ -204,7 +201,7 @@ describe('设置页：已连接时不会一点就断开', () => {
   });
 
   test('确认重新生成：给出新的安装命令', async () => {
-    const { section } = renderWithPort(SILENT_LOCAL_EXECUTOR_PORT, { localExecutor: 'paired', localExecutorInstallMs: 60_000 });
+    const { section } = renderWithPort(SILENT_LOCAL_EXECUTOR_PORT, { pairing: 'paired', localExecutor: 'paired', localExecutorInstallMs: 60_000 });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
     fireEvent.click(section().getByRole('radio', { name: LOCAL_EXECUTOR_COPY.systems.windows }));
@@ -238,17 +235,6 @@ describe('设置页：安装命令的配对码过期、离开再回来', () => {
     const after = reads.mock.calls.length;
     await pause(LOCAL_EXECUTOR_POLL_MS * 2);
     expect(reads.mock.calls.length).toBe(after);
-  });
-
-  test('切到浏览器扩展再切回来：命令还在，装好后照样自己变成已连接', async () => {
-    const { section } = renderSection({ localExecutorInstallMs: 2_000 });
-    await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
-    await generateMac(section);
-    fireEvent.click(screen.getByRole('radio', { name: REIMBURSE_METHOD_COPY.options.extension }));
-    await screen.findByRole('region', { name: '浏览器扩展' });
-    fireEvent.click(screen.getByRole('radio', { name: REIMBURSE_METHOD_COPY.options.local_executor }));
-    expect(await section().findByText(MAC_COMMAND)).toBeTruthy();
-    expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
   });
 
   test('复制不成功：请员工手动复制，并读给读屏软件', async () => {

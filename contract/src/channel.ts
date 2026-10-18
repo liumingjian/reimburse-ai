@@ -71,15 +71,10 @@ export const ClientVersionSchema = z
 // `browser`: what the extension calls the browser it runs in, shown back to the employee so they can tell which
 // browser is paired. The server stores it verbatim and never acts on it. `version` is the extension's own version,
 // reported here and again on every connect (ADR-0021); below the minimum it is refused at both.
-// `holder`: what is pairing, as the 本地执行器 still says. Since ADR-0037 every pairing is a 本地执行器's and the server
-// stores no holder; the field is accepted and ignored until the clients stop sending it.
-export const PAIRING_HOLDER_KINDS = ['extension', 'local_executor'] as const;
-export type PairingHolderKind = (typeof PAIRING_HOLDER_KINDS)[number];
 export const PairingInputSchema = z.object({
   code: z.string().min(1).max(64),
   browser: z.string().trim().min(1).max(80).nullish(),
   version: ClientVersionSchema.nullish(),
-  holder: z.enum(PAIRING_HOLDER_KINDS).nullish(),
 });
 export type PairingInput = z.infer<typeof PairingInputSchema>;
 
@@ -108,9 +103,6 @@ export const PairingStateSchema = z.object({
   connected: z.boolean(),
   // The version the paired extension last reported, or null when nothing has paired yet.
   version: z.string().nullable(),
-  // What holds the pairing: since ADR-0037 always the 本地执行器 once paired, null before. Kept for the 设置页 until it
-  // loses its extension section (#437).
-  holder: z.enum(PAIRING_HOLDER_KINDS).nullable(),
   // The freshly issued 配对码, and only in the answer to issuing one: the server keeps nothing but its sha256, so it
   // can never be shown a second time.
   code: z.string().nullable(),

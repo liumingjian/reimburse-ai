@@ -833,7 +833,7 @@ export const ERP_EXTERNAL_WAITS = ['none', 'executor_connection', 'erp_response'
 export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
 export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
 
-export const ERP_OUTCOMES = ['none', 'filled', 'drafted', 'saved'] as const;
+export const ERP_OUTCOMES = ['none', 'drafted', 'saved'] as const;
 export const ErpOutcomeSchema = z.enum(ERP_OUTCOMES);
 export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
 
@@ -842,14 +842,6 @@ export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
 export const ERP_ALLOWED_ACTIONS = ['refresh'] as const;
 export const ErpAllowedActionSchema = z.enum(ERP_ALLOWED_ACTIONS);
 export type ErpAllowedAction = z.infer<typeof ErpAllowedActionSchema>;
-
-// The hand-over step (交接单据, hand over the bill) closes 去报销: baox fills the form, runs the strict read-back and
-// releases automation control. It never clicks 保存 or submits the claim (ADR-0028).
-export const ERP_HANDOVER_STEP_COPY = {
-  key: 'handover',
-  title: '交接单据',
-  description: '不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。',
-} as const;
 
 // The 本地执行器's last step: the strict read-back, 暂存 (the `save` event, ADR-0029) and 核对暂存单. The bill waits in
 // the 报销系统 as a 暂存单 and submitting it is the employee's job. It holds the `handover` slot, the step that closes
@@ -867,15 +859,6 @@ const ERP_SHARED_STEPS = [
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。' },
-] as const;
-
-// The 浏览器扩展's list, ending in 交接单据. No job is worded with it (ADR-0037): it stays only for the web mock's
-// extension route and goes with it (#437).
-export const ERP_EXTENSION_STEPS = [
-  { key: 'chromium', title: '打开报销系统标签页', description: '通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。' },
-  { key: 'login', title: '登录', description: '在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。' },
-  ...ERP_SHARED_STEPS,
-  ERP_HANDOVER_STEP_COPY,
 ] as const;
 
 // The one 去报销 step list (ADR-0037), every job's.
@@ -1059,11 +1042,6 @@ export const ReconcileSchema = z.object({
   path: ['allowedActions'],
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
-
-// The filled outcome means the form was strictly read back and handed to the employee. Saving, submission, approval,
-// and payment remain facts of the ERP system, not consequences of filling the form (ADR-0028).
-export const HANDOVER_COMPLETED_NOTICE =
-  '报销单已经按你确认的明细填好，还没有保存或提交。请在报销系统里逐行核对，由你自己点「保存」并按流程提交。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存后回到这里再对一次账。应用只确认已填好，不代表已保存、已提交、已审批或已付款。';
 
 // ERP 草稿已交接 (ADR-0029): the baox 本地执行器 暂存'd the bill. A 暂存单 has no 单据编号 until it is saved; the page
 // shows this next to the 去报销系统查看 button and the 内码 (`Erp.review`), so it stays one short line (spec #406).

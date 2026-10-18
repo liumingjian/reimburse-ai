@@ -1,32 +1,23 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import { SILENT_EXTENSION_BRIDGE, type ExtensionBridge } from './extension-bridge';
 import { SILENT_LOCAL_EXECUTOR_PORT, type LocalExecutorPort } from './local-executor-port';
 import type { AccountsState, AppState, AppStore, BookScope, PairingState, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
 const StoreContext = createContext<AppStore | null>(null);
-// The page bridge to the 浏览器扩展 (browser extension) is injected the same way; without one, nothing ever answers.
-const BridgeContext = createContext<ExtensionBridge>(SILENT_EXTENSION_BRIDGE);
-// So is the 本地执行器 on this PC (its loopback port 47319); without one, nothing answers there either.
+// The 本地执行器 on this PC (its loopback port 47319) is injected the same way; without one, nothing ever answers.
 const LocalExecutorContext = createContext<LocalExecutorPort>(SILENT_LOCAL_EXECUTOR_PORT);
 
-export function AppProvider({ store, bridge = SILENT_EXTENSION_BRIDGE, localExecutor = SILENT_LOCAL_EXECUTOR_PORT, children }: { store: AppStore; bridge?: ExtensionBridge; localExecutor?: LocalExecutorPort; children: ReactNode }) {
+export function AppProvider({ store, localExecutor = SILENT_LOCAL_EXECUTOR_PORT, children }: { store: AppStore; localExecutor?: LocalExecutorPort; children: ReactNode }) {
   return (
     <StoreContext.Provider value={store}>
-      <BridgeContext.Provider value={bridge}>
-        <LocalExecutorContext.Provider value={localExecutor}>{children}</LocalExecutorContext.Provider>
-      </BridgeContext.Provider>
+      <LocalExecutorContext.Provider value={localExecutor}>{children}</LocalExecutorContext.Provider>
     </StoreContext.Provider>
   );
 }
 
 export function useLocalExecutorPort(): LocalExecutorPort {
   return useContext(LocalExecutorContext);
-}
-
-export function useExtensionBridge(): ExtensionBridge {
-  return useContext(BridgeContext);
 }
 
 export function useAppStore(): AppStore {
@@ -90,13 +81,13 @@ export function useLegacyImport(): LegacyImportState {
   return state.legacyImport;
 }
 
-export function useExtensionPairing(): PairingState {
+export function usePairing(): PairingState {
   const store = useAppStore();
   const state = useAppState();
   useEffect(() => {
-    if (state.extensionPairing.status === 'idle') void store.loadExtensionPairing();
-  }, [store, state.extensionPairing.status]);
-  return state.extensionPairing;
+    if (state.pairing.status === 'idle') void store.loadPairing();
+  }, [store, state.pairing.status]);
+  return state.pairing;
 }
 
 export function useTask(taskId: string): TaskEntry {

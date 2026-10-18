@@ -1,13 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
-import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE } from '@baox/contract';
 
-// 去报销 runs through by itself from the 整单确认页: there is no separate start action and nothing waits for the
-// employee to log in (ADR-0037). Each simulated stage takes 300 ms.
+// The ERP mock plays the 本地执行器 (ADR-0037): 去报销 signs in by itself and ends 暂存'd; there is no separate start
+// action and nothing waits for the employee to log in. Each simulated stage takes 300 ms. `?seed=erp` is a job that is
+// running, held by the mock at 报销信息核对.
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
-const STEP_TITLES = ['打开报销系统标签页', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '交接单据'];
-const LOCAL_STEP_TITLES = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
+const STEP_TITLES = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
 const HUMAN_REVIEW = '当前报销已暂停，材料和状态已保留。请在报销系统中核对；如无法判断，请联系报销管理员。';
 
 const progress = (page: Page) => page.getByRole('region', { name: '填报进度' });
@@ -21,11 +21,11 @@ async function startErp(page: Page, fault: string | null = null) {
   await page.getByRole('button', { name: '去报销', exact: true }).click();
 }
 
-async function expectDone(page: Page) {
+async function expectDone(page: Page, notice: string = DRAFT_HANDOVER_NOTICE) {
   await expect(page.getByRole('heading', { name: '完成' })).toBeVisible();
   await expect(page.getByTestId('draft-no')).toHaveText('尚无');
   await expect(page.getByText('明细 9/9 一致')).toBeVisible();
-  await expect(page.getByTestId('handover-completed')).toHaveText(HANDOVER_COMPLETED_NOTICE);
+  await expect(page.getByTestId('handover-completed')).toHaveText(notice);
   await expect(bodyRows(page, '逐条回读')).toHaveCount(9);
   await expect(page.getByRole('row').filter({ hasText: '不一致' })).toHaveCount(0);
 }
@@ -48,7 +48,7 @@ for (const [width, height] of [
     expect(descColor).toBe('rgb(111, 111, 111)');
 
     const num = await todo.getByText('5', { exact: true }).boundingBox();
-    const icon = await stepItem(page, '打开报销系统标签页').locator('svg').first().boundingBox();
+    const icon = await stepItem(page, '启动后台浏览器').locator('svg').first().boundingBox();
     if (!num || !icon) throw new Error('量不到编号或图标');
     expect(Math.abs(num.width - icon.width)).toBeLessThan(1);
     expect(Math.abs(num.height - icon.height)).toBeLessThan(1);
@@ -68,6 +68,7 @@ for (const [width, height] of [
 test('正常流程：去报销后八个事实阶段自己完成，没有要你登录的一步，进入完成页', async ({ page }, testInfo) => {
   await startErp(page);
   await expect(progress(page).locator('.step-title')).toHaveText(STEP_TITLES);
+  await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
   await expect(loginButton(page)).toHaveCount(0);
   await expect(progress(page).locator('li .status')).toHaveText(STEP_TITLES.map(() => '完成'));
@@ -77,28 +78,18 @@ test('正常流程：去报销后八个事实阶段自己完成，没有要你�
   await page.screenshot({ path: testInfo.outputPath('done.png'), fullPage: true });
 });
 
-test('去报销：在整单确认页点去报销，进入填写报销单页，没有「开始填报」，自动写完', async ({ page }) => {
-  await startErp(page);
-  await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
-  await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
-  await page.getByRole('link', { name: '查看完成结果' }).click();
-  await expectDone(page);
-});
-
-// 按路线的步骤文案 (#423): on the 本地执行器 route the list is its own, there is no login wait, and the run ends 暂存'd.
-test('本地执行器（?route=local_executor）：启动后台浏览器起步，暂存到报销系统收尾，完成页可去报销系统查看暂存单', async ({ page }) => {
-  await page.goto(open('?seed=actions&route=local_executor', '#/task/T1/review'));
+// 步骤文案 (#423, ADR-0037): the 本地执行器's list, no login wait, and the run ends 暂存'd.
+test('去报销：在整单确认页点去报销，启动后台浏览器起步，暂存到报销系统收尾，完成页可去报销系统查看暂存单', async ({ page }) => {
+  await page.goto(open('?seed=actions', '#/task/T1/review'));
   await page.getByRole('button', { name: '去报销', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
-  await expect(progress(page).locator('.step-title')).toHaveText(LOCAL_STEP_TITLES);
+  await expect(progress(page).locator('.step-title')).toHaveText(STEP_TITLES);
   await expect(stepItem(page, '启动后台浏览器')).toContainText('在你的电脑上启动一个看不见的浏览器，专门用于这次报销。');
   await expect(stepItem(page, '登录')).toContainText('用你在设置页保存的报销系统账号登录。');
   await expect(stepItem(page, '暂存到报销系统')).toContainText('你检查后自己提交');
   await expect(page.getByTestId('erp-progress-percent')).toHaveText('100%');
   await expect(page.getByTestId('erp-progress-label')).toHaveText('核对暂存单');
-  await expect(progress(page).locator('li .status')).toHaveText(LOCAL_STEP_TITLES.map(() => '完成'));
+  await expect(progress(page).locator('li .status')).toHaveText(STEP_TITLES.map(() => '完成'));
   await expect(loginButton(page)).toHaveCount(0);
   await page.getByRole('link', { name: '查看完成结果' }).click();
   await expect(page.getByTestId('handover-completed')).toHaveText('已暂存到报销系统，请打开检查，确认无误后由你自己提交。');
@@ -187,7 +178,7 @@ test('对账页直接打开：T2（已保存、逐行不一致 ⇒ 转人工）�
   await expect(page.getByRole('region', { name: '处置' }).getByRole('button')).toHaveText(['开始对账', '转人工']);
 
   await page.goto(open('?seed=reconcile', '#/task/T1/erp'));
-  await expect(stepItem(page, '交接单据')).toContainText('已中止');
+  await expect(stepItem(page, '暂存到报销系统')).toContainText('已中止');
   await page.getByRole('link', { name: '进入对账' }).click();
   await expect(page.getByRole('heading', { name: '对账', exact: true })).toBeVisible();
 });

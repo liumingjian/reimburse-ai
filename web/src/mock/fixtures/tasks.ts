@@ -220,7 +220,7 @@ export function t1Snapshot(stage: SeedStage = 'upload', unsupportedFault = false
     snapshot.preparation = preparationReady();
   }
   if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
-  // erp：「去报销」之后作业正在跑（定格在报销信息核对）。done：回读 9/9 一致、单据已交接；
+  // erp：「去报销」之后作业正在跑（定格在报销信息核对）。done：回读 9/9 一致、已暂存到报销系统；
   // 交接时单据还没有保存，所以没有单据编号（服务端同此）；只有 T3 那种由员工自己保存过的任务才有编号。
   // reconcile：交接步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
   if (stage === 'erp') snapshot.erp = erpSeedRunning(snapshot.lines.length);

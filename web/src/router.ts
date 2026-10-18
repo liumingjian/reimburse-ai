@@ -10,9 +10,8 @@ export type Route =
   | { kind: 'projects' }
   | { kind: 'settings'; returnTo?: string }
   | { kind: 'password' }
-  | { kind: 'settingsTutorial' }
   | { kind: 'admin' }
-  | { kind: 'task'; taskId: string; page: TaskPage | null; fromExtensionSetup?: boolean }
+  | { kind: 'task'; taskId: string; page: TaskPage | null }
   | { kind: 'redirect'; to: string };
 
 export const TASKS_HASH = '#/tasks';
@@ -22,7 +21,6 @@ export const PROJECTS_HASH = '#/projects';
 // 设置（完全重置）：全局页面。
 export const SETTINGS_HASH = '#/settings';
 export const SETTINGS_PASSWORD_HASH = '#/settings/password';
-export const SETTINGS_TUTORIAL_HASH = '#/settings/tutorial';
 // Account administration has a separate administrator-only entry; project books use PROJECTS_HASH.
 export const ADMIN_HASH = '#/admin';
 
@@ -37,8 +35,9 @@ function taskReturnDestination(value: string | null): string | null {
   try { return taskHash(decodeURIComponent(match[1]), match[2]); } catch { return null; }
 }
 
-export function extensionSettingsHash(taskId: string, page: TaskPage): string {
-  return `${SETTINGS_HASH}?${new URLSearchParams({ returnTo: taskHash(taskId, page) })}`;
+// The 设置页, opened from a task page: it offers the way back to that page (a refusal that links to it, #437).
+export function settingsHash(returnTo: { taskId: string; page: TaskPage } | null = null): string {
+  return returnTo ? `${SETTINGS_HASH}?${new URLSearchParams({ returnTo: taskHash(returnTo.taskId, returnTo.page) })}` : SETTINGS_HASH;
 }
 
 export function parseHash(hash: string): Route {
@@ -56,12 +55,9 @@ export function parseHash(hash: string): Route {
     return { kind: 'settings', ...(returnTo ? { returnTo } : {}) };
   }
   if (head === 'settings' && second === 'password' && parts.length === 2) return { kind: 'password' };
-  if (head === 'settings' && second === 'tutorial' && parts.length === 2) return { kind: 'settingsTutorial' };
   if (head === 'admin' && parts.length === 1) return { kind: 'admin' };
   if (head === 'task' && second && parts.length === 2) return { kind: 'task', taskId: second, page: null };
-  if (head === 'task' && second && third && parts.length === 3 && isTaskPage(third)) {
-    return { kind: 'task', taskId: second, page: third, ...(params.get('extensionSetup') === '1' ? { fromExtensionSetup: true } : {}) };
-  }
+  if (head === 'task' && second && third && parts.length === 3 && isTaskPage(third)) return { kind: 'task', taskId: second, page: third };
   return { kind: 'redirect', to: TASKS_HASH };
 }
 

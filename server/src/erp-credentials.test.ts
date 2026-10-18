@@ -34,7 +34,7 @@ async function pair(owner: TestClient): Promise<string> {
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, holder: 'local_executor' }),
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION }),
   });
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }

@@ -194,7 +194,8 @@ test('分岔入口：?seed=actions 下去打印进入打印稿预览，去报销
   await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
   await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
-  await expect(page.getByRole('region', { name: '填报进度' }).getByRole('listitem', { name: '登录', exact: true })).toContainText('等待你登录');
+  await expect(page.getByRole('region', { name: '填报进度' }).getByRole('listitem', { name: '启动后台浏览器', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '我已登录，继续' })).toHaveCount(0);
   // 步骤条里「去打印 / 去报销」已经可进入。
   const actionsStep = page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^去打印 \/ 去报销/ });
   await expect(actionsStep).toBeVisible();

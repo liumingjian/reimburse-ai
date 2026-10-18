@@ -124,20 +124,6 @@ describe('扩展配对 (extension pairing)', () => {
     expect(Date.parse(later.lastConnectedAt ?? '')).toBeGreaterThan(Date.parse(paired.pairedAt ?? ''));
   });
 
-  // ADR-0037: every pairing is a 本地执行器's, whatever the client said it was, and none before pairing.
-  it('names the 本地执行器 as the holder of every pairing, and none before pairing', async () => {
-    expect((await view(alice)).holder).toBeNull();
-    const issued = await issue(alice);
-    expect(issued.holder).toBeNull();
-    const byExecutor = await server.app.request(PAIRING_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code: codeOf(issued), version: CLIENT_VERSION, holder: 'local_executor' }) });
-    expect(byExecutor.status).toBe(200);
-    expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'local_executor' });
-
-    await pair(alice);
-    expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'local_executor' });
-    expect((await revoke(alice)).holder).toBeNull();
-  });
-
   it('pairs per 应用账号: one colleague\'s 配对码 never reaches another\'s account', async () => {
     const bob = await server.signIn('bob');
     const bobsCode = codeOf(await issue(bob));

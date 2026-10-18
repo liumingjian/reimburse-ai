@@ -62,7 +62,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LOG_LIMIT_BYTES = 5 * 1024 * 1024;
 
 async function redeem(origin: string, code: string) {
-  return redeemPairingCode({ origin: origin.replace(/\/+$/, ''), code, browser: `baox 本地执行器（${process.platform}）`, version: CLIENT_VERSION, holder: 'local_executor' });
+  return redeemPairingCode({ origin: origin.replace(/\/+$/, ''), code, browser: `baox 本地执行器（${process.platform}）`, version: CLIENT_VERSION });
 }
 
 async function pair(args: string[]) {

@@ -44,3 +44,4 @@ Each feature file has an H1 title and one paragraph of user-visible behaviour, t
 - [去报销](./go-erp.md): scenario `drafted`; `--fake not_signed_in`, `--fake catalog_mismatch` and the no-browser path are mapped.
 - [对账 and 转人工](./reconcile.md): scenario `reconcile-uncertain`.
 - [ERP 凭据 on the settings page](./erp-credentials.md): scenario `erp-credentials` (needs `BAOX_ERP_CREDENTIAL_KEY_FILE`).
+- 设置页 (本地执行器 only) and the 去报销 refusal without a pairing: scenario `settings-executor-only` (the refusal body is played by a page route; the verify server never refuses by itself).

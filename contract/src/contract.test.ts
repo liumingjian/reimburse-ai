@@ -5,7 +5,7 @@ import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached, type TaskStage } from '.
 import { UrlSchema } from './primitives';
 import { clientVersionRefusal } from './channel';
 import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema } from './extension';
-import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_EXTENSION_STEPS, ERP_HANDOVER_STEP_COPY, ERP_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
+import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_STEPS, ERP_SAVED_OUTCOME_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
 describe('整单确认表', () => {
@@ -98,25 +98,9 @@ describe('报销任务阶段', () => {
   });
 });
 
-// The hand-over copy records a filled form, not a saved or submitted reimbursement.
 describe('交接文案', () => {
-  test('完成页固定句说明单据还没有保存或提交，并交给员工完成这两个动作', () => {
-    expect(HANDOVER_COMPLETED_NOTICE).toContain('还没有保存或提交');
-    expect(HANDOVER_COMPLETED_NOTICE).toContain('由你自己点「保存」');
-    expect(HANDOVER_COMPLETED_NOTICE).toContain('按流程提交');
-    expect(HANDOVER_COMPLETED_NOTICE).toContain('不代表已保存、已提交、已审批或已付款');
-  });
-
-  test('完成页固定句带上 ADR-0028 的两条要求：报错回来重新去报销、保存后对账收尾', () => {
-    for (const required of ['字段必录提示', '处理结果', '重新去报销', '不要手工补填']) {
-      expect(HANDOVER_COMPLETED_NOTICE).toContain(required);
-    }
-    expect(HANDOVER_COMPLETED_NOTICE).toContain('保存后回到这里再对一次账。');
-  });
-
   test('交接步、全部写入步骤与任务列表徽标都不再说草稿', () => {
-    expect(ERP_HANDOVER_STEP_COPY.key).toBe('handover');
-    for (const text of [...[...ERP_EXTENSION_STEPS, ...ERP_STEPS].flatMap((step) => [step.title, step.description]), ...KERNEL_PHASES]) {
+    for (const text of [...ERP_STEPS.flatMap((step) => [step.title, step.description]), ...KERNEL_PHASES]) {
       expect(text).not.toContain('草稿');
     }
   });

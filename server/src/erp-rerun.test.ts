@@ -28,7 +28,7 @@ async function executor(scripts: FillRunner[]): Promise<FakeExtension> {
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, holder: 'local_executor' }),
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION }),
   });
   let run = 0;
   const extension = fakeExtension(server.app.extensionChannel, PairingTokenSchema.parse(await redeemed.json()).token, {

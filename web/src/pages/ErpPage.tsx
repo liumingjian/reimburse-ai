@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ComponentType } from 'react';
 import { Button, InlineNotification, ProgressBar } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, InProgress, Renew } from '@carbon/icons-react';
-import { DRAFT_HANDOVER_NOTICE, ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE, ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
 import { navigate, taskHash } from '../router';
 import { ActionGroup } from '../shell/ActionGroup';
@@ -48,7 +48,7 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
 
   const canRefresh = erp.allowedActions.includes('refresh');
   const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
-  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
+  const completedNotice = erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
 
   return (
     <>
