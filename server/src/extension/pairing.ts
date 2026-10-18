@@ -26,7 +26,7 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 // No look-alike characters (no I, L, O, 0, 1): the employee reads this off the settings page and types it in.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-const NOT_PAIRED: ExtensionPairingState = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null };
+const NOT_PAIRED: ExtensionPairingState = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, holder: null, code: null };
 
 function generatePairingCode(): string {
   return [...randomBytes(EXTENSION_PAIRING_CODE_LENGTH)].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('');
@@ -94,6 +94,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       codeExpiresAt: row.code_expires_at,
       connected: row.token_sha256 ? live.connected(accountId) : false,
       version: row.version,
+      holder: row.token_sha256 ? (row.holder === 'local_executor' ? 'local_executor' : 'extension') : null,
       code,
     };
   }

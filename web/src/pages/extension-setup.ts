@@ -33,8 +33,9 @@ export function extensionSetupStep(probe: ExtensionProbe, accountId: string | nu
   if (!presence) return { kind: 'notInstalled' };
   if (compareExtensionVersions(presence.version, minimum) < 0) return { kind: 'outdated', installed: presence.version, minimum };
   // Both halves must agree. The extension alone could be answering for a pairing the server has since replaced; the
-  // server alone cannot tell whether that pairing lives in this browser.
-  const here = presence.paired && accountId !== null && presence.accountId === accountId && pairing?.status === 'paired';
+  // server alone cannot tell whether that pairing lives in this browser. A pairing the 本地执行器 holds is never this
+  // extension's (#428).
+  const here = presence.paired && accountId !== null && presence.accountId === accountId && pairing?.status === 'paired' && pairing.holder === 'extension';
   if (here) return { kind: 'pairedHere', presence };
   return presence.paired && presence.accountId !== accountId ? { kind: 'pairedElsewhere', presence } : { kind: 'notPairedHere', presence };
 }
@@ -96,9 +97,11 @@ export type AutoPair =
  * to switch accounts (#292), and the code is issued only once they agree: issuing one already ends this account's
  * earlier pairing, so a refused switch leaves everything as it was. Decided once per page visit, on the first step
  * after the probe and the pairing read are both in, so a later 撤销配对 or a failed attempt never issues codes behind
- * the employee's back.
+ * the employee's back. `wanted` (#428): only when 去报销的方式 is the 浏览器扩展 because the extension holds the pairing;
+ * with the 本地执行器 paired, or nothing paired, it never issues a code by itself, since issuing ends the current
+ * pairing. Decided with the rest, so turning to the extension later on the page issues nothing either.
  */
-export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): AutoPair {
+export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void, wanted: boolean): AutoPair {
   const store = useAppStore();
   const bridge = useExtensionBridge();
   const pairing = useExtensionPairing();
@@ -110,6 +113,7 @@ export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): Auto
   useEffect(() => {
     if (decided.current || step.kind === 'checking' || !loaded || accountId === null) return;
     decided.current = true;
+    if (!wanted) return;
     if (step.kind !== 'notPairedHere' && step.kind !== 'pairedElsewhere') return;
     const switching = step.kind === 'pairedElsewhere';
     setState({ status: switching ? 'confirming' : 'pairing' });
@@ -151,7 +155,7 @@ export function useAutoPair(step: ExtensionSetupStep, reprobe: () => void): Auto
           return;
       }
     })();
-  }, [step.kind, loaded, accountId, store, bridge, reprobe]);
+  }, [step.kind, loaded, accountId, store, bridge, reprobe, wanted]);
 
   return state;
 }

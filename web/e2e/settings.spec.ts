@@ -10,6 +10,15 @@ const DESKTOP_VIEWPORTS = [
 async function openSettings(page: Page, viewport: (typeof DESKTOP_VIEWPORTS)[number], query = '') {
   await page.setViewportSize(viewport);
   await page.goto(open(query, '#/settings'));
+  // 去报销的方式 (#428): with nothing paired the page opens on the 本地执行器; the extension's section needs choosing.
+  const choice = page.getByRole('radio', { name: '浏览器扩展' });
+  if (!query.includes('extension=')) {
+    await expect(page.getByRole('radio', { name: '本地执行器（推荐）' })).toBeChecked();
+    await expect(page.getByRole('region', { name: '浏览器扩展' })).toHaveCount(0);
+    await choice.check({ force: true });
+  }
+  await expect(choice).toBeChecked();
+  await expect(page.getByRole('region', { name: 'baox 本地执行器' })).toHaveCount(0);
   const extension = page.getByRole('region', { name: '浏览器扩展' });
   await expect(extension).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: '设置' })).toBeVisible();
