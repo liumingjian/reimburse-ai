@@ -73,7 +73,8 @@ executor() {
   echo "building the 本地执行器 program"
   (cd "$SRC" && pnpm --filter @baox/local-executor build >/dev/null)
   echo "fetching its Node runtimes into $BAOX_LOCAL_EXECUTOR_RUNTIMES (skipped when present)"
-  node "$SRC/local-executor/scripts/fetch-runtimes.mjs" "$BAOX_LOCAL_EXECUTOR_RUNTIMES" >/dev/null ||
+  # nodejs.org: the Mac reaches it, while the deploy's default (npmmirror) redirects to a CDN it cannot reach.
+  NODE_MIRROR=${NODE_MIRROR:-https://nodejs.org/dist} node "$SRC/local-executor/scripts/fetch-runtimes.mjs" "$BAOX_LOCAL_EXECUTOR_RUNTIMES" >/dev/null ||
     echo "warning: no Node runtimes, so the install command will say the server has no 本地执行器" >&2
 }
 

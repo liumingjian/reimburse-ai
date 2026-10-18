@@ -28,7 +28,8 @@ const PLATFORMS = {
   'darwin-x64': { archive: `node-v${version}-darwin-x64.tar.gz`, member: `node-v${version}-darwin-x64/bin/node`, binary: 'node' },
 };
 
-const curl = (url, file) => execFileSync('curl', ['-fsSL', '--retry', '3', '-o', file, url], { stdio: ['ignore', 'inherit', 'inherit'] });
+// A mirror that cannot be reached fails within the connect timeout instead of curl's own five minutes per try.
+const curl = (url, file) => execFileSync('curl', ['-fsSL', '--retry', '3', '--connect-timeout', '20', '-o', file, url], { stdio: ['ignore', 'inherit', 'inherit'] });
 const sha256Of = async (file) => {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(file)) hash.update(chunk);
