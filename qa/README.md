@@ -46,9 +46,13 @@ production-build launch in §1 with the extension loaded and paired.
 
 **Dev mode never reaches the 本地执行器 either.** `dev-main.ts` wires only the CDP executor, and the server adds the
 暂存 step (`draft`, `server/src/erp/remote-executor.ts`) only to jobs it sends to a paired 本地执行器. So in dev mode a
-去报销 never 暂存s and never ends in ERP 草稿已交接, and the 本地执行器's pairing, hosted ERP 凭据, install command
-and self-update are not exercised. QA of those needs the production build with a 本地执行器 paired to it (ADR-0033,
-ADR-0035). Say so before the maintainer starts a QA round on one of them.
+去报销 never 暂存s and never ends in ERP 草稿已交接. QA of 暂存 needs the production build with a 本地执行器 paired to
+it (ADR-0033, ADR-0035); say so before the maintainer starts a QA round on it. The install itself does run: `up` builds
+the 本地执行器 program from the tree and caches Node's runtimes in `~/.baox-qa-dev/runtimes`, and Vite passes
+`/install`, `/uninstall` and the channel WebSocket through to the server (`web/src/dev-proxy.ts`). So the 设置页's
+install command, pairing (47319 included) and self-update (`sync` rebuilds the program when executor code changes)
+can be QA'd here. Running the install command replaces the 本地执行器 in `~/.baox/local-executor` and pairs it with
+this instance; say so first.
 
 - Hand the maintainer the Vite URL (`:5173`). The server's own `:4319` also serves `web/dist` when one was built, and that copy is stale.
 - A pushed web file hot-reloads the page; a pushed server file restarts only the server (`tsx watch`), which re-opens the

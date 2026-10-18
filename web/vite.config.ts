@@ -7,6 +7,7 @@ import { GENERATED_DIR as FIXTURES_SOURCE, REGRESSION_MATERIALS, SAMPLE_MATERIAL
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import { devProxy } from './src/dev-proxy';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 // Carbon 的 Sass 包之间互相 @use（@carbon/styles → @carbon/type、@carbon/themes …）。pnpm 默认不把它们提升到包目录，
@@ -103,9 +104,9 @@ export default defineConfig(({ mode }) => {
         scss: { loadPaths: SASS_LOAD_PATHS, quietDeps: true, silenceDeprecations: ['import', 'global-builtin'] },
       },
     },
-    // `pnpm dev`: the page talks to the real server through /api, SSE included (http-proxy streams it unbuffered).
+    // `pnpm dev`: the page talks to the real server through the proxy, SSE included (http-proxy streams it unbuffered).
     // Mock mode has no server.
-    server: mock ? {} : { proxy: { '/api': { target: `http://127.0.0.1:${process.env['BAOX_PORT'] ?? 4319}` } } },
+    server: mock ? {} : { proxy: devProxy(process.env['BAOX_PORT'] ?? 4319) },
     build: {
       outDir: mock ? 'dist-mock' : 'dist',
       emptyOutDir: true,

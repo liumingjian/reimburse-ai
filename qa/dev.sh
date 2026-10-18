@@ -26,6 +26,8 @@ SRC=$STATE/src
 export BAOX_DATA_DIR=${BAOX_DATA_DIR:-$HOME/.baox-qa}
 export BAOX_PORT=${BAOX_PORT:-4319}
 WEB_PORT=${BAOX_QA_WEB_PORT:-5173}
+# Node's runtimes for the 本地执行器 the install command hands out, kept across restarts: the first `up` downloads them.
+export BAOX_LOCAL_EXECUTOR_RUNTIMES=${BAOX_LOCAL_EXECUTOR_RUNTIMES:-$STATE/runtimes}
 URL="http://127.0.0.1:$WEB_PORT/"
 READY_TIMEOUT_S=180
 
@@ -65,6 +67,16 @@ status() {
   fi
 }
 
+# What `/install/<码>` serves: the program built from this tree and the cached runtimes. Without them the install script
+# only says the server has no 本地执行器, so a failed download warns instead of keeping the rest of QA from starting.
+executor() {
+  echo "building the 本地执行器 program"
+  (cd "$SRC" && pnpm --filter @baox/local-executor build >/dev/null)
+  echo "fetching its Node runtimes into $BAOX_LOCAL_EXECUTOR_RUNTIMES (skipped when present)"
+  node "$SRC/local-executor/scripts/fetch-runtimes.mjs" "$BAOX_LOCAL_EXECUTOR_RUNTIMES" >/dev/null ||
+    echo "warning: no Node runtimes, so the install command will say the server has no 本地执行器" >&2
+}
+
 up() {
   down
   local port
@@ -79,6 +91,8 @@ up() {
   mirror >/dev/null
   echo "installing dependencies in $SRC (quick when the lockfile is unchanged)"
   (cd "$SRC" && pnpm install --frozen-lockfile --prefer-offline --reporter=silent)
+  executor
+
 
   : > "$STATE/server.log"
   : > "$STATE/web.log"
@@ -124,6 +138,11 @@ push() {
     echo "dependencies changed; restarting the instance"
     up
     return
+  fi
+  # A new program is what an installed executor updates itself to (local-executor/src/update.ts).
+  if grep -Eq '(^|/| )(local-executor|erp-executor|extension|contract)/src/' <<<"$changed"; then
+    (cd "$SRC" && pnpm --filter @baox/local-executor build >/dev/null)
+    echo "rebuilt the 本地执行器 program; an installed one picks it up at its next update check"
   fi
   echo "pushed to $URL (web: hot reload; server: restarts itself, see $STATE/server.log)"
 }
