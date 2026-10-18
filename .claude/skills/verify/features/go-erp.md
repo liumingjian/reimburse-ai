@@ -1,42 +1,44 @@
 # 去报销
 
-From a confirmed claim the employee clicks 去报销 and the app fills the ERP 费用报销单. It stops, without writing,
-when ERP is not logged in, when 报销信息核对 finds a project ERP does not know, or when no executor can be reached.
-While a run is on, the page shows 填写报销单 and the task cannot be voided.
+From a confirmed claim the employee clicks 去报销 and the app fills the ERP 费用报销单 and 暂存s it: every run ends at
+ERP 草稿已交接 (ADR-0037), and nothing on the way waits for the employee. It stops, without writing, when it cannot sign
+in to ERP, when 报销信息核对 finds a project ERP does not know, or when no executor can be reached. While a run is on,
+the page shows 填写报销单 and the task cannot be voided.
 
 ## Sub-features
 
-- `login-wall`: ERP sits on its login page. The job pauses at 等待登录 with nothing written, and 取消去报销 returns
-  the task to 整单确认.
+- `drafted`: the one ending. The job 暂存s the bill and finds it again; the page offers 去报销系统查看 and the 内码.
+- `not-signed-in`: ERP sits on its login page and the job has no 凭据. It stops before any attempt and the task is back
+  at 整单确认 with the reason.
 - `catalog-mismatch`: 报销信息核对 finds a renamed project. The task goes back to 项目归属 before any import.
-- `no-executor`: production has no paired extension, so the page sends the employee to 设置 to pair it, and back.
+- `no-executor`: production has no paired 本地执行器, so 去报销 is refused with a link to the 设置页.
 - `uncertain`: the write's result is unknown. See [对账](./reconcile.md).
 
 ## How to get to it (user POV)
 
 - `/#/task/<id>/review`, then in the region 整单确认 the button 去报销. That leads to `/#/task/<id>/erp`.
-- `/#/task/<id>/erp` while running or paused: 我已登录，继续 and 取消去报销.
+- `/#/task/<id>/erp` while running: the steps and the bar, nothing to click but 刷新状态; when done, 查看完成结果.
 
 ## Driving it with verify.sh
 
 Preconditions: `v.signIn()` then `v.confirmedTask()`. The ERP double comes from the scenario's `fake`, or `--fake`.
 
-- **login-wall.** Run `verify.sh run login-wall`. Click `getByRole('button', { name: '去报销', exact: true })`. The
-  URL ends `/erp` and the heading 填写报销单 is visible. Poll until `step.kind === 'erp_login'` and
-  `erp.status === 'waiting_login'`. Click 取消去报销: the URL ends `/review`, 去报销 is enabled again, and the
-  snapshot reads `erp.status: 'idle'`.
+- **drafted.** Run `verify.sh run drafted`. Click `getByRole('button', { name: '去报销', exact: true })`. The URL ends
+  `/erp` and the heading 填写报销单 is visible. The link 查看完成结果 appears with no button to press on the way, and
+  the snapshot reads `erp.outcome: 'drafted'`, `erp.review.draftId: '119946'`.
+- **not-signed-in.** `--fake not_signed_in`. After 去报销, poll until `stage === 'actions'`: `erp.status: 'idle'` and
+  `erp.abortReason` names the 设置页. No `erp_attempt` is written.
 - **catalog-mismatch.** No scenario yet. Write one with `export const fake = 'catalog_mismatch'`. After 去报销, poll
   until `stage === 'project'`. The snapshot reads `catalog.status: 'mismatch'` and `erp.status: 'idle'`. The project
   page has an alert containing 报销信息核对发现项目不匹配.
 - **no-browser.** With `--fake none` the CDP executor finds no browser, because `BAOX_ERP_CHROMIUM=off`. The job stops
   before any attempt and `erp.abortReason` says why.
-- **Proof.** Screenshots `waiting-login` and `cancelled`, plus snapshots `waiting-login` and `after-cancel`. Nothing
-  is written: no `erp_attempt`, so `erp.outcome` stays `none`.
+- **Proof.** Screenshot and snapshot `drafted`: `erp.outcome` is `drafted` and the 内码 is on the page.
 
 ## Gotchas
 
 - These are scripted doubles at the executor seam. They prove the app's projection of each ERP behaviour, not the fill
   steps against a real form (`pnpm test:erp-live`, and `erp-executor`'s fake-ERP tests).
-- `no-executor` is the production extension path (`main.ts`). The e2e server runs the CDP executor, so this harness
-  cannot reach the real refusal. `web/e2e/server/erp.spec.ts` stubs it with `page.route`.
-- The account's ERP lease is held while a job is paused. A second task of the same account cannot start 去报销.
+- `no-executor` is the production path (`main.ts`). The e2e server runs an executor of its own, so this harness cannot
+  reach the real refusal; the task policy's table and the web page tests cover it.
+- The account's ERP lease is held while a job runs. A second task of the same account cannot start 去报销.

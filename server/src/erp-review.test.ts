@@ -4,7 +4,6 @@ import type { ExecutorEvent, ResultEvent } from '@baox/erp-executor/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
-import { draftMarkOf } from './erp/remote-executor';
 import { abortBeforeAttempt, drafted, draftReadbackMismatch, uncertainDraft, type Script } from './erp/testing/fake-executor';
 import { tempDataDir, testClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
@@ -72,20 +71,15 @@ describe('erp.review: where the employee checks the 暂存单', () => {
     expect(stopped.erp.review).toBeNull();
   });
 
-  it('is absent on a hand-over: the filled form was left open unsaved and nothing was 暂存ed', async () => {
-    const { reached } = await scenario(server).at('done');
-
-    expect(reached.erp).toMatchObject({ outcome: 'filled', review: null });
-  });
 });
 
-// 对账 after 暂存 looks the draft up by the 暂存 job's ownership marker (`draft_lookup`). As on a 本地执行器, the fill
-// job is given the marker; the 对账 executor answers with the drafts `found` returns for that marker.
+// 对账 after 暂存 looks the draft up by the 暂存 job's ownership marker (`draft_lookup`). Every fill plan carries the
+// marker; the 对账 executor answers with the drafts `found` returns for that marker.
 describe('erp.review after 对账 by the ownership marker', () => {
   let found: (mark: string) => Extract<ExecutorEvent, { type: 'draft_lookup' }>;
   let fill: Script;
   let marked: ScenarioServer;
-  const fillExecutor: FillExecutor = (plan, channel) => fill({ ...plan, draft: { mark: draftMarkOf(plan.jobId) } }, channel);
+  const fillExecutor: FillExecutor = (plan, channel) => fill(plan, channel);
   const reconcileExecutor: ReconcileExecutor = async (plan, channel) => {
     await channel.emit(found(plan.draft!.mark));
     const event: ResultEvent = { type: 'result', status: 'read', code: null, message: null, billNo: null, capture: null };

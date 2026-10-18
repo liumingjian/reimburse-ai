@@ -8,7 +8,7 @@
 import { ReconcilePlanSchema, type ExecutorChannel, type ResultEvent, type ResultStatus } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import type { ChromiumPage } from './page';
-import type { BrowserPort, ExecutorPorts } from './job';
+import { NOT_SIGNED_IN_CODE, notSignedIn, type BrowserPort, type ExecutorPorts } from './job';
 import { DEFAULT_PACE, type Pace } from './pace';
 import { probeIdentity, sameOrigin } from './probe';
 import { protocolReadings, readForm } from './reader';
@@ -58,11 +58,7 @@ export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): 
       if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
       probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
     }
-    if (probe.status === 'not_logged_in' || probe.status === 'no_tab') {
-      await step('login', 'done');
-      await channel.emit({ type: 'waiting_login', hint: probe.hint ?? '' });
-      return await finish('waiting_login', 'erp_login', probe.hint ?? null);
-    }
+    if (probe.status === 'not_logged_in' || probe.status === 'no_tab') return await finish('aborted', NOT_SIGNED_IN_CODE, notSignedIn(probe.hint));
     if (probe.status !== 'matched' || !probe.page) return await finish('aborted', `erp_login_${probe.status}`, probe.hint ?? null);
     const { session } = await attach(probe.page as ChromiumPage);
     await step('login', 'done');

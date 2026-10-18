@@ -16,9 +16,8 @@ export type { ChannelWatch, Interruption } from '@baox/channel/job-link';
 // back as an `erp.event` request through the job's link, so `attempt_started` waits for its durable ack before the
 // first mutation.
 //
-// Which tab a job runs in (user story 14): `start` — 去报销 — always opens a new one. `confirm_login` (我已登录，继续)
-// and `refill` (重新去报销) go back to the tab this task's last run used, where the employee just logged in or where the
-// abandoned form is, and open a new one only when that tab is gone. 对账 (reconcile) reads the form in that tab
+// Which tab a job runs in (user story 14): `start` — 去报销 — always opens a new one. `refill` (重新去报销) goes back
+// to the tab this task's last run used, where the abandoned form is, and opens a new one only when that tab is gone. 对账 (reconcile) reads the form in that tab
 // and nowhere else: a fresh tab would show a blank console and hand the server a confident answer about the wrong page.
 //
 // An interruption — the debugger detached, or the channel closed — is resumed inside the reconnection window by the
@@ -117,8 +116,6 @@ export function createErpRunner(ports: ErpRunnerPorts): (method: string, payload
           // Invoices go into the page as bytes: the extension has no local path to give the file input (ADR-0021).
           browser, blobs: ports.blobs ?? NO_BLOBS, staging: stageInPage, channel,
           ...(ports.pace ? { pace: ports.pace } : {}),
-          // As the server's own executor does: 我已登录，继续 probes the login once instead of waiting for it.
-          probeWaitMs: trigger === 'confirm_login' ? 0 : 30_000,
         }));
       } finally {
         remember(plan.taskId, browser);

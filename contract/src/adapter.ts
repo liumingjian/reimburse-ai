@@ -143,10 +143,6 @@ export interface AppAdapter {
   // 修改当前任务的常驻城市：第一次写入报销系统之前可改；服务端重新推导费用类别，并记为这个账号的常驻城市。
   setTaskHomeCity(taskId: string, homeCity: string, stepToken: string): Promise<ActionOutcome>;
   startErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
-  // 「我已登录，继续」只是请服务端再探测一次，页面从不断言登录已发生。
-  confirmLogin(taskId: string, stepToken: string): Promise<ActionOutcome>;
-  // 登录等待时放弃这次去报销：什么都没有写入，任务回到「去打印 / 去报销」，之后可以再去报销。
-  cancelErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
   // 重新对账：只读 ERP 再判定一次，不发起任何写入。转人工：终止后续 ERP 写入，交给用户接管。两者都回传当前对账 step 的 stepToken。
   reconcile(taskId: string, stepToken: string): Promise<ActionOutcome>;
   handOff(taskId: string, stepToken: string): Promise<ActionOutcome>;

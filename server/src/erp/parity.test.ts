@@ -1,5 +1,6 @@
 // Parity (spec #177): a job driven through the protocol on the fake ERP produces the same read-backs as the kernel
-// on the same inputs. The golden was recorded by driving the kernel's own CDP path (50931a3:kernel/src/erpwrite-cdp.mjs,
+// on the same inputs. The kernel handed the form over unsaved; the job now goes on to 暂存 it (ADR-0037), so it writes
+// the kernel's mutations with the ownership marker after the 事由, then presses 暂存. The golden was recorded by driving the kernel's own CDP path (50931a3:kernel/src/erpwrite-cdp.mjs,
 // erp-browser-adapters.mjs, erp-cdp-read.mjs + erpreconcile.mjs readReconciliation, erp-write-readback.mjs,
 // erp-draft-flow.mjs) against a fresh fake ERP with the same scenario; see the golden's `_origin`.
 //
@@ -20,7 +21,7 @@ import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { createErpJobs, serverChannel } from './jobs';
 import { createDraftJudge } from './judge';
 import type { ExecutorChannel, ExecutorEvent } from '@baox/erp-executor/protocol';
-import { blobSource, ERP_ORIGIN, FAST_PACE, fakeErpOptions, fillPlan, withoutLayout } from '@baox/erp-executor/testing/scenario';
+import { blobSource, DRAFT_MARK_OF_TEST, ERP_ORIGIN, FAST_PACE, fakeErpOptions, fillPlan, withoutLayout } from '@baox/erp-executor/testing/scenario';
 import { judgeInputs } from './testing/judge-inputs';
 
 const golden = JSON.parse(readFileSync(new URL('./testing/kernel-parity.golden.json', import.meta.url), 'utf8'));
@@ -65,7 +66,10 @@ describe.each([
       expect(strip(stage), stage).toEqual(golden.readbacks[stage]);
     }
     expect(previewDigest).toBe(golden.previewDigest);
-    expect(fake.mutations).toEqual(golden.mutations);
-    expect({ status: result.status, billNo: result.billNo }).toEqual(golden.result);
+    const marked = (golden.mutations as Array<{ kind: string; detail: string }>)
+      .map((m) => (m.kind === 'header' && m.detail.startsWith('FCAUSA=') ? { ...m, detail: `${m.detail} ${DRAFT_MARK_OF_TEST}` } : m));
+    expect(fake.mutations).toEqual([...marked, { kind: 'draft', detail: expect.any(String) }]);
+    expect(golden.result).toEqual({ status: 'handed_over', billNo: null });
+    expect({ status: result.status, billNo: result.billNo }).toEqual({ status: 'drafted', billNo: null });
   });
 });

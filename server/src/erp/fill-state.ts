@@ -1,5 +1,5 @@
 // The 去报销 (fill ERP) state of a task, derived from stored facts (ADR-0014): the latest `erp_job`, its persisted
-// executor events, its cancel, and the task's `erp_attempt` rows. Nothing about the phase is stored. The snapshot's
+// executor events, and the task's `erp_attempt` rows. Nothing about the phase is stored. The snapshot's
 // `erp`, `readback`, `reconcile` and `catalog` sections are worded from this record in `task-snapshot/erp.ts`.
 
 import { sql } from 'kysely';
@@ -13,14 +13,12 @@ import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
-// the two terminals it can prove. `saved`: the draft saved exactly as approved (已保存, identity holds, strict
-// per-line match passed). `handedOver`: the form is filled and ready to save exactly as approved
-// (未保存·就绪待保存 plus the same strict per-line match) — ERP 单据已交接 (bill handed over), the resume path to the
-// same terminal a clean run reaches (ADR-0028).
+// the terminal it can prove. `saved`: the draft saved exactly as approved (已保存, identity holds, strict per-line
+// match passed). A form filled and ready to save is no terminal (ADR-0037): nothing is handed over unsaved.
 // `noForm`: 对账 found no 费用报销单 open on the page at all — the employee closed the tab, or the ERP browser was
 // cleaned. It is a normal state, not evidence about this task, and it is told apart from every other 未知 because
 // nothing else can be read once the form is gone.
-export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean; handedOver: boolean; noForm: boolean; draft?: DraftJudgement };
+export type ReconcileJudgement = { verdict: ReconcileVerdict; billNo: string | null; saved: boolean; noForm: boolean; draft?: DraftJudgement };
 
 // A 对账 after 暂存 (line 2 item 5) judges the draft found by the 暂存 job's ownership marker, not a page. `drafted`:
 // exactly one draft carries any of the task's marks, it is the 暂存 job's, still 暂存 with no 单据编号, and its View
@@ -79,12 +77,11 @@ export function judgeReconcile(events: ExecutorEvent[], preview: ApprovedPreview
     if (read.targetId && attempt.targetId && read.targetId !== attempt.targetId) elsewhere.push('报销系统所在的浏览器标签页不是这次写入时的那一个，读到的内容不能说明这次写入的结果');
   }
   const verdict: ReconcileVerdict = elsewhere.length ? { ...derived.verdict, bucket: '未知', action: '原地等待', reasons: [...elsewhere, ...derived.verdict.reasons] } : derived.verdict;
-  // Both terminals rest on the same strict per-line match (`taskMatch`); only the bucket differs. The classifier is
-  // untouched: it says what the ERP shows, this layer says what that means for the task (ADR-0027).
+  // The terminal rests on the strict per-line match (`taskMatch`). The classifier is untouched: it says what the ERP
+  // shows, this layer says what that means for the task (ADR-0027).
   const strictMatch = elsewhere.length === 0 && preview !== null && verdict.action === '原地等待' && derived.readings.taskMatch?.ok === true;
   const saved = strictMatch && verdict.bucket === '已保存';
-  const handedOver = strictMatch && verdict.bucket === '未保存·就绪待保存';
-  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved, handedOver, noForm: noFormOpen(derived.readings) };
+  return { verdict, billNo: read.billNo.readable ? read.billNo.value : null, saved, noForm: noFormOpen(derived.readings) };
 }
 
 const NOT_SUMMED = { applicable: false, receiptsCents: null, detailCents: null, equal: false };
@@ -95,7 +92,7 @@ export function judgeDraftLookup(events: ExecutorEvent[], mark: string): Reconci
   if (!lookup) return null;
   const judged = (outcome: DraftOutcome, bucket: ReconcileVerdict['bucket'], reasons: string[], draft: DraftLookup['drafts'][number] | null = null): ReconcileJudgement => ({
     verdict: { bucket, action: outcome === 'unread' || outcome === 'drafted' ? '原地等待' : '转人工', identity: NOT_SUMMED, reasons },
-    billNo: draft?.billNo ?? null, saved: false, handedOver: false, noForm: false,
+    billNo: draft?.billNo ?? null, saved: false, noForm: false,
     draft: { outcome, draftId: draft?.id ?? null, found: lookup.drafts.length },
   });
   if (lookup.failure) return judged('unread', '未知', [lookup.failure]);
@@ -111,16 +108,12 @@ export function judgeDraftLookup(events: ExecutorEvent[], mark: string): Reconci
   return judged('drafted', '未保存·就绪待保存', [], only);
 }
 
-/** The job's phase from its result (none yet = running) and whether its login pause was cancelled. */
-export function phaseOf(result: ResultEvent | null, cancelled: boolean): ErpPhase {
+/** The job's phase from its result (none yet = running). */
+export function phaseOf(result: ResultEvent | null): ErpPhase {
   if (!result) return 'running';
   switch (result.status) {
-    case 'waiting_login':
-      return cancelled ? 'cancelled' : 'waiting_login';
     case 'catalog_mismatch':
       return 'catalog_mismatch';
-    case 'handed_over':
-      return 'handed_over';
     case 'drafted':
       return 'drafted';
     case 'saved':
@@ -148,8 +141,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   if (!job) return { ...NO_ERP, attempted: attempt !== undefined, erpAccount, handOff };
   const events = await eventsOf(tx, job.job_id);
   let result = lastResult(events);
-  const cancelled = (await tx.selectFrom('erp_job_cancel').select('cancel_id').where('job_id', '=', job.job_id).executeTakeFirst()) !== undefined;
-  let phase = phaseOf(result, cancelled);
+  let phase = phaseOf(result);
   // A later job that wrote nothing does not settle what an earlier one left behind: once any attempt of this task is
   // durable, the task's ERP write result stays unknown until 对账 says otherwise (ADR-0016). Without this, a
   // 重新去报销 that stops before its first attempt (no Chromium, say) would report 「报销系统没有被改动，可以再去
@@ -174,17 +166,10 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
     }
   }
   // A reconcile that proves the draft saved exactly as approved (the same strict test a fill's `saved` passed) is
-  // ERP 单据已交接: done, not a hand-off.
+  // done, not a hand-off.
   if (phase === 'unknown' && reconcile?.judged?.saved) {
     phase = 'saved';
     result = { type: 'result', status: 'saved', code: 'reconciled', message: null, billNo: reconcile.judged.billNo, capture: null };
-  }
-  // The resume path to the same terminal a clean run reaches: a reconcile that proves the form is filled, ready to
-  // save, and equal to the approved preview on every row is ERP 单据已交接 (bill handed over), not a breakpoint. Since
-  // nothing was saved there is no 单据编号 (bill number) to report.
-  if (phase === 'unknown' && reconcile?.judged?.handedOver) {
-    phase = 'handed_over';
-    result = { type: 'result', status: 'handed_over', code: 'reconciled', message: null, billNo: null, capture: null };
   }
   // 对账 found the 暂存 job's draft by its marker, alone, and equal to what the fill verified: ERP 草稿已交接, as a run
   // that read its own draft back ends.

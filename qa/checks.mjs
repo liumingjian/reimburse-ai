@@ -121,7 +121,7 @@ export function erpIdleFindings({ catalog = null, refusals = [], abortReason = n
  * `idle` burns the whole budget on a state that has already settled; `abortReason` is what actually moves.
  */
 export function erpPollSettled({ status = null, abortReason = null, catalog = null } = {}) {
-  if (status === 'aborted' || status === 'done' || status === 'waiting_login') return true;
+  if (status === 'aborted' || status === 'done') return true;
   if (String(abortReason ?? '').trim()) return true;
   return catalog?.status === 'mismatch';
 }
@@ -169,13 +169,13 @@ export const ERP_WRITE_BUDGET_MS = 300_000;
  * were off — which it usually is not. The driver cannot see that browser; the snapshot is all it has, so the
  * path is read off the outcome:
  *
- *   `done`         the write ran to the end and the form is waiting for the employee's 保存 (ADR-0028). The
- *                  browser was plainly available. This is a pass, and the area had no way to say so before.
+ *   `done`         the write ran to the end and 暂存'd the bill for the employee to check and submit
+ *                  (ERP 草稿已交接, ADR-0037). The browser was plainly available. This is a pass.
  *   `aborted`      only the `unknown` phase reports this (server/src/task-snapshot/erp.ts): the write may have
  *                  landed and the app cannot tell. Over an irreversible import that is a defect to report,
  *                  whatever caused it.
- *   `waiting_login` the browser is up but nobody is logged in; nothing was written, and the run is paused for
- *                  a human. Not a defect, and not something the driver can finish.
+ *                  (A browser nobody could sign in to is a clean abort before any write: `idle`, below. Nothing
+ *                  waits for a human to log in any more.)
  *   `running`      still in flight when the budget ran out. The browser is on and the write is working; the
  *                  budget expired, not the app. A warning about this run's coverage, never a defect.
  *   `idle`/null    nothing moved: `erpIdleFindings` reads the clean abort, the catalog refusal or the silence.
@@ -187,13 +187,10 @@ export function erpWriteFindings({ status = null, abortReason = null, catalog = 
   const reason = String(abortReason ?? '').replace(/\s+/g, ' ').trim();
   const seconds = (ms) => `${Math.round(Number(ms ?? 0) / 1000)}s`;
   if (status === 'done') {
-    return [{ level: 'ok', text: '去报销 ran with the ERP browser available and finished: the 费用报销单 is filled and handed over unsaved, for the employee to check and 保存 themselves' }];
+    return [{ level: 'ok', text: '去报销 ran with the ERP browser available and finished: the 费用报销单 is 暂存d (ERP 草稿已交接), for the employee to check, 保存 and submit themselves' }];
   }
   if (status === 'aborted') {
     return [{ level: 'DEFECT', text: `去报销 ended with the write result undetermined (erp.status aborted), so the employee is told to go and look for themselves: ${reason.slice(0, 300) || '(no reason recorded)'}` }];
-  }
-  if (status === 'waiting_login') {
-    return [{ level: 'WARN', text: 'the dedicated browser is open but not logged in, so 去报销 is paused at 登录 and wrote nothing. Log in in that window and run this area again to cover the write.' }];
   }
   if (status === 'running') {
     return [{ level: 'WARN', text: `去报销 was still running when this area's ${seconds(budgetMs)} budget ran out after ${seconds(waitedMs)} — the ERP browser is on and the write is in flight, so this run's outcome is unknown to the driver, not wrong. Check the task page for how it ended.` }];

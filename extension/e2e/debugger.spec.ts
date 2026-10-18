@@ -68,11 +68,10 @@ test('the login probe and the master-data check pass in a tab of the job\'s own,
 test.describe('logged out of the ERP', () => {
   test.use({ erpLoggedIn: false });
 
-  test('waits for the employee to log in, in the tab it opened, and starts nothing', async ({ erp, baox, extension }) => {
+  test('stops on the login page, in the tab it opened, and starts nothing', async ({ erp, baox, extension }) => {
     const result = await baox.fill(fillPlan(erp.erpOrigin));
 
-    expect(result).toMatchObject({ status: 'waiting_login', code: 'erp_login' });
-    expect(baox.events.some((e) => e.type === 'waiting_login')).toBe(true);
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login' });
     expect(baox.events.some((e) => e.type === 'attempt_started')).toBe(false);
     const erpTabs = await extension.worker.evaluate(async (entry) => (await chrome.tabs.query({})).filter((tab) => tab.url?.startsWith(entry)).length, erp.entry);
     expect(erpTabs).toBe(1);

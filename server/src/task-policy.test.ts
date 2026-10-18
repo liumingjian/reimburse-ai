@@ -38,11 +38,9 @@ describe('taskPolicy: stage and step', () => {
     ['a confirmation invalidated by a later change: review again', { ...submitted, confirmation: 'invalidated' }, 'review', 'confirm_review'],
     // #191 去报销 and #192 对账
     ['a fill job running', { ...confirmed, erp: job('running') }, 'erp', 'none'],
-    ['a fill job paused at the ERP login', { ...confirmed, erp: job('waiting_login') }, 'erp', 'erp_login'],
-    ['the login pause cancelled: back to the actions', { ...confirmed, erp: job('cancelled') }, 'actions', 'choose_action'],
     ['aborted before any write: back to the actions', { ...confirmed, erp: job('aborted') }, 'actions', 'choose_action'],
     ['a catalog mismatch sends the task back to assignment', { ...confirmed, erp: job('catalog_mismatch', { reassign: true }) }, 'project', 'assign_projects'],
-    ['ERP bill handed over (单据已交接): done', { ...confirmed, erp: job('handed_over') }, 'done', 'none'],
+    ['ERP 草稿已交接 (the 暂存 draft found again): done', { ...confirmed, erp: job('drafted') }, 'done', 'none'],
     ['a reconcile proved the save: done', { ...confirmed, erp: job('saved') }, 'done', 'none'],
     ['ERP 写入结果未知: reconcile', { ...confirmed, erp: job('unknown') }, 'reconcile', 'reconcile'],
     ['a reconcile job running on it', { ...confirmed, erp: job('unknown', { reconciling: true }) }, 'reconcile', 'none'],
@@ -103,11 +101,11 @@ describe('taskPolicy: admit', () => {
     ['a voided task', { lifecycle: 'voided' }, false, 'exclude_material', TOKEN, closed],
     ['a handed-off task', { lifecycle: 'handed_off', erp: job('unknown') }, true, 'hand_off', TOKEN, closed],
     ['a job write on a voided task', { lifecycle: 'voided' }, false, 'job', null, closed],
-    ['ERP 单据已交接 closes the task', { ...confirmed, erp: job('handed_over') }, true, 'upload', TOKEN, closed],
+    ['ERP 草稿已交接 closes the task', { ...confirmed, erp: job('drafted') }, true, 'upload', TOKEN, closed],
     ['a saved draft closes the task', { ...confirmed, erp: job('saved') }, true, 'upload', TOKEN, closed],
     // print
     ['print outlives 转人工', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, true, 'print', TOKEN, 'ok'],
-    ['print outlives the handed-over draft', { ...confirmed, erp: job('handed_over') }, true, 'print', TOKEN, 'ok'],
+    ['print outlives the handed-over draft', { ...confirmed, erp: job('drafted') }, true, 'print', TOKEN, 'ok'],
     ['print outlives a write result unknown', { ...confirmed, erp: job('unknown') }, true, 'print', TOKEN, 'ok'],
     ['print stops at a voided task', { lifecycle: 'voided' }, false, 'print', TOKEN, closed],
     ['print stops at a legacy task', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'draft_handed_over' }, false, 'print', TOKEN, closed],
@@ -119,9 +117,7 @@ describe('taskPolicy: admit', () => {
     ['a fill job running', { ...confirmed, erp: job('running') }, false, 'upload', null, 'stale'],
     ['a fill job writes its own facts', { ...confirmed, erp: job('running') }, true, 'job', null, 'ok'],
     ['a reconcile job running', { ...confirmed, erp: job('unknown', { reconciling: true }) }, true, 'reconcile', TOKEN, 'stale'],
-    ['the login pause refuses other writes', { ...confirmed, erp: job('waiting_login') }, false, 'upload', null, 'stale'],
-    ['the login pause admits 我已登录，继续', { ...confirmed, erp: job('waiting_login') }, false, 'confirm_login', TOKEN, 'ok'],
-    ['the login pause admits cancelling the write', { ...confirmed, erp: job('waiting_login') }, false, 'cancel_erp_write', TOKEN, 'ok'],
+    ['a fill job running refuses another 去报销', { ...confirmed, erp: job('running') }, false, 'start_erp_write', TOKEN, 'stale'],
     // write result unknown and the ADR-0014 freeze
     ['a write result unknown refuses facts changes', { ...confirmed, erp: job('unknown') }, true, 'exclude_material', TOKEN, erpStarted],
     ['a write result unknown refuses even the actions that own the freeze', { ...confirmed, erp: job('unknown') }, true, 'set_home_city', TOKEN, erpStarted],
@@ -133,7 +129,7 @@ describe('taskPolicy: admit', () => {
     ['an attempt freezes assignment', { ...confirmed, erp: job('aborted') }, true, 'assign_project_lines', TOKEN, erpStarted],
     ['修改常驻城市 gives its own reason on a frozen task', { ...confirmed, erp: job('aborted') }, true, 'set_home_city', TOKEN, { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked }],
     ['追加材料 gives its own reason on a frozen task', { ...confirmed, erp: job('aborted') }, true, 'reopen_upload', TOKEN, { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted }],
-    ['no attempt, no freeze', { ...confirmed, erp: job('cancelled') }, false, 'upload', null, 'ok'],
+    ['no attempt, no freeze', { ...confirmed, erp: job('aborted') }, false, 'upload', null, 'ok'],
     // each action's own step
     ['start inventory at start_inventory', { versionNo: 1, includedMaterialCount: 2 }, false, 'start_inventory', TOKEN, 'ok'],
     ['start inventory with nothing to inventory', {}, false, 'start_inventory', TOKEN, { code: 'not_ready', message: ACTION_COPY.notReadyToStart }],
@@ -160,7 +156,7 @@ const judged = (bucket: ReconcileBucket, action: '原地等待' | '转人工', e
   reconcile: {
     jobId: 'r',
     result: null,
-    judged: { verdict: { bucket, action, identity: { applicable: false, receiptsCents: null, detailCents: null, equal: false }, reasons: [] }, billNo: null, saved: false, handedOver: false, noForm: false, ...extra },
+    judged: { verdict: { bucket, action, identity: { applicable: false, receiptsCents: null, detailCents: null, equal: false }, reasons: [] }, billNo: null, saved: false, noForm: false, ...extra },
   },
 });
 
@@ -172,8 +168,6 @@ describe('taskPolicy: allowed actions by ERP phase', () => {
   it.each<[string, Partial<TaskFacts>, Partial<ErpRecord>, TaskAction[]]>([
     ['confirmed, no job yet: 去报销 and every change before it', confirmed, {}, beforeErp],
     ['a fill job running: nothing, not even 作废', { ...confirmed, erp: job('running') }, {}, []],
-    ['the login pause: only 我已登录，继续 and cancelling', { ...confirmed, erp: job('waiting_login') }, {}, ['confirm_login', 'cancel_erp_write']],
-    ['the login pause cancelled: as before 去报销', { ...confirmed, erp: job('cancelled') }, {}, beforeErp],
     ['aborted before any attempt: as before 去报销', { ...confirmed, erp: job('aborted') }, {}, beforeErp],
     ['an attempt without a write result: frozen, print and 作废 remain', { ...confirmed, erp: job('aborted') }, { attempted: true }, ['print', 'void_task']],
     ['a catalog mismatch: reassign, no 去报销 until resubmitted', { ...confirmed, erp: job('catalog_mismatch', { reassign: true }) }, {}, beforeErp.filter((action) => action !== 'start_erp_write')],
@@ -188,7 +182,7 @@ describe('taskPolicy: allowed actions by ERP phase', () => {
     ['after 暂存, the lookup got no answer: 重新对账 or 转人工', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '原地等待', { draft: { outcome: 'unread', draftId: null, found: 0 } }) }, ['reconcile', 'hand_off', 'print', 'void_task']],
     ['after 暂存, no draft found: only 转人工, not 重新去报销 even with no form', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '转人工', { noForm: true, draft: { outcome: 'none', draftId: null, found: 0 } }) }, ['hand_off', 'print', 'void_task']],
     ['a 对账 job running: nothing, not even 作废', { ...confirmed, erp: job('unknown', { reconciling: true }) }, { attempted: true }, []],
-    ['ERP 单据已交接: print and 作废', { ...confirmed, erp: job('handed_over') }, { attempted: true }, ['print', 'void_task']],
+    ['ERP 草稿已交接: print and 作废', { ...confirmed, erp: job('drafted', { drafting: true }) }, { attempted: true }, ['print', 'void_task']],
     ['a saved draft: print and 作废', { ...confirmed, erp: job('saved') }, { attempted: true }, ['print', 'void_task']],
     ['转人工: print and 作废', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, { attempted: true }, ['print', 'void_task']],
     ['voided: nothing', { ...confirmed, lifecycle: 'voided' }, {}, []],
@@ -206,10 +200,8 @@ describe('taskPolicy: ERP actions refused by phase and verdict', () => {
   const unknown = { ...confirmed, erp: job('unknown') };
   it.each<[string, Partial<TaskFacts>, Partial<ErpRecord>, TaskAction, Admission]>([
     ['去报销 before the confirmation', submitted, {}, 'start_erp_write', { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady }],
-    ['我已登录，继续 without a login pause', confirmed, {}, 'confirm_login', { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin }],
-    ['cancelling without a login pause', { ...confirmed, erp: job('aborted') }, {}, 'cancel_erp_write', { code: 'not_waiting_login', message: ERP_ACTION_ERRORS.notWaitingLogin }],
     ['对账 on a task whose write result is known', { ...confirmed, erp: job('aborted') }, {}, 'reconcile', { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling }],
-    ['转人工 on a task whose write result is known', { ...confirmed, erp: job('cancelled') }, {}, 'hand_off', { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling }],
+    ['转人工 on a task whose write result is known', { ...confirmed, erp: job('aborted') }, {}, 'hand_off', { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling }],
     ['重新去报销 on a task whose write result is known', confirmed, {}, 'refill', { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling }],
     ['重新对账 after a 转人工 verdict', unknown, { attempted: true, ...judged('不自洽', '转人工') }, 'reconcile', notAllowed],
     ['重新去报销 once a 单据编号 was read', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工', { billNo: 'BX-1' }) }, 'refill', notAllowed],
@@ -218,14 +210,12 @@ describe('taskPolicy: ERP actions refused by phase and verdict', () => {
     // its own precondition, a 对账 only once its verdict allows it (the order the API has always answered in).
     ['去报销 while a job of another task holds the ERP lease', { ...confirmed, erpLease: 'other' }, {}, 'start_erp_write', inUse],
     ['去报销 at the wrong step while the lease is elsewhere: still in use', { ...submitted, erpLease: 'other' }, {}, 'start_erp_write', inUse],
-    ['我已登录，继续 without a login pause while the lease is elsewhere: in use', { ...confirmed, erpLease: 'other' }, {}, 'confirm_login', inUse],
     ['重新去报销 not on offer while the lease is elsewhere: in use', { ...unknown, erpLease: 'other' }, { attempted: true, ...judged('不自洽', '转人工') }, 'refill', inUse],
     ['对账 while a job of another task holds the ERP lease', { ...unknown, erpLease: 'other' }, { attempted: true }, 'reconcile', inUse],
     ['对账 on a known write result while the lease is elsewhere: not reconciling', { ...confirmed, erp: job('aborted'), erpLease: 'other' }, {}, 'reconcile', notReconciling],
     ['重新对账 after a 转人工 verdict while the lease is elsewhere: not allowed', { ...unknown, erpLease: 'other' }, { attempted: true, ...judged('不自洽', '转人工') }, 'reconcile', notAllowed],
     // No ERP configured on this server: the actions that take the lease say not_ready before anything else about ERP.
     ['去报销 without an ERP, the lease elsewhere', { ...confirmed, erpConfigured: false, erpLease: 'other' }, {}, 'start_erp_write', notReady],
-    ['我已登录，继续 without an ERP', { ...confirmed, erp: job('waiting_login'), erpConfigured: false }, {}, 'confirm_login', notReady],
     ['重新去报销 without an ERP, not on offer', { ...unknown, erpConfigured: false }, { attempted: true, ...judged('不自洽', '转人工') }, 'refill', notReady],
     ['对账 without an ERP, on a known write result', { ...confirmed, erp: job('aborted'), erpConfigured: false }, {}, 'reconcile', notReady],
     // ADR-0037: the 本地执行器 is the only way to 去报销. With none paired to the account, every action that starts an
@@ -237,7 +227,6 @@ describe('taskPolicy: ERP actions refused by phase and verdict', () => {
     ['对账 with nothing paired', { ...unknown, executorPaired: false }, { attempted: true }, 'reconcile', notPaired],
     ['转人工 needs no 本地执行器', { ...unknown, executorPaired: false }, { attempted: true }, 'hand_off', 'ok'],
     ['转人工 needs no ERP', { ...unknown, erpConfigured: false }, { attempted: true }, 'hand_off', 'ok'],
-    ['cancelling the login pause needs no ERP', { ...confirmed, erp: job('waiting_login'), erpConfigured: false }, {}, 'cancel_erp_write', 'ok'],
     ['转人工 takes no lease', { ...unknown, erpLease: 'other' }, { attempted: true }, 'hand_off', 'ok'],
     ['the lease held by a job of this task does not refuse 去报销 here', { ...confirmed, erpLease: 'own' }, {}, 'start_erp_write', 'ok'],
     ['重新去报销 on offer, but the confirmation is gone', { ...unknown, confirmation: 'invalidated' }, { attempted: true, ...judged('未保存·已导入未写明细', '转人工') }, 'refill', { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady }],
@@ -273,11 +262,10 @@ describe('taskPolicy: void', () => {
     ['write result unknown', { ...confirmed, erp: job('unknown') }, { attempted: true }, 'ok'],
     ['对账 said 不自洽', { ...confirmed, erp: job('unknown') }, { attempted: true, ...judged('不自洽', '转人工') }, 'ok'],
     ['handed off', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, { attempted: true }, 'ok'],
-    ['ERP 单据已交接', { ...confirmed, erp: job('handed_over') }, { attempted: true }, 'ok'],
+    ['ERP 草稿已交接', { ...confirmed, erp: job('drafted') }, { attempted: true }, 'ok'],
     ['an imported legacy task', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'handed_off' }, {}, 'ok'],
     ['the parser job running', { ...run, parse: { waiting: 1, openPendingItems: 0, blockers: [] } }, {}, 'stale'],
     ['a fill job running', { ...confirmed, erp: job('running') }, {}, 'stale'],
-    ['the login pause', { ...confirmed, erp: job('waiting_login') }, {}, 'stale'],
     ['a 对账 job running', { ...confirmed, erp: job('unknown', { reconciling: true }) }, { attempted: true }, 'stale'],
     ['a job of this task holds the ERP lease', { ...confirmed, erpLease: 'own' }, {}, 'stale'],
     ['a job of another task holds the ERP lease', { ...confirmed, erpLease: 'other' }, {}, 'ok'],

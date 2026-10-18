@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { HANDOVER_COMPLETED_NOTICE } from '@baox/contract';
 
-// The ERP mock starts from a task-specific tab waiting for employee login; there is no separate start action.
-// Each simulated stage takes 300 ms. Normal flows detect login automatically, but these cases confirm it directly.
+// 去报销 runs through by itself from the 整单确认页: there is no separate start action and nothing waits for the
+// employee to log in (ADR-0037). Each simulated stage takes 300 ms.
 const INDEX = new URL('../dist-mock/index.html', import.meta.url).href;
 const open = (query: string, hash: string) => `${INDEX}${query}${hash}`;
 
@@ -15,12 +15,10 @@ const stepItem = (page: Page, title: string) => progress(page).getByRole('listit
 const loginButton = (page: Page) => page.getByRole('button', { name: '我已登录，继续' });
 const bodyRows = (page: Page, table: string) => page.getByRole('table', { name: table }).locator('tbody tr');
 
-async function startAndLogin(page: Page, query: string) {
-  await page.goto(open(query, '#/task/T1/erp'));
-  await expect(progress(page).locator('.step-title')).toHaveText(STEP_TITLES);
-  await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
-  await expect(stepItem(page, '登录')).toContainText('等待你登录');
-  await loginButton(page).click();
+// 去报销 from the confirmed T1, `fault` choosing how the job ends.
+async function startErp(page: Page, fault: string | null = null) {
+  await page.goto(open(`?seed=actions${fault ? `&fault=${fault}` : ''}`, '#/task/T1/review'));
+  await page.getByRole('button', { name: '去报销', exact: true }).click();
 }
 
 async function expectDone(page: Page) {
@@ -36,10 +34,10 @@ for (const [width, height] of [
   [1440, 900],
   [1100, 800],
 ] as const) {
-  test(`${width}px：未开始步骤的标题比说明醒目，编号在圆里；「不要关闭报销系统标签页」是步骤清单之前的通知`, async ({ page }, testInfo) => {
+  test(`${width}px：未开始步骤的标题比说明醒目，编号在圆里；在等什么是步骤清单之前的通知`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
     await page.goto(open('?seed=erp', '#/task/T1/erp'));
-    await expect(stepItem(page, '登录')).toContainText('等待你登录');
+    await expect(stepItem(page, '报销信息核对')).toContainText('进行中');
     const todo = stepItem(page, '导入发票');
     const [titleColor, descColor] = await Promise.all([
       todo.locator('.step-title').evaluate((element) => getComputedStyle(element).color),
@@ -55,7 +53,7 @@ for (const [width, height] of [
     expect(Math.abs(num.width - icon.width)).toBeLessThan(1);
     expect(Math.abs(num.height - icon.height)).toBeLessThan(1);
 
-    const notice = page.getByRole('status').filter({ hasText: '等待你在报销系统标签页登录。' });
+    const notice = page.getByRole('status').filter({ hasText: '正在等待报销系统返回结果。' });
     await expect(notice).toBeVisible();
     const noticeBox = await notice.boundingBox();
     const headBox = await page.getByRole('heading', { name: '填写报销单', level: 1 }).boundingBox();
@@ -67,9 +65,11 @@ for (const [width, height] of [
   });
 }
 
-test('正常流程：?seed=erp 等待登录，点「我已登录，继续」后八个事实阶段完成并进入完成页', async ({ page }, testInfo) => {
-  await startAndLogin(page, '?seed=erp');
+test('正常流程：去报销后八个事实阶段自己完成，没有要你登录的一步，进入完成页', async ({ page }, testInfo) => {
+  await startErp(page);
+  await expect(progress(page).locator('.step-title')).toHaveText(STEP_TITLES);
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
+  await expect(loginButton(page)).toHaveCount(0);
   await expect(progress(page).locator('li .status')).toHaveText(STEP_TITLES.map(() => '完成'));
   await page.screenshot({ path: testInfo.outputPath('erp-finished.png'), fullPage: true });
   await page.getByRole('link', { name: '查看完成结果' }).click();
@@ -77,14 +77,11 @@ test('正常流程：?seed=erp 等待登录，点「我已登录，继续」后�
   await page.screenshot({ path: testInfo.outputPath('done.png'), fullPage: true });
 });
 
-test('去报销：在整单确认页点去报销，打开报销系统标签页后等待登录，登录后自动写完', async ({ page }) => {
-  await page.goto(open('?seed=actions', '#/task/T1/review'));
-  await page.getByRole('button', { name: '去报销', exact: true }).click();
+test('去报销：在整单确认页点去报销，进入填写报销单页，没有「开始填报」，自动写完', async ({ page }) => {
+  await startErp(page);
   await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
   await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
-  await expect(stepItem(page, '登录')).toContainText('等待你登录');
-  await loginButton(page).click();
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
   await page.getByRole('link', { name: '查看完成结果' }).click();
   await expectDone(page);
@@ -116,7 +113,7 @@ test('?seed=done 直接打开完成页：固定句逐字一致', async ({ page }
 // 严格回读停下：结果不确定，先停在对账等第一次对账（服务端同此）。对账读到已保存但逐行不一致的草稿，仍停在对账，
 // 不是完成：done 只留给「已保存且逐行一致」（服务端同此）。
 test('readback-mismatch：严格回读停下后自动进入对账页；开始对账后差异行高亮、只能转人工；No.6 展开后显示对不上的字段与原因；转人工后任务列表显示已转人工', async ({ page }, testInfo) => {
-  await startAndLogin(page, '?seed=erp&fault=readback-mismatch');
+  await startErp(page, 'readback-mismatch');
   await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
   await expect(page.getByRole('heading', { name: '对账', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: '中止原因' })).toContainText('合计 3999.59 与任务合计 3972.59 不一致');
@@ -145,8 +142,8 @@ test('readback-mismatch：严格回读停下后自动进入对账页；开始对
   await expect(page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ }).getByText('已转人工')).toBeVisible();
 });
 
-test('erp-write-aborted：交接时没有读到结果后自动进入对账（还没对过账：开始对账或转人工），开始对账读到填好的单据并回读一致后完成', async ({ page }, testInfo) => {
-  await startAndLogin(page, '?seed=erp&fault=erp-write-aborted');
+test('erp-write-aborted：交接时没有读到结果后自动进入对账（还没对过账：开始对账或转人工）；读到填好没保存的单据也不算完成，仍停在对账', async ({ page }, testInfo) => {
+  await startErp(page, 'erp-write-aborted');
   await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
   await expect(page.getByRole('region', { name: '中止原因' })).toContainText('保存后没有读到报销系统的结果');
   await expect(page.getByTestId('reconcile-bucket')).toHaveText('尚未判定');
@@ -155,19 +152,9 @@ test('erp-write-aborted：交接时没有读到结果后自动进入对账（还
   await expect(page.getByTestId('human-review')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('reconcile-aborted.png'), fullPage: true });
   await page.getByRole('button', { name: '开始对账' }).click();
-  await expectDone(page);
-});
-
-test('erp-login-missing：点继续后仍未检测到登录，提示保留、可再试；第三次检测到后继续写完', async ({ page }, testInfo) => {
-  await startAndLogin(page, '?seed=erp&fault=erp-login-missing');
-  await expect(page.getByText(/还没有检测到登录（第 1 次检测）/)).toBeVisible();
-  await expect(stepItem(page, '登录')).toContainText('等待你登录');
-  await expect(loginButton(page)).toBeEnabled();
-  await page.screenshot({ path: testInfo.outputPath('login-missing.png'), fullPage: true });
-  await loginButton(page).click();
-  await expect(page.getByText(/还没有检测到登录（第 2 次检测）/)).toBeVisible();
-  await loginButton(page).click();
-  await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
+  // 没有暂存就没有交接（ADR-0037）：对账之后仍在对账页。
+  await expect(page.getByText(/已重新对账（第 1 次）/)).toBeVisible();
+  await expect(page).toHaveURL(/#\/task\/T1\/reconcile$/);
 });
 
 test('对账页 T2：1440 与 1100 下「转人工」都在首屏内，顶部只有一条错误通知；附截图', async ({ page }, testInfo) => {

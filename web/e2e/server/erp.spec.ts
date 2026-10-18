@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
-// Slice 12 (#191) on the real server: the two ways 去报销 stops before it writes anything. Both were covered only
-// against the mock, so nothing checked that the real server projects them the same way.
-//   - login_wall: ERP sits on its login page. The job pauses with no attempt; 取消去报销 puts the task back where it
-//     was, and it can go again.
+// Slice 12 (#191) on the real server: 去报销's one ending and the two ways it stops before it writes anything.
+//   - drafted: the production ending (ADR-0037). The job 暂存s the bill and finds it again: ERP 草稿已交接.
+//   - not_signed_in: ERP sits on its login page and the job has no 凭据 to sign in with. Nothing waits for the
+//     employee: the job stops with no attempt, the task is back where it was, and it can go again.
 //   - catalog_mismatch: 报销信息核对 finds a renamed project and aborts before importing. The task goes back to
 //     project assignment, and a new submission clears it.
 // `test.use` is per file, so each fake gets its own describe block.
@@ -45,68 +45,52 @@ async function confirmedTask(page: Page): Promise<string> {
   return taskId;
 }
 
-test('浏览器扩展不可用时，设置页返回原报销任务并保留选择', async ({ page }) => {
-  await signIn(page);
-  const taskId = await confirmedTask(page);
-  const before = await snapshotOf(page, taskId);
-  let starts = 0;
-  await page.route(`**/api/tasks/${taskId}/actions/start-erp-write`, async (route) => {
-    starts += 1;
-    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'extension_not_paired', message: '还没有配对浏览器扩展，所以现在去报销不了。' } }) });
-  });
+test.describe('去报销暂存到报销系统', () => {
+  test.use({ serverEnv: { BAOX_ERP_FAKE: 'drafted' } });
 
-  await page.goto(`/#/task/${taskId}/review`);
-  await page.getByRole('button', { name: '去报销', exact: true }).click();
-
-  const returnTo = `#/task/${taskId}/review`;
-  await expect(page).toHaveURL(new RegExp(`/#/settings\\?returnTo=${encodeURIComponent(returnTo)}$`));
-  await page.getByRole('link', { name: '返回报销任务' }).click();
-
-  await expect(page).toHaveURL(new RegExp(`/#/task/${taskId}/review\\?extensionSetup=1$`));
-  await expect(page.getByRole('region', { name: '扩展连接检查' })).toContainText('扩展尚未连接');
-  await expect(page.getByRole('link', { name: '设置浏览器扩展' })).toBeVisible();
-  await expect(page.getByTestId('review-purpose')).toContainText(before.projectAssignment.purpose ?? '');
-
-  const after = await snapshotOf(page, taskId);
-  expect(after.projectAssignment).toEqual(before.projectAssignment);
-  expect(after.confirmation).toEqual(before.confirmation);
-  expect(after.erp).toEqual(before.erp);
-  expect(starts).toBe(1);
-});
-
-test.describe('ERP 还停在登录页', () => {
-  test.use({ serverEnv: { BAOX_ERP_FAKE: 'login_wall' } });
-
-  test('去报销：停在登录等待，没有写入任何东西；取消后回到确认页，还能再去报销', async ({ page }) => {
+  test('去报销：一路自动写完并暂存，ERP 草稿已交接；完成页给出去报销系统查看与内码，任务列表是已交接', async ({ page }) => {
     await signIn(page);
     const taskId = await confirmedTask(page);
     await page.goto(`/#/task/${taskId}/review`);
     await page.getByRole('button', { name: '去报销', exact: true }).click();
 
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
-    await expect(page.getByRole('heading', { name: '填写报销单' })).toBeVisible();
-    await expect.poll(async () => (await snapshotOf(page, taskId)).step.kind).toBe('erp_login');
-    const paused = await snapshotOf(page, taskId);
-    expect(paused).toMatchObject({
-      stage: 'erp',
-      erp: {
-        status: 'waiting_login',
-        currentStage: 'login',
-        externalWait: 'employee_login',
-        outcome: 'none',
-        allowedActions: ['refresh', 'confirm_login', 'cancel'],
-      },
+    // Nothing on the way waits for the employee (ADR-0037): no login to confirm, no 去报销 to cancel.
+    await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: '我已登录，继续' })).toHaveCount(0);
+    await expect(page.getByTestId('handover-completed')).toHaveText(DRAFT_HANDOVER_NOTICE);
+    await expect(page.getByRole('link', { name: '去报销系统查看' })).toBeVisible();
+    await expect(page.getByTestId('erp-review-draft-id')).toHaveText('119946');
+    expect(await snapshotOf(page, taskId)).toMatchObject({
+      stage: 'done',
+      step: { kind: 'none' },
+      erp: { status: 'done', outcome: 'drafted', draftNo: null, review: { draftId: '119946' } },
+      readback: { status: 'matched' },
     });
-    // The active ERP lease keeps cancellation unavailable while the employee login is pending.
     const list = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
-    expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: false });
+    expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ stage: 'done', erpTouched: true });
+  });
+});
 
-    await page.getByRole('button', { name: '取消去报销' }).click();
-    await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/review$`));
-    expect(await snapshotOf(page, taskId)).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
-    const afterCancel = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
-    expect(afterCancel.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: true });
-    // 去报销 is on offer again, because nothing about the claim changed.
+test.describe('ERP 还停在登录页，又没有可用来登录的账号', () => {
+  test.use({ serverEnv: { BAOX_ERP_FAKE: 'not_signed_in' } });
+
+  test('去报销：写入之前就停下，什么都没有写；说出原因，回到确认页还能再去报销', async ({ page }) => {
+    await signIn(page);
+    const taskId = await confirmedTask(page);
+    await page.goto(`/#/task/${taskId}/review`);
+    await page.getByRole('button', { name: '去报销', exact: true }).click();
+
+    await expect.poll(async () => (await snapshotOf(page, taskId)).stage, { timeout: 30_000 }).toBe('actions');
+    const stopped = await snapshotOf(page, taskId);
+    expect(stopped).toMatchObject({ step: { kind: 'choose_action' }, erp: { status: 'idle', outcome: 'none' }, confirmation: { status: 'confirmed' } });
+    expect(stopped.erp.abortReason).toContain('设置页保存报销系统账号和密码');
+    // Nothing was written, so the invoices are still free and the task can still be voided.
+    const list = TaskListSchema.parse(await (await page.request.get('/api/tasks')).json());
+    expect(list.tasks.find((task) => task.taskId === taskId)).toMatchObject({ abandonable: true });
+
+    await page.goto(`/#/task/${taskId}/review`);
+    await expect(page.getByTestId('erp-abort-reason')).toContainText('设置页保存报销系统账号和密码');
     await expect(page.getByRole('button', { name: '去报销', exact: true })).toBeEnabled();
   });
 });

@@ -88,10 +88,9 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr').first()).toHaveText('No.1-3 · 08-10 · 外地市内交通 · 69.19');
   await page.getByRole('list', { name: '流程阶段' }).getByRole('button', { name: /^整单明细确认/ }).click();
 
-  // 8. 去报销：登录后自动写入并严格回读，最后把填好的单据交接给员工。
+  // 8. 去报销：自动写入并严格回读，最后把单据交接给员工；没有要你登录的一步。
   await page.getByRole('button', { name: '去报销', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/erp$/);
-  await page.getByRole('button', { name: '我已登录，继续' }).click();
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible({ timeout: 20_000 });
 
   // 9. 完成：固定句逐字显示，任务列表里是 10/10 单据交接。

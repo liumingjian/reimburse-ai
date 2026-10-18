@@ -3,7 +3,7 @@ import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, in
 import type { FillPlan } from '@baox/erp-executor/protocol';
 import { RECONNECT_WINDOW_MS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loginWall } from './erp/testing/fake-executor';
+import { notSignedIn } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension } from './erp/testing/fake-extension';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { api, sample } from './test/api';
@@ -56,7 +56,7 @@ async function running(token: string): Promise<{ plan: FillPlan; taskId: string;
     fill: async (plan, channel) => {
       started(plan);
       await gate;
-      return loginWall(plan, channel);
+      return notSignedIn(plan, channel);
     },
   });
   await extension.connect();

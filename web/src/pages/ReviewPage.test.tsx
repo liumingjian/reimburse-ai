@@ -12,7 +12,7 @@ import { ReviewPage } from './ReviewPage';
 
 function renderReview(seed: SeedStage = 'review') {
   window.location.hash = '#/task/T1/review';
-  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, erpStepMs: 5, erpLoginAutoMs: 60_000 });
+  const adapter = createMockAdapter({ seed, fault: null, inventoryPhaseMs: 5, erpStepMs: 5 });
   render(<App adapter={adapter} />);
   return adapter;
 }
@@ -237,7 +237,7 @@ describe('整单明细确认', () => {
   });
 
   test('?fault=catalog-mismatch：去报销的作业在报销信息核对停下，回到项目归属并显示问题；把 No.7-9 改派出 P-2307 后重新提交回到整单确认', async () => {
-    const adapter = createMockAdapter({ seed: 'actions', fault: 'catalog-mismatch', erpStepMs: 5, erpLoginAutoMs: 5 });
+    const adapter = createMockAdapter({ seed: 'actions', fault: 'catalog-mismatch', erpStepMs: 5 });
     const before = await adapter.getSnapshot('T1');
     expect((await adapter.startErpWrite('T1', before.step.stepToken)).ok).toBe(true);
     await waitFor(async () => expect((await adapter.getSnapshot('T1')).stage).toBe('project'));

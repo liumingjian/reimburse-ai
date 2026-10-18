@@ -71,13 +71,13 @@ async function uploadAndImport(page: WritePage, invoices: typeof INVOICES, budge
 }
 
 describe('fill job through the protocol on the fake ERP', () => {
-  it('hands over a filled, unsaved form, starting an attempt before import and fill', async () => {
+  it('暂存s the filled form, starting an attempt before import, fill and 暂存', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'handed_over', billNo: null, code: null });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted', billNo: null, code: null });
 
     const attempts = server.attempts;
-    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill']);
+    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill', 'save']);
     for (const attempt of attempts) {
       expect(attempt.compatibility).toEqual({ erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' });
       expect(attempt.erpAccount).toEqual({ displayName: '刘明建', account: 'luo.liu', tenant: 'tenant-a' });
@@ -89,8 +89,8 @@ describe('fill job through the protocol on the fake ERP', () => {
 
     const events = server.events;
     expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_hand_over']);
-    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'handed_over' });
-    expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
+    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'drafted' });
+    expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow', 'draft']);
   });
 
   // 去报销进度 (#420): the 填写明细 step carries `{ done, total }` so the page can show 「填写明细 3/8」. `total` goes out
@@ -98,7 +98,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('reports 填写明细 progress once per 明细 row, with the total known before the first row', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'handed_over' });
+    expect(result).toMatchObject({ status: 'drafted' });
     const total = approvedPreview(taskId).lines.length;
     const fill = server.events.flatMap((e) => (e.type === 'step' && e.step === 'fill' ? [[e.status, e.progress ?? null]] : []));
     expect(fill).toEqual([
@@ -117,7 +117,7 @@ describe('fill job through the protocol on the fake ERP', () => {
       }));
       const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
       const result = await run(fake, channelFor(undefined, stubServer({ taskId, preview })));
-      expect(result, `${invoiceType}: ${JSON.stringify(result)}`).toMatchObject({ type: 'result', status: 'handed_over' });
+      expect(result, `${invoiceType}: ${JSON.stringify(result)}`).toMatchObject({ type: 'result', status: 'drafted' });
       expect(column(fake, 'detail', 3)).toEqual([invoiceType, invoiceType]);
     }
   });
@@ -152,7 +152,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // so it could not have helped: by the time the modal mattered, that moment had long passed.
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, noticeReturnsAfterUpload: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
   });
 
   it('answers ERP\'s idle-timeout prompt with 不退出 and carries on, instead of dying under its overlay', async () => {
@@ -162,7 +162,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // Here the prompt covers the very control the navigation clicks first, so without the answer nothing opens.
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, idlePromptCovers: 'span[data-action="open-list"]' }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Answered with the button that KEEPS the session: 继续退出 hides the console shortcuts for good, so a run
     // that got as far as 交接单据 cannot have clicked it. And the cover is gone because the prompt was answered,
     // not because something else happened to move it.
@@ -179,7 +179,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // survives with it in place — which is the discrimination the test is for. (Checked both ways by hand.)
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyModelLagTicks: 40 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Both rows add up in ERP's own column: nothing was typed into a cell and lost on the way to the model.
     // Checked against the form's own 费用金额 and 税额 rather than against numbers copied out of the fixture,
     // so the assertion still means "ERP agrees with itself" if the fixture amounts ever change.
@@ -198,10 +198,10 @@ describe('fill job through the protocol on the fake ERP', () => {
   // an unwitnessed commit loses the cell and the bill goes out short. 3 is measured, not picked: a commit on the
   // heels of the last character sits exactly 2 CDP commands behind it, and the wait costs two reads more —
   // checked both ways, the test goes red with the wait taken out and green with it in.
-  it('hands over only after a retained tax editor blurs and the full readback agrees', async () => {
+  it('暂存s only after a retained tax editor blurs and the full readback agrees', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, taxEditorRemainsOpen: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     expect(fake.mutations.some(mutation => mutation.kind === 'save')).toBe(false);
     expect(fake.document.querySelectorAll('.k-grid-edit-row input')).toHaveLength(0);
   }, 60_000);
@@ -209,7 +209,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('waits for the editor to hold the value before committing, so a slow-to-parse cell is not lost', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, editorSettleTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
     const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
@@ -225,7 +225,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('types again when the editor took nothing, so a control the ERP re-rendered does not lose the field', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, firstTypingLostOn: '项目' }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Every detail row carries the project, read off the form rather than off the fixture.
     const projects = column(fake, 'detail', 1);
     expect(projects!.length).toBeGreaterThan(0);
@@ -240,7 +240,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('opens a dropdown that ignored the first click, instead of refusing over a list that never opened', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, dropdownNeedsSecondClick: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     const types = column(fake, 'detail', 3);
     expect(types!.length).toBeGreaterThan(0);
     expect(types!.filter((shown) => String(shown).trim() !== '')).toEqual(types);
@@ -299,7 +299,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
     expect(fake.commands.some((c) => c.method === 'DOM.setFileInputFiles')).toBe(true);
     release();
-    expect((await job).status).toBe('handed_over');
+    expect((await job).status).toBe('drafted');
 
     const at = (label: string) => order.indexOf(label);
     expect(at('attempt:import')).toBe(0);
@@ -307,19 +307,20 @@ describe('fill job through the protocol on the fake ERP', () => {
     const fillWrites = order.map((kind, index) => ({ kind, index })).filter((m) => ['header', 'cell', 'option', 'addRow'].includes(m.kind));
     expect(fillWrites.length).toBeGreaterThan(0);
     expect(Math.min(...fillWrites.map((m) => m.index))).toBeGreaterThan(at('attempt:fill'));
-    // The fill writes are the last thing that happens: the job ends at the hand-over, so there is no save attempt
-    // and no save mutation to order against (ADR-0028).
-    expect(Math.max(...fillWrites.map((m) => m.index))).toBe(order.length - 1);
-    expect(order).not.toContain('attempt:save');
+    // 暂存 comes after every fill write and after its own acknowledged attempt, and it is the last thing that happens;
+    // baox never presses 保存 (ADR-0029).
+    expect(Math.max(...fillWrites.map((m) => m.index))).toBeLessThan(at('attempt:save'));
+    expect(order.indexOf('draft')).toBeGreaterThan(at('attempt:save'));
+    expect(order.indexOf('draft')).toBe(order.length - 1);
     expect(order).not.toContain('save');
   });
 
-  it('pauses for login without any attempt or input when ERP sits on the login page', async () => {
+  it('stops before any attempt or input when ERP sits on the login page and there is nothing to sign in with', async () => {
     const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'waiting_login', code: 'erp_login', capture: null });
-    const events = server.events;
-    expect(events.some((e) => e.type === 'waiting_login')).toBe(true);
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login', capture: null });
+    expect(result.message).toContain('设置页');
+    expect(server.events).toContainEqual({ type: 'step', step: 'login', status: 'failed' });
     expect(server.attempts).toEqual([]);
     expect(inputEvents(fake)).toEqual([]);
   });
@@ -331,9 +332,8 @@ describe('fill job through the protocol on the fake ERP', () => {
       browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
       signIn: async () => { signIns += 1; await fake.login(); return { ok: true }; },
     });
-    expect(result).toMatchObject({ status: 'handed_over', code: null });
+    expect(result).toMatchObject({ status: 'drafted', code: null });
     expect(signIns).toBe(1);
-    expect(server.events.some((e) => e.type === 'waiting_login')).toBe(false);
   });
 
   it('aborts with the sign-in\'s own reason, before any attempt or input, when ERP refuses the login', async () => {
@@ -379,7 +379,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // was dispatched at that point, `document.elementFromPoint` there was null, and the assistant never opened.
     const fake = await createFakeErp(fakeErpOptions({ notFillEntryBelowFold: true, assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -391,7 +391,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('outwaits the blocking overlay a form paints over its own section anchors', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, sectionOverlayTicks: 6 }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -401,7 +401,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('outwaits a cover that is over the 发票类型 cell for a moment, instead of refusing on one read', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, invoiceTypeCoverTicks: 30 }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('option');
   });
 
@@ -424,7 +424,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     delete process.env['BAOX_ERP_STOP_BEFORE_IMPORT'];
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -444,7 +444,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, formPanelActiveTicks: 12 }));
     const result = await run(fake);
     expect([result.code, result.message]).toEqual([null, null]);
-    expect(result.status).toBe('handed_over');
+    expect(result.status).toBe('drafted');
   });
 
   it('ends as write result unknown when the form instance drifts after the fill attempt is acknowledged', async () => {
@@ -499,7 +499,7 @@ describe('invoices put into the page as bytes', () => {
   it('are recognised by the assistant and imported, with no path handed to the page', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await inPage(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(receiptNumbers(fake)).toEqual(expect.arrayContaining(INVOICES.map((invoice) => invoice.receiptNumber)));
     expect(fake.commands.filter((c) => c.method === 'DOM.setFileInputFiles')).toEqual([]);
     // Both invoices are PDFs: one batch, one assignment.
@@ -545,7 +545,7 @@ describe('re-importing an invoice the bill already holds', () => {
 
   it('strands no 费用明细行 on a 收票单号 that no longer holds its invoice', async () => {
     const [rail, ride] = INVOICES;
-    // A fill that stopped before the save: 收票行 imported, detail rows written and linked to them.
+    // A fill that stopped before 暂存: 收票行 imported, detail rows written and linked to them.
     const { fake } = await driveTo('filled');
     expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     const total = receiptTotal(fake);
@@ -614,7 +614,7 @@ describe('adding a 费用明细行', () => {
     const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
     // The whole fill goes through: the late row is waited for rather than turned into a failure.
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Two lines over one placeholder row: exactly one 新增行, and it was waited for rather than assumed.
     expect(fake.mutations.filter((m) => m.kind === 'addRow')).toEqual([{ kind: 'addRow', detail: '2' }]);
   });
@@ -626,7 +626,7 @@ describe('adding a 费用明细行', () => {
   it('waits for the dropdown item it wants to be reachable, not just painted', async () => {
     const fake = await createFakeErp(fakeErpOptions({ optionItemCoverTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     expect(fake.mutations.filter((m) => m.kind === 'option')).toEqual([
       { kind: 'option', detail: '发票类型=普通发票' }, { kind: 'option', detail: '发票类型=普通发票' },
     ]);
@@ -638,7 +638,7 @@ describe('adding a 费用明细行', () => {
   it('leaves edit mode over a grid that drops its edit row a render late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ editRowLingersTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
   });
 });
 

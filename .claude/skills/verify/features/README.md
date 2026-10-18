@@ -41,6 +41,6 @@ Each feature file has an H1 title and one paragraph of user-visible behaviour, t
 - [Accounts and sign-in](./accounts.md): 创建管理员, registration, approval, sign-in refusals. No scenario yet.
 - [New task, upload and 盘点](./new-task-upload.md): scenario `new-task-upload`.
 - [项目归属 and 整单确认](./project-review.md): no scenario yet; `v.confirmedTask()` covers it through the API only.
-- [去报销](./go-erp.md): scenario `login-wall`; `--fake catalog_mismatch` and the no-browser path are mapped.
+- [去报销](./go-erp.md): scenario `drafted`; `--fake not_signed_in`, `--fake catalog_mismatch` and the no-browser path are mapped.
 - [对账 and 转人工](./reconcile.md): scenario `reconcile-uncertain`.
 - [ERP 凭据 on the settings page](./erp-credentials.md): scenario `erp-credentials` (needs `BAOX_ERP_CREDENTIAL_KEY_FILE`).

@@ -31,7 +31,7 @@ const plan: FillPlan = {
   compatibility: { erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' },
   catalog: { projects: PROJECTS, expenseItems: EXPENSE_ITEMS },
   invoices: [{ sha256: createHash('sha256').update(INVOICE.bytes).digest('hex'), fileName: INVOICE.fileName, mime: 'application/pdf' }],
-  purpose: '客户支持',
+  purpose: '客户支持', draft: { mark: 'baox-k3m9q2x7v1' },
 };
 const reconcilePlan: ReconcilePlan = { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN };
 
@@ -184,15 +184,15 @@ describe('a 去报销 run by the extension over chrome.debugger', () => {
     expect(new Set(extension.app.wire.map((r) => `${r.method} ${r.payload.jobId}`))).toEqual(new Set([`${EXECUTOR_METHODS.event} job-1`]));
   });
 
-  it('waits for the employee to log in, then continues in the same tab', async () => {
+  it('stops on the login page, and a 重新去报销 after the login continues in the same tab', async () => {
     const extension = await extensionOver({ erp: { loggedIn: false } });
 
-    expect(await extension.fill()).toMatchObject({ status: 'waiting_login', code: 'erp_login' });
+    expect(await extension.fill()).toMatchObject({ status: 'aborted', code: 'erp_login' });
     expect(extension.events.some((e) => e.type === 'attempt_started')).toBe(false);
     const loginTab = extension.chrome.jobTab()!.id;
 
     await extension.fake.login();
-    await extension.fill('confirm_login');
+    await extension.fill('refill');
 
     expect(extension.chrome.jobTab()!.id).toBe(loginTab);
     expect(extension.chrome.attached).toEqual([{ tabId: loginTab }, { tabId: loginTab }]);

@@ -1,7 +1,7 @@
 // Scripted fill executors for server tests (spec #177 Testing Decisions: server tests run the ERP job on a fake
 // executor). Each script speaks the job protocol through the real server channel, exactly as `runFillJob` would, but
-// decides the outcome up front: login wall, catalog mismatch, abort before any attempt, write result unknown after
-// attempts, or a saved draft. `scripted()` plays one script per job run; the last one repeats.
+// decides the outcome up front: no sign-in, catalog mismatch, abort before any attempt, write result unknown after
+// attempts, or ERP 草稿已交接 (a 暂存 draft, ADR-0037). `scripted()` plays one script per job run; the last one repeats.
 
 import type { FillExecutor } from '../fill-jobs';
 import type { ReconcileExecutor } from '../reconcile-job';
@@ -38,12 +38,11 @@ async function pastCatalog(channel: ExecutorChannel) {
   await channel.emit({ type: 'step', step: 'catalog', status: 'done' });
 }
 
-/** ERP sits on its login page: the job pauses with no attempt. */
-export const loginWall: Script = async (_plan, channel) => {
+/** ERP sits on its login page and the job had no 凭据 to sign in with: it ends with no attempt. */
+export const notSignedIn: Script = async (_plan, channel) => {
   await reachLogin(channel);
-  await channel.emit({ type: 'step', step: 'login', status: 'done' });
-  await channel.emit({ type: 'waiting_login', hint: '请在为这次报销打开的报销系统标签页中登录' });
-  return result(channel, 'waiting_login', 'erp_login', '请在为这次报销打开的报销系统标签页中登录');
+  await channel.emit({ type: 'step', step: 'login', status: 'failed' });
+  return result(channel, 'aborted', 'erp_login', '报销系统没有登录，本地执行器也没能用报销系统账号登录。请在设置页保存报销系统账号和密码后再试。');
 };
 
 /** 报销信息核对 finds the first project renamed in ERP: aborts before import. */
@@ -75,36 +74,36 @@ export const readbackMismatch: Script = async (plan, channel) => {
   return result(channel, 'unknown', 'strict_readback_failed', 'ERP 明细「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
 };
 
-/** Imports, fills and hands the filled, unsaved 费用报销单 over: no save attempt and no 单据编号 (ADR-0028). */
-export const handedOver = (erpAccount = TEST_ERP_ACCOUNT): Script => async (plan, channel) => {
+/**
+ * Every 去报销's ending (ADR-0029, ADR-0037): imports, fills, 暂存s under the plan's marker and finds the draft again
+ * (内码 119946): ERP 草稿已交接. The draft has no 单据编号 until the employee saves it.
+ */
+export const draftedAs = (erpAccount: ErpAccount): Script => async (plan, channel) => {
   await pastCatalog(channel);
   await channel.emit({ type: 'step', step: 'navigate', status: 'running' });
   await channel.emit({ type: 'step', step: 'navigate', status: 'done' });
   await attempt(plan, channel, 'import', 0, erpAccount);
   await channel.emit({ type: 'step', step: 'import', status: 'done' });
   await attempt(plan, channel, 'fill', 1, erpAccount);
-  await channel.emit({ type: 'step', step: 'fill', status: 'done' });
+  // 去报销进度 (#420) as a real run reports it: 填写明细 with its row count (one row here).
+  await channel.emit({ type: 'step', step: 'fill', status: 'running', progress: { done: 0, total: 1 } });
+  await channel.emit({ type: 'step', step: 'fill', status: 'done', progress: { done: 1, total: 1 } });
   await channel.emit({ type: 'step', step: 'handover', status: 'done' });
-  return result(channel, 'handed_over', null, null, null);
-};
-
-/** The unattended path (ADR-0029): imports, fills, 暂存s under the plan's marker, and ends at the draft (内码 119946). */
-export const drafted: Script = async (plan, channel) => {
-  await pastCatalog(channel);
-  await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
-  await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
-  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  await attempt(plan, channel, 'save', 2, erpAccount, { formMode: 'modify', billNo: null, draftMark: plan.draft.mark });
+  await channel.emit({ type: 'step', step: 'save', status: 'done' });
+  await channel.emit({ type: 'step', step: 'draft_check', status: 'done' });
   const event: ResultEvent = { type: 'result', status: 'drafted', code: null, message: null, billNo: null, capture: null, draftId: '119946' };
   await channel.emit(event);
   return event;
 };
+export const drafted: Script = draftedAs(TEST_ERP_ACCOUNT);
 
 /** 暂存 was pressed under the plan's marker and the tab never turned to 修改: ERP 写入结果未知, a bill may have landed. */
 export const uncertainDraft: Script = async (plan, channel) => {
   await pastCatalog(channel);
   await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
   await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
-  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft.mark });
   const event: ResultEvent = { type: 'result', status: 'unknown', code: 'draft_not_observed', message: '点了「暂存」之后页签没有变成「修改」', billNo: null, capture: null };
   await channel.emit(event);
   return event;
@@ -118,7 +117,7 @@ export const draftReadbackMismatch: Script = async (plan, channel) => {
   await pastCatalog(channel);
   await attempt(plan, channel, 'import', 0, TEST_ERP_ACCOUNT);
   await attempt(plan, channel, 'fill', 1, TEST_ERP_ACCOUNT);
-  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft?.mark ?? null });
+  await attempt(plan, channel, 'save', 2, TEST_ERP_ACCOUNT, { formMode: 'modify', billNo: null, draftMark: plan.draft.mark });
   const event: ResultEvent = { type: 'result', status: 'unknown', code: 'draft_readback_mismatch', message: '暂存单（内码 119985）和填写时回读的不一致：申请报销金额 1000.00 ≠ 1006.00', billNo: null, capture: null, draftId: '119985' };
   await channel.emit(event);
   return event;

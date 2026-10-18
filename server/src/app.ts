@@ -11,7 +11,7 @@ import { accountOf, mountAccountRoutes, mountAuthRoutes, requireAccount, SESSION
 import type { Db } from './db/database';
 import { createInMemoryErpLease, type ErpLease } from './erp-lease';
 import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
-import { createFillJobs, type FillExecutor, type RecordFacts } from './erp/fill-jobs';
+import { createFillJobs, type FillExecutor, type JobCredentials, type RecordFacts } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { createReconcileJobs } from './erp/reconcile-jobs';
 import { createCredentialVault } from './erp/credential-vault';
@@ -114,7 +114,6 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const remote = createRemoteExecutor({
     db, schedule,
     extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) },
-    credentials: { forJob: (accountId) => erpCredentials.forJob(accountId), refusedInJob: (accountId, used, message) => erpCredentials.refusedInJob(accountId, used, message) },
   });
   // ERP 凭据 (ADR-0033) for a baox 本地执行器: the 试登录 goes to the account's executor over the same channel, and is
   // held back while a job of the account drives ERP, whose session it would knock off.
@@ -125,8 +124,14 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     acquireWrite: () => maintenance.enter('background'),
   });
   // A settled 去报销 may start an 自动重新去报销 (ADR-0034); the owner's task service decides.
-  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule, onSettled: (run, outcome) => serviceFor(run.accountId).autoRerun(run.taskId, run.jobId, outcome) });
-  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record, schedule });
+  // Every job signs in with the account's hosted 凭据, whichever executor runs it (ADR-0037). An executor of the
+  // server's own (development, e2e) has no paired 本地执行器 to run a 试登录 on, so it takes saved ones untried.
+  const jobCredentials: JobCredentials = {
+    forJob: (accountId) => erpCredentials.forJob(accountId, { untested: !!erpExecutor }),
+    refusedInJob: (accountId, used, message) => erpCredentials.refusedInJob(accountId, used, message),
+  };
+  const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule, credentials: jobCredentials, onSettled: (run, outcome) => serviceFor(run.accountId).autoRerun(run.taskId, run.jobId, outcome) });
+  const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record, schedule, credentials: jobCredentials });
   // Story 13 and ADR-0037: a 去报销 runs only in the owner's paired 本地执行器, and is refused before any job exists when
   // it cannot run there, saying which is missing. No pairing at all is the task policy's refusal (`executorPaired`,
   // with the 设置页 as its link); a pairing whose 本地执行器 is not connected, or that has no authorised 凭据 to sign in
@@ -592,11 +597,9 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'confirm-review': taskAction(withToken(ConfirmReviewInputSchema.shape), (tasks, id, { digest, acceptDeadlineWarnings, stepToken }) => tasks.confirmReview(id, digest, stepToken, acceptDeadlineWarnings)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
-  // 去报销 and its login pause. While another task of the same 应用账号 holds the ERP lease: 409 `erp_in_use`, naming
-  // no task. Another account's job never refuses this one (ADR-0019).
+  // 去报销. While another task of the same 应用账号 holds the ERP lease: 409 `erp_in_use`, naming no task. Another
+  // account's job never refuses this one (ADR-0019).
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
-  'confirm-login': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.confirmLogin(id, stepToken)),
-  'cancel-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.cancelErpWrite(id, stepToken)),
   // 去打印 (#190): print settings only, without a stepToken (contract); see `printChange` in tasks.ts.
   'generate-print-sheet': taskAction(z.object({}), (tasks, id) => tasks.generatePrintSheet(id)),
   'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),

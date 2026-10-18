@@ -182,7 +182,6 @@ export const REOPEN_UPLOAD_ERRORS = {
 // notAllowed：对账结果不允许这个处置（页面只渲染 allowedActions，服务端仍然再核一次）。
 export const ERP_ACTION_ERRORS = {
   notReady: '现在还不能去报销，请先完成整单明细确认。',
-  notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
   notAllowed: '当前对账结果不允许这个处置。',
   // Another task of the same 应用账号 (app account) holds that account's ERP lease; names no task (ADR-0019).
@@ -342,8 +341,6 @@ export const ACTION_NAMES = [
   'exclude-material',
   'set-home-city',
   'start-erp-write',
-  'confirm-login',
-  'cancel-erp-write',
   'reconcile',
   'hand-off',
   'refill',

@@ -12,7 +12,6 @@ export const SEED_STAGES: readonly SeedStage[] = TASK_STAGES.filter((stage): sta
 export const FAULTS = [
   'duplicate-upload',
   'unsupported-material',
-  'erp-login-missing',
   // The ERP job's catalog step finds P-2307 renamed in the ERP: the task goes back to project assignment (项目归属).
   'catalog-mismatch',
   'erp-write-aborted',
@@ -81,9 +80,8 @@ export type MockOptions = {
   printSheet?: boolean;
   // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
   inventoryPhaseMs?: number;
-  // ERP 填报每一步的推进间隔（毫秒，默认 300）；正常场景下服务端自动探测到登录的延迟（默认 2500）。
+  // ERP 填报每一步的推进间隔（毫秒，默认 300）。
   erpStepMs?: number;
-  erpLoginAutoMs?: number;
   // `?fault=service-disconnected`：第一次订阅后多久断开（默认 300），断开后多久恢复（默认 3000）。
   disconnectAfterMs?: number;
   reconnectAfterMs?: number;

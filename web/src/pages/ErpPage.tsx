@@ -1,23 +1,20 @@
 import { useEffect, useRef, type ComponentType } from 'react';
 import { Button, InlineNotification, ProgressBar } from '@carbon/react';
-import { CheckmarkFilled, ErrorFilled, InProgress, Renew, WarningAltFilled } from '@carbon/icons-react';
+import { CheckmarkFilled, ErrorFilled, InProgress, Renew } from '@carbon/icons-react';
 import { DRAFT_HANDOVER_NOTICE, ERP_EXTERNAL_WAIT_COPY, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, type ErpStep, type TaskSnapshot, STAGE_DEFAULT_PAGE } from '@baox/contract';
 import { useAppStore } from '../adapter/context';
 import { navigate, taskHash } from '../router';
 import { ActionGroup } from '../shell/ActionGroup';
-import { ActionError } from '../shell/ActionError';
 import { PageHeader } from '../shell/PageHeader';
-import { useAction } from '../shell/useAction';
 import { DraftReview, UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 
 // The page renders the server's recorded ERP read state. Refresh reads that state only; it never dispatches another
-// fill. The employee can only confirm a detected login or cancel while those actions are allowed by the server.
+// fill. Nothing here waits for the employee: the 本地执行器 signs in by itself and ends at 暂存 (ADR-0037).
 
 const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
   todo: '',
   running: '进行中',
-  waiting: '等待你登录',
   done: '完成',
   failed: '已中止',
 };
@@ -25,7 +22,6 @@ const STATUS_LABEL: Readonly<Record<ErpStep['status'], string>> = {
 const STATUS_ICON: Readonly<Record<ErpStep['status'], ComponentType | null>> = {
   todo: null,
   running: InProgress,
-  waiting: WarningAltFilled,
   done: CheckmarkFilled,
   failed: ErrorFilled,
 };
@@ -39,9 +35,8 @@ function progressStatus(erp: TaskSnapshot['erp']): 'active' | 'finished' | 'erro
 export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
   const taskId = snapshot.task.taskId;
   const copy = PAGE_COPY.erp;
-  const { erp, step, stage } = snapshot;
+  const { erp, stage } = snapshot;
   const store = useAppStore();
-  const { busy, error, run } = useAction(taskId);
 
   // Follow the server-selected task stage after a terminal result. This component does not infer a result from steps.
   const previousStatus = useRef(erp.status);
@@ -51,14 +46,6 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
     if (was !== 'aborted' && erp.status === 'aborted' && stage !== 'erp') navigate(taskHash(taskId, STAGE_DEFAULT_PAGE[stage]), true);
   }, [erp.status, stage, taskId]);
 
-  const confirmLogin = () => run((adapter) => adapter.confirmLogin(taskId, step.stepToken));
-  const cancel = async () => {
-    const outcome = await run((adapter) => adapter.cancelErpWrite(taskId, step.stepToken));
-    if (outcome.ok) navigate(taskHash(taskId, 'review'));
-  };
-  // The two writes of the login pause are the task policy's to allow (snapshot.allowedActions); refresh only reads.
-  const waitingLogin = erp.externalWait === 'employee_login' && snapshot.allowedActions.includes('confirm_login');
-  const canCancel = snapshot.allowedActions.includes('cancel_erp_write');
   const canRefresh = erp.allowedActions.includes('refresh');
   const writing = erp.status !== 'idle' && erp.status !== 'done' && erp.status !== 'aborted';
   const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
@@ -123,24 +110,6 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
                   <div>
                     <div className="step-title">{item.title}</div>
                     <div className="desc">{item.description}</div>
-                    {item.status === 'waiting' && waitingLogin ? (
-                      <div className="app-login-prompt">
-                        <p>请在为这次报销打开的报销系统标签页里用本人账号登录，完成后回到这里。</p>
-                        {erp.loginNotice ? (
-                          <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={erp.loginNotice} />
-                        ) : null}
-                        <ActionGroup caption="应用检测到登录后才会往下走；取消不会改动报销系统。">
-                          {canCancel ? (
-                            <Button kind="ghost" size="md" disabled={busy} onClick={() => void cancel()}>
-                              取消去报销
-                            </Button>
-                          ) : null}
-                          <Button size="md" disabled={busy} onClick={() => void confirmLogin()}>
-                            我已登录，继续
-                          </Button>
-                        </ActionGroup>
-                      </div>
-                    ) : null}
                   </div>
                   <span className="status">{STATUS_LABEL[item.status]}</span>
                 </li>
@@ -186,7 +155,6 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
             ) : null}
           </>
         ) : null}
-        <ActionError message={error} />
       </section>
     </>
   );

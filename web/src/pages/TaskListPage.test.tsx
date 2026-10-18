@@ -72,7 +72,7 @@ describe('任务列表', () => {
   });
 
   test('严格回读不一致的任务：停在对账而不是单据交接，列表给出查看对账入口', async () => {
-    const adapter = createMockAdapter({ seed: 'actions', fault: 'readback-mismatch', erpStepMs: 1, erpLoginAutoMs: 1 });
+    const adapter = createMockAdapter({ seed: 'actions', fault: 'readback-mismatch', erpStepMs: 1 });
     const t1 = await adapter.getSnapshot('T1');
     // 去报销：整单确认之后开始写入，服务端自己探测到登录后自动写完。
     expect((await adapter.startErpWrite('T1', t1.step.stepToken)).ok).toBe(true);
@@ -154,7 +154,7 @@ describe('任务列表', () => {
     expect(within(plain).getByText(new RegExp(ABANDON_TASK_COPY.dialogBody.slice(0, 20)))).toBeTruthy();
   });
 
-  // 唯一还挡着作废的状态：这个任务的写入正在跑（?seed=erp 下 T1 停在等待登录）。
+  // 唯一还挡着作废的状态：这个任务的写入正在跑（?seed=erp 下 T1 的去报销正在跑）。
   test('abandonment waits while the ERP job of this very task is in flight, and says so', async () => {
     renderApp('#/tasks', 'erp');
     const row = await rowOf('2026-08 上海出差（产品评审）');

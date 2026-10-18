@@ -233,7 +233,7 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     expect(!stoppedResult.ok && stoppedResult.problems.some((p) => p.code === 'field_write_failed' || p.code === 'tax_clear_failed')).toBe(true);
   });
 
-  it('hands over only when the same form still passes the strict read-back, and never saves', async () => {
+  it('clears the form for 暂存 only when the same form still passes the strict read-back, and never saves', async () => {
     const preview = makePreview();
     const approval = { digest: preview.previewDigest!, preview };
     const before = readings(detailGrid(4), 'new', null, { ok: true, reasons: [] });
@@ -244,7 +244,7 @@ describe('ERP draft flow (草稿填写与保存)', () => {
       approvedPreview: preview, approval, freshGate, fillResult,
       readCurrent: async () => { reads += 1; return before; },
     });
-    expect(handedOver).toMatchObject({ status: 'handed_over' });
+    expect(handedOver).toMatchObject({ status: 'verified' });
     expect(handedOver.readings).toBe(before);
     // One read: the strict 逐行回读 (per-line read-back) is the whole gate, and nothing follows it.
     expect(reads).toBe(1);

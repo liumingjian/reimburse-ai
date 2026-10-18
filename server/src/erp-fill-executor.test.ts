@@ -38,12 +38,12 @@ async function actionsOnFakeErp(assumeReceiptLink: boolean): Promise<Scene> {
 }
 
 describe('去报销 with the real executor on the fake ERP', () => {
-  it('imports and fills a form that passes the strict read-back, then hands it over unsaved: done', async () => {
+  it('imports and fills a form that passes the strict read-back, then 暂存s it: ERP 草稿已交接', async () => {
     const scene = await actionsOnFakeErp(true);
     const done = await scene.run('start-erp-write');
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
-    // Nothing was saved, so there is no 单据编号 (bill number) — the strict read-back rows are the evidence instead.
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', erpAccount: ERP_ACCOUNT, review: { draftId: expect.any(String) } }, readback: { status: 'matched' } });
+    // A 暂存单 has no 单据编号 (bill number) until the employee saves it — the strict read-back rows are the evidence.
     expect(done.erp.draftNo).toBeNull();
     expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows[0]!.fields.find((field) => field.label === '收票单号')?.erp).toBe(SCENE_RECEIPT_NUMBER);
@@ -52,14 +52,13 @@ describe('去报销 with the real executor on the fake ERP', () => {
     expect(JSON.parse(preview.preview)).toMatchObject({ taskId: scene.task.taskId, identity: { account: ERP_ACCOUNT.account, tenant: ERP_ACCOUNT.tenant } });
   });
 
-  it('starts no 保存 动作尝试 and records no save mutation: baox cannot commit the 费用报销单 (ADR-0028)', async () => {
+  it('presses 暂存 after its own durable attempt and never 保存: the employee submits the draft (ADR-0029, ADR-0037)', async () => {
     const scene = await actionsOnFakeErp(true);
     expect((await scene.run('start-erp-write')).stage).toBe('done');
 
-    expect((await attemptedActions(server.db, scene.task.taskId)).sort()).toEqual(['fill', 'import']);
+    expect((await attemptedActions(server.db, scene.task.taskId)).sort()).toEqual(['fill', 'import', 'save']);
+    expect(fake!.mutations.filter((mutation) => mutation.kind === 'draft')).toHaveLength(1);
     expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
-    // ERP still shows the 新增 (new) tab: the 费用报销单 never reached the ERP's database.
-    expect(fake!.document.querySelector('.form-tab')!.textContent).toBe('费用报销单-新增');
   });
 
   // V-54, all the way out to what the employee reads. A 处理结果 window that will not close leaves the import
@@ -81,8 +80,8 @@ describe('去报销 with the real executor on the fake ERP', () => {
 
   // In 「不生成费用明细」 mode ERP leaves 收票单号 empty on every 费用明细行 (research, and reproduced live on 13
   // rows). That link was once required, and a wholly correct form ended as 结果不确定 because of it. Since the
-  // owner's 2026-09-20 decision the read-back compares the form's totals, so the same form is handed over.
-  it('hands over a form whose 收票单号 ERP left empty on the detail rows, because the totals agree', async () => {
+  // owner's 2026-09-20 decision the read-back compares the form's totals, so the same form is 暂存d.
+  it('暂存s a form whose 收票单号 ERP left empty on the detail rows, because the totals agree', async () => {
     const scene = await actionsOnFakeErp(false);
     const done = await scene.run('start-erp-write');
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();

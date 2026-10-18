@@ -130,11 +130,16 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
       return view(accountId);
     },
 
-    /** The 凭据 a job of this account signs in with: only authorised ones. */
-    async forJob(accountId: string): Promise<ErpCredentials | null> {
+    /**
+     * The 凭据 a job of this account signs in with: only authorised ones. `untested` also gives saved ones no 试登录
+     * has passed yet: the server's own executor (development, e2e) has no 本地执行器 to try them on, and signs in with
+     * them as it finds them. Refused ones never go, and a refusal in the job deletes them as anywhere else.
+     */
+    async forJob(accountId: string, { untested = false }: { untested?: boolean } = {}): Promise<ErpCredentials | null> {
       if (!vault) return null;
       const row = await db.selectFrom('erp_credential').selectAll().where('account_id', '=', accountId).executeTakeFirst();
-      if (!row || row.status !== 'authorised' || !row.password_sealed || refused.get(accountId) === row.saved_at) return null;
+      const usable = row?.status === 'authorised' || (untested && row?.status === 'untested');
+      if (!row || !usable || !row.password_sealed || refused.get(accountId) === row.saved_at) return null;
       const password = vault.open(accountId, row.password_sealed);
       return password === null ? null : { account: row.erp_account, password };
     },

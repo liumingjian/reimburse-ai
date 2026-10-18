@@ -61,7 +61,7 @@ async function expectLoaded(image: Locator) {
 }
 
 test.describe('confirmed print and ERP navigation', () => {
-  test.use({ serverEnv: { BAOX_ERP_FAKE: 'login_wall' } });
+  test.use({ serverEnv: { BAOX_ERP_FAKE: 'drafted' } });
 
   test('readable preview controls and both routes retain the same confirmation', async ({ page }, testInfo) => {
     test.setTimeout(120_000);
@@ -101,7 +101,7 @@ test.describe('confirmed print and ERP navigation', () => {
     expect((await snapshotOf(page, taskId)).confirmation).toEqual(before.confirmation);
     await page.getByRole('button', { name: '去报销', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/erp$`));
-    await expect.poll(async () => (await snapshotOf(page, taskId)).erp.status).toBe('waiting_login');
+    await expect.poll(async () => (await snapshotOf(page, taskId)).erp.status).toBe('done');
     await page.getByRole('link', { name: '去打印', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/print$`));
     await page.getByRole('link', { name: '查看填报进度', exact: true }).click();

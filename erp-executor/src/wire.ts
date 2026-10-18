@@ -32,9 +32,9 @@ export const EXECUTOR_METHODS = { fill: 'erp.fill', reconcile: 'erp.reconcile', 
 // another account's; the other two tell an interrupted job's extension what it must do next.
 export const JOB_REFUSALS = { unknownJob: 'unknown_job', resumeRequired: 'resume_required', notInterrupted: 'job_not_interrupted' } as const;
 
-// What started a fill run (the server's `FillTrigger`); `confirm_login` probes the login once and never waits for it.
-// `rerun` is an 自动重新去报销 (ADR-0034): it runs like `refill`, on a fresh 新增单, and its plan carries `rerun`.
-export const FILL_TRIGGERS = ['start', 'confirm_login', 'refill', 'rerun'] as const;
+// What started a fill run (the server's `FillTrigger`). `rerun` is an 自动重新去报销 (ADR-0034): it runs like
+// `refill`, on a fresh 新增单, and its plan carries `rerun`.
+export const FILL_TRIGGERS = ['start', 'refill', 'rerun'] as const;
 
 export const ErpCredentialsSchema = z.object({ account: z.string().min(1).max(128), password: z.string().min(1).max(256) });
 

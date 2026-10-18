@@ -49,11 +49,14 @@ export const blobSource = (): BlobSource => {
   return { read: async (ref) => bySha.get(ref.sha256) ?? new Uint8Array() };
 };
 
+/** The ownership marker every scenario fill 暂存s under (ADR-0029). */
+export const DRAFT_MARK_OF_TEST = 'baox-k3m9q2x7v1';
+
 export const fillPlan = (taskId: string, overrides: Partial<FillPlan> = {}): FillPlan => ({
   protocolVersion: PROTOCOL_VERSION, kind: 'fill', jobId: `job-${taskId}`, taskId, erpOrigin: ERP_ORIGIN,
   compatibility: COMPATIBILITY, catalog: { projects: PROJECTS, expenseItems: EXPENSE_ITEMS },
   invoices: INVOICES.map((invoice) => ({ sha256: sha(invoice.bytes), fileName: invoice.fileName, mime: 'application/pdf' })),
-  purpose: '客户支持', ...overrides,
+  purpose: '客户支持', draft: { mark: DRAFT_MARK_OF_TEST }, ...overrides,
 });
 
 export const reconcilePlan = (taskId: string, overrides: Partial<ReconcilePlan> = {}): ReconcilePlan => ({

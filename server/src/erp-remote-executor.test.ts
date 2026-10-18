@@ -11,7 +11,7 @@ import { createErpRunner } from '@baox/extension/erp-runner';
 import { dedicatedErpTab } from '@baox/extension/erp-tab';
 import { fakeChrome } from '@baox/extension/testing/fake-chrome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { catalogMismatch, loginWall, noFormOpen, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
+import { catalogMismatch, noFormOpen, notSignedIn, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { FILL_JOB_DEADLINE_MS, JOB_DEADLINE_CODE } from './erp/fill-jobs';
 import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
@@ -146,7 +146,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
   });
 
   it.each([
-    ['pauses for the ERP login', loginWall, 'waiting_login', 'waiting_login'],
+    ['stops at an ERP login it cannot sign in to', notSignedIn, 'step', 'aborted'],
     ['stops on a 报销信息核对 mismatch', catalogMismatch, 'catalog_mismatch', 'catalog_mismatch'],
   ] as const)('%s with the event the extension sent', async (_name, script, event, status) => {
     const extension = await connected(await pair(alice), { fill: (plan, channel) => script(plan, channel) });
@@ -218,7 +218,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
       fill: async (plan, channel) => {
         entered(plan.jobId);
         await gate;
-        return loginWall(plan, channel);
+        return notSignedIn(plan, channel);
       },
     });
     const bob = await server.signIn('bob');
@@ -271,12 +271,11 @@ describe('an interrupted 去报销', () => {
     expect(await back.resume(jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
     const wire = back.channel(jobId);
     await wire.emit({ type: 'step', step: 'chromium', status: 'done' });
-    await wire.emit({ type: 'waiting_login', hint: '请登录报销系统' });
-    await wire.emit({ type: 'result', status: 'waiting_login', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
-    const paused = await scene.settled();
+    await wire.emit({ type: 'result', status: 'aborted', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
+    const stopped = await scene.settled();
 
-    expect(paused.erp.status).toBe('waiting_login');
-    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'step', 'waiting_login', 'result']);
+    expect(stopped.erp).toMatchObject({ status: 'idle', abortReason: expect.stringContaining('请登录报销系统') });
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'step', 'result']);
     // The plan went down once, to the first socket; the window closed with the resume.
     expect(back.asked()).toEqual([]);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
@@ -309,10 +308,9 @@ describe('an interrupted 去报销', () => {
     const again = await connected(token, {});
     expect(await again.resume(jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
     const wire = again.channel(jobId);
-    await wire.emit({ type: 'waiting_login', hint: '请登录报销系统' });
-    await wire.emit({ type: 'result', status: 'waiting_login', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
+    await wire.emit({ type: 'result', status: 'aborted', code: 'erp_login', message: '请登录报销系统', billNo: null, capture: null });
 
-    expect((await scene.settled()).erp.status).toBe('waiting_login');
+    expect((await scene.settled()).erp).toMatchObject({ status: 'idle', abortReason: expect.stringContaining('请登录报销系统') });
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
@@ -488,14 +486,14 @@ describe('an interrupted 去报销', () => {
           await extension.detached(plan.jobId);
           await expect(channel.emit({ type: 'step', step: 'chromium', status: 'done' })).rejects.toMatchObject({ code: 'resume_required' });
           expect(await extension.resume(plan.jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
-          return loginWall(plan, channel);
+          return notSignedIn(plan, channel);
         },
       });
       const scene = await actionsOnFakeErp();
 
       const paused = await scene.run('start-erp-write');
 
-      expect(paused.erp.status).toBe('waiting_login');
+      expect(paused.erp).toMatchObject({ status: 'idle', abortReason: expect.stringContaining('设置页') });
       expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', ...extension.sent().slice(2).map((event) => event.type)]);
       expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
     });

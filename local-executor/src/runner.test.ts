@@ -24,7 +24,7 @@ const plan: FillPlan = {
   compatibility: { erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' },
   catalog: { projects: PROJECTS, expenseItems: EXPENSE_ITEMS },
   invoices: [{ sha256: createHash('sha256').update(INVOICE.bytes).digest('hex'), fileName: INVOICE.fileName, mime: 'application/pdf' }],
-  purpose: '客户支持',
+  purpose: '客户支持', draft: { mark: 'baox-k3m9q2x7v1' },
 };
 
 /** The app: records each `erp.event`, acknowledges attempts and refuses read-backs, so a fill ends right after import. */
@@ -96,7 +96,7 @@ describe('the local executor runs a 去报销 in a headless browser of its own',
     const local = await localOver({ erp: { loggedIn: false } });
     const result = await local.fill();
     expect(result).toMatchObject({ status: 'aborted', code: expect.stringMatching(/^erp_sign_in_/) });
-    expect(local.events.some((e) => e.type === 'attempt_started' || e.type === 'waiting_login')).toBe(false);
+    expect(local.events.some((e) => e.type === 'attempt_started')).toBe(false);
     expect(local.browsers).toEqual({ launched: 1, closed: 1 });
   });
 

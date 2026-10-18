@@ -5,7 +5,7 @@ import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FrozenJob } from './erp/fill-plan';
-import { draftMarkOf } from './erp/remote-executor';
+import { draftMarkOf } from './erp/fill-plan';
 import { drafted, gated, readbackMismatch, uncertainDraft } from './erp/testing/fake-executor';
 import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
 import type { TestClient } from './test/harness';

@@ -1,6 +1,6 @@
 import { resolveDataDir } from './data-dir';
 import { cdpExecutors } from './erp/cdp-executor';
-import { catalogMismatch, loginWall, noFormOpen, scripted, uncertainSave, type Script } from './erp/testing/fake-executor';
+import { catalogMismatch, drafted, noFormOpen, notSignedIn, scripted, uncertainSave, type Script } from './erp/testing/fake-executor';
 import { invoiceVariantFixtureParser } from './parse/testing/invoice-variants';
 import { uncertainInvoiceTypeFixtureParser } from './parse/testing/uncertain-invoice-type';
 import { run, type RunOverrides } from './run';
@@ -11,10 +11,11 @@ import { run, type RunOverrides } from './run';
 //
 // `BAOX_ERP_FAKE` picks which ERP the job meets. Without it the CDP executor is used, which the Playwright server
 // project runs with `BAOX_ERP_CHROMIUM=off`: a job finds no browser and stops before any attempt.
+//   drafted           the production ending (ADR-0037): the fill 暂存s the bill and finds it again, ERP 草稿已交接
 //   uncertain_save    the fill job ends in ERP 写入结果未知 after its save attempt (#192)
-//   login_wall        ERP sits on its login page: the job pauses, nothing is written
+//   not_signed_in     ERP sits on its login page and the job has no 凭据: it stops before any attempt
 //   catalog_mismatch  报销信息核对 finds the first project renamed and aborts before importing anything
-const SCRIPTS: Readonly<Record<string, Script>> = { uncertain_save: uncertainSave, login_wall: loginWall, catalog_mismatch: catalogMismatch };
+const SCRIPTS: Readonly<Record<string, Script>> = { drafted, uncertain_save: uncertainSave, not_signed_in: notSignedIn, catalog_mismatch: catalogMismatch };
 
 const script = SCRIPTS[process.env['BAOX_ERP_FAKE'] ?? ''];
 const PARSERS: Readonly<Record<string, () => ReturnType<typeof invoiceVariantFixtureParser>>> = {

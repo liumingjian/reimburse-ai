@@ -47,9 +47,9 @@ import { rememberedHomeCity, rememberHomeCity } from './settings';
 import type { ErpLease } from './erp-lease';
 import type { MaintenanceLease } from './maintenance';
 import type { ErpConfig } from './erp/config';
-import { buildFillJob, type FrozenJob } from './erp/fill-plan';
+import { buildFillJob, draftMarkOf, planOfJob, type FrozenJob } from './erp/fill-plan';
 import { JOB_DEADLINE_CODE, newJobId, NO_RESULT_CODE, type FillRun, type FillTrigger } from './erp/fill-jobs';
-import { draftMarkOf, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
+import { RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
 import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
@@ -122,8 +122,7 @@ export type ErpServiceOptions = {
   // Acquired beside the durable job row, before the runner can start. This closes the admission race with a new job.
   acquireErp?: () => MaintenanceLease | null;
   acquireBackground?: () => MaintenanceLease | null;
-  // The account's jobs go to a baox 本地执行器 (it is sent ERP 凭据, ADR-0033), the only executor 自动重新去报销 runs on
-  // (ADR-0034): the 浏览器扩展 drives the employee's own tab, and the employee's own 重新去报销 stays theirs there.
+  // The account's jobs run unattended, with authorised ERP 凭据 (ADR-0033): only then does 自动重新去报销 start (ADR-0034).
   unattended?: (accountId: string) => Promise<boolean>;
 };
 
@@ -251,10 +250,10 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return fresh;
   }
 
-  // 去报销, 我已登录，继续 and 重新去报销: all three start one run of the fill job. The lease is taken inside the accepted
+  // 去报销 and 重新去报销: both start one run of the fill job. The lease is taken inside the accepted
   // change, so a task never runs without it; the job itself releases it on its result.
   //
-  // Where each trigger may be taken from (choose_action; the login pause; the 对账 verdict offering 重新去报销, ADR-0027)
+  // Where each trigger may be taken from (choose_action; the 对账 verdict offering 重新去报销, ADR-0027)
   // is the task policy's to say, like any other admission: by the time `apply` runs, the trigger was admitted.
   async function startFillJob(taskId: string, token: string, trigger: Exclude<FillTrigger, 'rerun'>): Promise<TaskSnapshot> {
     const recovery = trigger === 'refill';
@@ -267,39 +266,31 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         action,
         async ({ tx, facts, loaded, at, revision }) => {
           const erpService = admitted(erp, 'an ERP configured');
-          let frozen: FrozenJob;
-          let digest: string;
-          if (trigger === 'confirm_login') {
-            // The paused job's own plan, replayed as it was frozen.
-            frozen = admitted(loaded.erp.frozen, 'the paused job plan');
-            digest = admitted(loaded.erp.job, 'the paused job').confirmation_digest;
-          } else {
-            // The plan is built from the confirmed materials, lines, projects and 事由; 重新去报销 rebuilds it from the
-            // same confirmation 去报销 used.
-            const confirmed = admitted(loaded.confirmed, 'a confirmation');
-            const rows = await materialRows(tx, taskId);
-            const kinds = new Map(loaded.view.materials.map((material) => [material.materialId, material.kind]));
-            const built = buildFillJob({
-              taskId,
-              jobId: 'unassigned',
-              versionId: `v${facts.versionNo}`,
-              homeCity: loaded.homeCity,
-              purpose: loaded.assignment?.submitted?.purpose ?? null,
-              lines: loaded.lines,
-              materials: rows.map((row) => ({ materialId: row.material_id, kind: kinds.get(row.material_id) ?? null, fileName: row.file_name, sha256: row.blob_sha256, mime: row.mime })),
-              claims: loaded.view.claims,
-              config: erpService.config,
-            });
-            if (!built.ok) return { code: 'erp_preflight', message: ERP_ACTION_ERRORS.preflight(built.problems) };
-            frozen = built.job;
-            digest = confirmed.digest;
-          }
+          // The plan is built from the confirmed materials, lines, projects and 事由; 重新去报销 rebuilds it from the
+          // same confirmation 去报销 used.
+          const confirmed = admitted(loaded.confirmed, 'a confirmation');
+          const rows = await materialRows(tx, taskId);
+          const kinds = new Map(loaded.view.materials.map((material) => [material.materialId, material.kind]));
+          const built = buildFillJob({
+            taskId,
+            jobId: 'unassigned',
+            versionId: `v${facts.versionNo}`,
+            homeCity: loaded.homeCity,
+            purpose: loaded.assignment?.submitted?.purpose ?? null,
+            lines: loaded.lines,
+            materials: rows.map((row) => ({ materialId: row.material_id, kind: kinds.get(row.material_id) ?? null, fileName: row.file_name, sha256: row.blob_sha256, mime: row.mime })),
+            claims: loaded.view.claims,
+            config: erpService.config,
+          });
+          if (!built.ok) return { code: 'erp_preflight', message: ERP_ACTION_ERRORS.preflight(built.problems) };
+          const frozen = built.job;
+          const digest = confirmed.digest;
           const unreachable = await erpService.executorReady?.(tx, accountId);
           if (unreachable) return unreachable;
           const jobId = newJobId();
           // The recovery replaces the unsaved bill it was offered over; ERP keeps that bill's tab open, and reusing it
           // would put the re-import on a form that already holds its 收票行 (live 2026-09-21).
-          const job: FrozenJob = { ...frozen, plan: { ...frozen.plan, jobId, ...(recovery ? { replaceAbandonedForm: true } : {}) } };
+          const job: FrozenJob = { ...frozen, plan: { ...planOfJob(frozen.plan, jobId), ...(recovery ? { replaceAbandonedForm: true } : {}) } };
           const maintenance = erpService.acquireErp ? erpService.acquireErp() : { release: () => undefined };
           if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护，暂时不能开始报销系统操作。' };
           // Taken for this job, not for the task: the run that ends gives back only its own lease. The policy saw it
@@ -641,11 +632,6 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return startFillJob(taskId, token, 'start');
     },
 
-    // 我已登录，继续 during the login pause: one more run of the same frozen plan, which probes the login once.
-    confirmLogin(taskId: string, token: string): Promise<TaskSnapshot> {
-      return startFillJob(taskId, token, 'confirm_login');
-    },
-
     // 重新去报销 (ADR-0027): the exit out of 未保存·已导入未写明细 while the ERP shows no 单据编号. A new fill job on the
     // same 报销任务, on a fresh 新增单 — never the old page instance (V-45) — which takes the account's ERP lease and
     // opens its own attempts. The 对账 job row keeps pointing at the fill job it read, and the new job row carries
@@ -684,7 +670,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           if (unreachable) return unreachable;
           const jobId = newJobId();
           const job: FrozenJob = {
-            plan: { ...frozen.plan, jobId, replaceAbandonedForm: true, rerun: { invoiceNos, marks: jobs.map((row) => draftMarkOf(row.job_id)) } },
+            plan: { ...planOfJob(frozen.plan, jobId), replaceAbandonedForm: true, rerun: { invoiceNos, marks: jobs.map((row) => draftMarkOf(row.job_id)) } },
             judge: frozen.judge,
             rerunOf: { jobId: endedJobId, code, no: before + 1 },
           };
@@ -708,14 +694,6 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       if (!started.run) return false;
       erpService.run(started.run);
       return true;
-    },
-
-    // Gives up this 去报销 during the login pause: nothing was written, back to write-pending (choose_action).
-    async cancelErpWrite(taskId: string, token: string): Promise<TaskSnapshot> {
-      return mutate(taskId, token, 'cancel_erp_write', async ({ tx, facts, at, revision }) => {
-        const paused = admitted(facts.erp, 'the paused job');
-        await tx.insertInto('erp_job_cancel').values({ cancel_id: randomUUID(), job_id: paused.jobId, task_id: taskId, account_id: accountId, revision, created_at: at }).execute();
-      });
     },
 
     // 开始对账 / 重新对账: one run of the read-only reconcile job on the fill whose write result is unknown. Takes the

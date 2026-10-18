@@ -37,7 +37,8 @@ export const TASK_LIST_COPY = {
   filterGroup: '按状态筛选',
   all: '全部',
   active: '进行中',
-  handedOver: '已交接',
+  // The terminal of every 去报销 (GLOSSARY): ERP 草稿已交接, the bill 暂存'd for the employee to submit.
+  done: '已交接',
   noMatch: '没有符合条件的任务。',
 } as const;
 
@@ -54,7 +55,7 @@ function statusOf(task: TaskListItem): Status {
   if (task.erpOutcome === 'handed_off') return { key: 'handed_off', label: TASK_ERP_OUTCOME_LABELS.handed_off, tone: 'warning' };
   if (task.erpOutcome === 'readback_mismatch') return { key: 'readback_mismatch', label: TASK_ERP_OUTCOME_LABELS.readback_mismatch, tone: 'danger' };
   if (task.stage === 'reconcile') return { key: 'reconcile', label: RECONCILE_STATUS_LABEL, tone: 'warning' };
-  if (task.stage === 'done') return { key: 'done', label: TASK_LIST_COPY.handedOver, tone: 'success' };
+  if (task.stage === 'done') return { key: 'done', label: TASK_LIST_COPY.done, tone: 'success' };
   return { key: 'active', label: TASK_LIST_COPY.active, tone: 'info' };
 }
 
@@ -64,7 +65,7 @@ const FILTERS: readonly { key: StatusKey; label: string; always: boolean }[] = [
   { key: 'reconcile', label: RECONCILE_STATUS_LABEL, always: true },
   { key: 'handed_off', label: TASK_ERP_OUTCOME_LABELS.handed_off, always: false },
   { key: 'readback_mismatch', label: TASK_ERP_OUTCOME_LABELS.readback_mismatch, always: false },
-  { key: 'done', label: TASK_LIST_COPY.handedOver, always: true },
+  { key: 'done', label: TASK_LIST_COPY.done, always: true },
 ];
 
 // 进度列：内核 10 阶段的序号画成 Carbon 进度条，旁边是「N/10 阶段名」。写入结局不是 none 时状态列已经说明结局，这里只留进度条（契约：结局代替阶段名）。

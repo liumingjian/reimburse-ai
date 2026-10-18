@@ -159,7 +159,7 @@ export const fillPlan = (erpOrigin: string, overrides: Partial<FillPlan> = {}): 
   compatibility: { erpBuild: PAGE.erpBuild, formId: PAGE.formId },
   catalog: { projects: PROJECTS.map(({ code, name }) => ({ code, name })), expenseItems: EXPENSE_ITEMS.map(({ code, name }) => ({ code, name })) },
   invoices: [{ sha256: '0'.repeat(64), fileName: '铁路电子客票.pdf', mime: 'application/pdf' }],
-  purpose: '客户支持', ...overrides,
+  purpose: '客户支持', draft: { mark: 'baox-k3m9q2x7v1' }, ...overrides,
 });
 
 /** How the stand-in app answers an executor event. `defaultReply` answers as the server's channel does. */

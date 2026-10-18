@@ -179,7 +179,7 @@ test('1440：任务表不横向滚动，固定列没有分隔线；disabled aban
   await expect(tasks.locator('tbody tr').first().locator('td').last()).toHaveCSS('box-shadow', NO_DIVIDER);
   await page.screenshot({ path: testInfo.outputPath('tasks-1440.png') });
 
-  // 唯一还挡着作废的状态：这个任务自己的写入正在跑（?seed=erp 下 T1 停在等待登录）。
+  // 唯一还挡着作废的状态：这个任务自己的写入正在跑（?seed=erp 下 T1 的去报销正在跑）。
   await page.goto(open('?seed=erp', '#/tasks'));
   const blocked = page.getByRole('row', { name: /2026-08 上海出差（产品评审）/ });
   await expect(blocked.getByRole('button', { name: '作废' })).toBeDisabled();

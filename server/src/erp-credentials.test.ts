@@ -4,8 +4,10 @@ import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { drafted, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
-import { draftMarkOf } from './erp/remote-executor';
+import type { FillExecutor } from './erp/fill-jobs';
+import { draftMarkOf } from './erp/fill-plan';
 import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
@@ -195,5 +197,47 @@ describe('the 去报销 step list', () => {
     expect(titles(done)).toEqual(LOCAL);
     expect(done.erp.steps.at(-1)).toMatchObject({ description: '你检查后自己提交', status: 'done' });
     expect(done.erp.progress).toEqual({ label: '核对暂存单', percent: 100 });
+  });
+});
+
+// ADR-0037: development and e2e run the production path. The server's own executor (the CDP one in development) signs
+// in with the 凭据 saved on the 设置页 as a 本地执行器 does, though with no 本地执行器 paired nothing could try them first.
+describe('ERP 凭据 for the server\'s own executor (development, e2e)', () => {
+  let own: ScenarioServer;
+  let seen: Array<ErpCredentials | null>;
+  let answer: 'drafted' | 'refused';
+  const ownExecutor: FillExecutor = async (plan, channel, { credentials }) => {
+    seen.push(credentials);
+    if (answer === 'drafted') return drafted(plan, channel);
+    const refusedLogin = abortedResult(SIGN_IN_REFUSED_CODE, 'ERP 拒绝了这组账号密码：密码错误。');
+    await channel.emit(refusedLogin);
+    return refusedLogin;
+  };
+  beforeEach(async () => {
+    seen = [];
+    answer = 'drafted';
+    own = await scenarioServer({ erpExecutor: ownExecutor, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32) });
+  });
+  afterEach(() => own.close());
+
+  it('signs in with the 凭据 saved on the 设置页, untried, and 暂存s', async () => {
+    const scene = await scenario(own).at('actions');
+    expect(await view(await scene.client.post('/api/erp-credentials', { account: 'zhangsan', password: PASSWORD }))).toMatchObject({ status: 'untested' });
+
+    expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'done', erp: { outcome: 'drafted' } });
+    expect(seen).toEqual([{ account: 'zhangsan', password: PASSWORD }]);
+  });
+
+  it('goes without 凭据 when none are saved, and never again with ones ERP refused', async () => {
+    const scene = await scenario(own).at('actions');
+    answer = 'refused';
+    await scene.client.post('/api/erp-credentials', { account: 'zhangsan', password: PASSWORD });
+    const stopped = await scene.run('start-erp-write');
+    expect(stopped).toMatchObject({ stage: 'actions', erp: { status: 'idle' } });
+    expect((await view(await scene.client.request('/api/erp-credentials'))).status).toBe('refused');
+
+    answer = 'drafted';
+    expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'done' });
+    expect(seen).toEqual([{ account: 'zhangsan', password: PASSWORD }, null]);
   });
 });

@@ -829,7 +829,7 @@ export const ERP_PROGRESS_STAGE_KEYS = ['chromium', 'login', 'catalog', 'navigat
 export const ErpProgressStageSchema = z.enum(ERP_PROGRESS_STAGE_KEYS);
 export type ErpProgressStage = z.infer<typeof ErpProgressStageSchema>;
 
-export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'executor_connection', 'erp_response'] as const;
+export const ERP_EXTERNAL_WAITS = ['none', 'executor_connection', 'erp_response'] as const;
 export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
 export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
 
@@ -838,7 +838,8 @@ export const ErpOutcomeSchema = z.enum(ERP_OUTCOMES);
 export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
 
 // These are commands over the recorded state. `refresh` only reads the latest snapshot; it never reruns a fill job.
-export const ERP_ALLOWED_ACTIONS = ['refresh', 'confirm_login', 'cancel'] as const;
+// Nothing on the 去报销 page waits for the employee (ADR-0037): the 本地执行器 signs in by itself.
+export const ERP_ALLOWED_ACTIONS = ['refresh'] as const;
 export const ErpAllowedActionSchema = z.enum(ERP_ALLOWED_ACTIONS);
 export type ErpAllowedAction = z.infer<typeof ErpAllowedActionSchema>;
 
@@ -888,7 +889,6 @@ export const ERP_STEPS = [
 export type ErpStepCopy = { readonly key: ErpProgressStage; readonly title: string; readonly description: string };
 
 export const ERP_EXTERNAL_WAIT_COPY: Readonly<Record<Exclude<ErpExternalWait, 'none'>, string>> = {
-  employee_login: '等待你在报销系统标签页登录。',
   executor_connection: '本地执行器没有连接。连接恢复后，刷新状态只会读取已经记录的进度。',
   erp_response: '正在等待报销系统返回结果。',
 };
@@ -897,7 +897,7 @@ export const ErpStepSchema = z.object({
   key: z.string().min(1),
   title: z.string().min(1),
   description: z.string(),
-  status: z.enum(['todo', 'running', 'waiting', 'done', 'failed']),
+  status: z.enum(['todo', 'running', 'done', 'failed']),
 });
 export type ErpStep = z.infer<typeof ErpStepSchema>;
 
@@ -934,7 +934,7 @@ export type ErpProgress = z.infer<typeof ErpProgressSchema>;
 
 // idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
-  status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
+  status: z.enum(['idle', 'running', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
   currentStage: ErpProgressStageSchema.nullable(),
   progress: ErpProgressSchema.nullable(),
@@ -943,7 +943,6 @@ export const ErpSchema = z.object({
   allowedActions: z.array(ErpAllowedActionSchema),
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
-  loginNotice: z.string().nullable(),
   // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row.
   rerunNotice: z.string().nullable(),
   erpAccount: ErpAccountViewSchema.nullable(),
@@ -1156,7 +1155,7 @@ export const CATALOG_PREPARATION_COPY = {
 
 // 顺序即流程：答复待确认项 → 项目归属（assign_projects）→ 报销信息核对与材料准备（服务端自动，none）
 // → 整单确认（confirm_review）→ 去打印 / 去报销（choose_action）。
-// 「去报销」即开始 ERP 写入，没有单独的「开始填报」：写入进行中为 none；登录步等待时为 erp_login；停在对账时为 reconcile。
+// 「去报销」即开始 ERP 写入，没有单独的「开始填报」：写入进行中为 none；停在对账时为 reconcile。
 // 确认之后、写入开始之前，改派项目仍被接受（confirm_review / choose_action 下提交项目归属），并使确认失效。
 export const STEP_KINDS = [
   'none',
@@ -1171,7 +1170,6 @@ export const STEP_KINDS = [
   'resolve_preparation',
   'confirm_review',
   'choose_action',
-  'erp_login',
   'reconcile',
   // 严格回读不一致、停在完成页：只接受「转人工」。
   'hand_off',

@@ -32,7 +32,7 @@ const LOCAL_CHECK_EVENTS: DisplayEvents = { from: ['draft_check'] };
 const displayEventsOf = (key: ErpProgressStage): DisplayEvents => (key === 'handover' ? LOCAL_DRAFT_EVENTS : DISPLAY_EVENT_STEPS[key]);
 
 type StepStatus = 'running' | 'done' | 'failed';
-const FINISHED_PHASES: ReadonlySet<ErpPhase> = new Set(['handed_over', 'drafted', 'saved']);
+const FINISHED_PHASES: ReadonlySet<ErpPhase> = new Set(['drafted', 'saved']);
 
 /** Each executor step's latest status in the job's events. */
 function latestSteps(record: ErpRecord): Map<string, StepStatus> {
@@ -61,7 +61,6 @@ function stepsOf(record: ErpRecord): ErpStep[] {
   const steps = ERP_STEPS.map(({ key, title, description }): ErpStep => {
     let status = statusOver(latest, displayEventsOf(key));
     if (phase && FINISHED_PHASES.has(phase)) status = 'done';
-    if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
   });
   if (phase === 'running' && steps.every((step) => step.status === 'todo')) steps[0] = { ...steps[0]!, status: 'running' };
@@ -101,7 +100,7 @@ function progressOf(record: ErpRecord, steps: readonly ErpStep[]): ErpProgress {
   const finished = FINISHED_PHASES.has(record.facts!.phase);
   const current = finished
     ? units.at(-1)!
-    : units.find((unit) => unit.status === 'running' || unit.status === 'waiting' || unit.status === 'failed')
+    : units.find((unit) => unit.status === 'running' || unit.status === 'failed')
       ?? units.find((unit) => unit.done < unit.weight)
       ?? units.at(-1)!;
   const total = units.reduce((sum, unit) => sum + unit.weight, 0);
@@ -110,7 +109,7 @@ function progressOf(record: ErpRecord, steps: readonly ErpStep[]): ErpProgress {
 }
 
 function currentStageOf(steps: readonly ErpStep[]): Erp['currentStage'] {
-  const active = steps.find((step) => step.status === 'waiting' || step.status === 'running' || step.status === 'failed');
+  const active = steps.find((step) => step.status === 'running' || step.status === 'failed');
   if (active) return active.key as ErpProgressStage;
   const complete = [...steps].reverse().find((step) => step.status === 'done');
   return complete ? complete.key as ErpProgressStage : null;
@@ -119,7 +118,6 @@ function currentStageOf(steps: readonly ErpStep[]): Erp['currentStage'] {
 const CONNECTION_WAIT_CODES = new Set([EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE, 'extension_reconnect_expired']);
 
 function externalWaitOf(record: ErpRecord): Erp['externalWait'] {
-  if (record.facts?.phase === 'waiting_login') return 'employee_login';
   if (record.facts?.phase === 'running') return 'erp_response';
   return record.result?.code && CONNECTION_WAIT_CODES.has(record.result.code) ? 'executor_connection' : 'none';
 }
@@ -146,13 +144,10 @@ const rerunRunning = (no: number) => `上一次没有填完，应用已自动换
 const rerunSpent = (no: number) => `应用已自动换新单重新填报 ${no} 次，仍然没有完成，需要你来决定下一步。`;
 const RERUN_STOPPED = /^rerun_/;
 
-const LOGIN_NOT_DETECTED = '还没有检测到登录。请在为这次报销打开的报销系统标签页里登录本人账号（登录页上显示的上次账号不算已登录），完成后再点一次「我已登录，继续」。';
-
 // 去报销系统查看 (spec #406): the one rule for when the page offers the 报销系统 and the 暂存单's 内码. The phases in
 // which a 暂存单 the employee should check may exist: `drafted`, and `unknown` when its 内码 is known (暂存 landed but
 // its 回读 did not match, ticket #408, or 对账 found the task's one 暂存单 and could not prove it). `saved` is a bill
-// now, `aborted` wrote nothing, and `handed_over` (the 浏览器扩展 path) never 暂存s: its form is already open in the
-// employee's own tab.
+// now, and `aborted` wrote nothing.
 const REVIEWABLE_PHASES: ReadonlySet<ErpPhase> = new Set(['drafted', 'unknown']);
 
 // What 对账 by the ownership marker found that is still a 暂存单 needing the employee's eyes. `saved` is a bill now:
@@ -187,7 +182,6 @@ export function erpView(record: ErpRecord): Erp {
     allowedActions: [],
     draftNo: null,
     abortReason: null,
-    loginNotice: null,
     rerunNotice: null,
     erpAccount: record.erpAccount,
     review: null,
@@ -208,8 +202,6 @@ export function erpView(record: ErpRecord): Erp {
   switch (facts.phase) {
     case 'running':
       return { ...idle, ...readState, status: 'running', rerunNotice: rerunNo ? rerunRunning(rerunNo) : null };
-    case 'waiting_login':
-      return { ...idle, ...readState, status: 'waiting_login', loginNotice: facts.trigger === 'confirm_login' ? LOGIN_NOT_DETECTED : null };
     case 'aborted':
       return {
         ...idle,
@@ -219,8 +211,6 @@ export function erpView(record: ErpRecord): Erp {
             ? `${CATALOG_QUERY_FAILED_REASON}${reason}`
             : `上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：${reason}`,
       };
-    case 'handed_over':
-      return { ...idle, ...readState, status: 'done', outcome: 'filled', draftNo: null };
     // ERP 草稿已交接: the draft has no 单据编号 until the employee saves it.
     case 'drafted':
       return { ...idle, ...readState, status: 'done', outcome: 'drafted', draftNo: null };
@@ -234,7 +224,7 @@ export function erpView(record: ErpRecord): Erp {
           ? reason
           : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
     default:
-      // Cancelled login pause, or a catalog mismatch (its problems are in the catalog section): nothing was written.
+      // A catalog mismatch (its problems are in the catalog section): nothing was written.
       return idle;
   }
 }
@@ -248,15 +238,15 @@ const centsOf = (amount: string | null | undefined) => {
 };
 
 /**
- * The strict read-back the terminal rests on. A `handed_over` result exists only after the server judged the filled
- * form equal to the approved preview on every row and all nine fields, and a `saved` one only after the same
- * comparison on the saved form, so each field's ERP side equals its local side. At hand-over these rows are the
- * evidence the employee is asked to trust before they click 保存 (save). Net and tax come from the approved preview
+ * The strict read-back the terminal rests on. A `drafted` result exists only after the server judged the filled
+ * form equal to the approved preview on every row and all nine fields before 暂存, and the draft was read back equal
+ * to that form; a `saved` one only after the same comparison on the saved form. So each field's ERP side equals its
+ * local side, and these rows are the evidence the employee is asked to trust before they submit the draft. Net and tax come from the approved preview
  * (a rail line's come from ERP's receipt), the receipt number from its bindings.
  */
 export function readbackView(record: ErpRecord, lines: readonly Line[]): Readback {
   const phase = record.facts?.phase;
-  if (phase !== 'handed_over' && phase !== 'drafted' && phase !== 'saved') return EMPTY_READBACK;
+  if (phase !== 'drafted' && phase !== 'saved') return EMPTY_READBACK;
   const previewLine = new Map((record.preview?.lines ?? []).map((line) => [line.lineId, line]));
   const receipt = new Map((record.preview?.receiptBindings ?? []).map((binding) => [binding.voucherMaterialId, binding.receiptNumber]));
   const rows: ReadbackRow[] = lines.map((line) => {
@@ -331,10 +321,8 @@ const BUCKET_BANNER: Readonly<Record<ReconcileBucket, (billNo: string | null) =>
   '未保存·已导入未写明细': (billNo) => (billNo
     ? `报销系统里已有单据 ${billNo}，发票已导入、明细还没有写。只能转人工处理。`
     : '发票已导入报销系统、明细还没有写。占着这些发票的是刚才那张没有保存的单据，不是被报销掉了：重新去报销会重开一张单据再导一次，报销系统会覆盖掉原来的收票记录。那张没保存的单据没有单据编号，关掉也不会留下单据，不需要你去清理。'),
-  // Unreachable while the strict per-line match holds: that pair promotes to the hand-over terminal (#241), which
-  // renders HANDOVER_COMPLETED_NOTICE instead of a banner. The entry survives because BUCKET_BANNER is exhaustive
-  // over ReconcileBucket, and because the bucket is still reachable without the match (a reconcile that read a
-  // ready-to-save form it cannot prove line by line), which is the case this sentence is written for.
+  // A filled form a fill left before 暂存 (ADR-0037: nothing is handed over unsaved any more, so it is never
+  // promoted to a terminal). Rare: the 本地执行器's browser, and the unsaved form in it, normally go with the job.
   '未保存·就绪待保存': () => '明细已写好，收票与明细合计一致，还没有保存。应用不会替你保存；请在报销系统里逐行核对后自己点「保存」，或转人工。',
   已保存: (billNo) => `报销系统里已有草稿${billNo ? ` ${billNo}` : ''}，但不能证明它的合计与这次确认的明细一致。`,
   不自洽: () => '报销系统里这张单据前后对不上。只能转人工处理。',
@@ -362,7 +350,6 @@ const NO_FORM_OPEN_BANNER = '报销系统里现在没有打开任何费用报销
 // Why the latest reconcile run has no read-back, as the page says it.
 function runNotice(result: ResultEvent | null): string | null {
   if (!result || result.status === 'read') return null;
-  if (result.status === 'waiting_login') return '对账前请先在为这次报销打开的报销系统标签页里登录，然后再对账。';
   return `这次对账没有读到报销系统，可以再对账一次。原因：${result.message ?? result.code ?? ''}`;
 }
 
@@ -484,7 +471,6 @@ export function legacyErpView(legacy: LegacyTaskTable): Erp {
     allowedActions: saved ? erpActionsOf('saved') : [],
     draftNo: legacy.bill_no,
     abortReason: null,
-    loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
     review: null,

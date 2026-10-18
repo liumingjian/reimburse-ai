@@ -184,10 +184,10 @@ describe('契约 schema', () => {
     expect(STEP_KINDS.indexOf('assign_projects')).toBeLessThan(STEP_KINDS.indexOf('confirm_review'));
     expect(STEP_KINDS.indexOf('confirm_review')).toBeLessThan(STEP_KINDS.indexOf('choose_action'));
     expect((STEP_KINDS as readonly string[]).includes('start_erp_write')).toBe(false);
-    // ?seed=erp：已点「去报销」，浏览器启动后等待登录。
+    // ?seed=erp：已点「去报销」，作业正在跑；没有等员工的一步（ADR-0037）。
     const erp = t1Snapshot('erp');
-    expect(erp.step.kind).toBe('erp_login');
-    expect(erp.erp.status).toBe('waiting_login');
+    expect(erp.step.kind).toBe('none');
+    expect(erp.erp.status).toBe('running');
   });
 
   test('逐段分摊与处理人：?allocation=1 的各阶段夹具通过 schema；待确认项都带处理人；答复为 amounts 或 giveUp', () => {
@@ -283,7 +283,7 @@ describe('报销任务阶段', () => {
     expect(readMockOptions('?seed=preparation')).toEqual({ seed: null, fault: null });
     // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
     expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
-    expect(FAULTS).toHaveLength(8);
+    expect(FAULTS).toHaveLength(7);
     // ?book=empty：个人项目簿初始为空。
     expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
     expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });

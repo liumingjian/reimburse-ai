@@ -73,7 +73,6 @@ export function idleErp(): Erp {
     allowedActions: [],
     draftNo: null,
     abortReason: null,
-    loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
     review: null,
@@ -93,24 +92,13 @@ export function erpRunning(active: number, rowCount: number, route: ErpRoute = '
   };
 }
 
-// 「去报销」之后浏览器已启动、登录步等待（`?seed=erp` 的状态）。
-export function erpWaitingLogin(rowCount: number): Erp {
-  return {
-    ...erpRunning(ERP_STEP_INDEX.login, rowCount),
-    status: 'waiting_login',
-    steps: erpSteps(ERP_STEP_INDEX.login, 'waiting'),
-    currentStage: 'login',
-    externalWait: 'employee_login',
-    allowedActions: ['refresh', 'confirm_login', 'cancel'],
-  };
+// `?seed=erp`：「去报销」之后作业正在核对报销信息，定格在这一步（mock 没有替它开跑的一轮，不会自己往下走）。
+export function erpSeedRunning(rowCount: number): Erp {
+  return erpRunning(ERP_STEP_INDEX.catalog, rowCount);
 }
 
 // 写入时登录的报销系统账号与账套（虚构）：按尝试记录，完成页显示，从不与应用账号比对。
 export const MOCK_ERP_ACCOUNT = { displayName: '林颂宜', account: 'lin.songyi', tenant: '安图特科技' } as const;
-
-export function loginNotDetected(attempt: number): string {
-  return `还没有检测到登录（第 ${attempt} 次检测）。请确认已在为这次报销打开的报销系统标签页里登录本人账号；登录页上显示的上次账号不算已登录。登录后再点一次「我已登录，继续」。`;
-}
 
 // Why the write job stopped (the job result's message; the server shows it as reconcile.reasons before the first
 // reconciliation), and the abort reason the server words around it (server/src/task-snapshot/erp.ts erpView).
@@ -232,9 +220,9 @@ export function reconcileVerdict(
 export const MOCK_ERP_REVIEW = { url: 'https://erp.example.test/k3cloud/html5/index.aspx', draftId: '119946' } as const;
 
 // 写入完成：严格回读逐行一致、单据已交接，阶段推到 done。
-// 交接时单据还没有保存，所以没有单据编号（服务端 fill-state.ts 的 handed_over 一样给 null）。只有员工自己保存过、
+// 本地执行器（route local_executor）暂存后结束：ERP 草稿已交接（drafted），暂存单没有单据编号，有暂存单可查看。
+// 浏览器扩展路线（mock 的默认，随 #437 删除）停在填好未保存（filled），服务端已经不再这样结束。只有员工自己保存过、
 // 再对一次账读到「已保存」，才会有编号，那时由调用方把编号传进来。
-// 本地执行器（route local_executor）暂存后结束：ERP 草稿已交接（drafted），同样没有单据编号，有暂存单可查看。
 export function applyErpDone(snapshot: TaskSnapshot, draftNo: string | null = null, route: ErpRoute = 'extension'): void {
   const drafted = route === 'local_executor' && draftNo === null;
   snapshot.erp = {

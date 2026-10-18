@@ -64,13 +64,12 @@ describe('erp.progress from the recorded events', () => {
     expect(progressOf(drafted, { phase: 'drafted' })).toEqual({ label: '核对暂存单', percent: 100 });
   });
 
-  it('shows the login wait as the current step', () => {
-    expect(progressOf([...done('chromium'), step('login', 'running'), step('login', 'done')], { phase: 'waiting_login' })).toEqual({ label: '登录', percent: 6 });
+  it('names the sign-in while the 本地执行器 signs in by itself', () => {
+    expect(progressOf([...done('chromium'), step('login', 'running')])).toEqual({ label: '登录', percent: 6 });
   });
 
   it('is null when no 去报销 job is running or finished for the task', () => {
     expect(erpView(NO_ERP).progress).toBeNull();
-    expect(progressOf(done('chromium', 'login'), { phase: 'cancelled' })).toBeNull();
     expect(progressOf([...done('chromium', 'login'), step('catalog', 'running')], { phase: 'catalog_mismatch' })).toBeNull();
   });
 

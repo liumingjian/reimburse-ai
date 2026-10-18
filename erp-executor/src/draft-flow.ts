@@ -1,5 +1,5 @@
 // The narrow boundary between an approved preview and an ERP 费用报销单 (expense reimbursement bill): fill it, read it
-// back strictly, and hand it over unsaved (ADR-0028). Nothing here clicks 保存 (save).
+// back strictly, and clear it for 暂存 (ADR-0028, ADR-0029). Nothing here clicks 保存 (save) or 暂存.
 // Origin: 50931a3:kernel/src/erp-draft-flow.mjs (fillApprovedPreview, saveApprovedPreview, matchReceiptRows,
 // formReadbackToken, completePreviewProblems). It never creates an approval.
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
@@ -411,19 +411,18 @@ export async function fillApprovedPreview<P>(page: P, {
   return { ok: true, phase: 'filled', previewDigest: approvedPreview.previewDigest, formToken: formReadbackToken(readings), rowsWritten, readings: after };
 }
 
-// `status` carries the whole outcome: `handed_over` is the one success, and it is the only status without problems.
+// `status` carries the whole outcome: `verified` is the one success, and it is the only status without problems.
 export type HandOverResult = {
-  status: 'handed_over' | 'blocked' | 'unknown';
+  status: 'verified' | 'blocked' | 'unknown';
   problems?: Problem[]; readings?: CurrentReadings;
 };
 
 /**
- * The hand-over gate (ADR-0028): the strict pre-save verification that used to precede the save, now the end of the
- * job. It re-checks the gate and the approval, that the fill read-back covered this very preview on this very form,
+ * The hand-over gate (ADR-0028): the strict verification the form passes before 暂存 (ADR-0029). It re-checks the gate and the approval, that the fill read-back covered this very preview on this very form,
  * that the page is still the same 新增 (new) form with an empty 单据编号 (bill number), that every detail line still
- * matches the approved preview field by field, and that the 收票 (receipt) rows are still the approved ones. It takes
- * no save adapter and performs no mutation: baox never clicks 保存 (save), the employee does. The readings it
- * verified come back as the evidence of the hand-over.
+ * matches the approved preview field by field, and that the 收票 (receipt) rows are still the approved ones. It
+ * performs no mutation, and baox never clicks 保存 (save): the employee does, on the draft. The readings it verified
+ * come back as what the 暂存 draft is compared with.
  */
 export async function handOverApprovedPreview({
   approvedPreview, approval, freshGate, fillResult, readCurrent,
@@ -445,5 +444,5 @@ export async function handOverApprovedPreview({
     || before.billNo?.value !== null || !before.taskMatch?.ok || !matchReceiptRows(before.receiptsGrid, approvedPreview).ok) {
     return { status: 'blocked', problems: [{ code: 'hand_over_precondition_failed', message: '填充后当前页已不是同一张新增空号单，没有交接' }] };
   }
-  return { status: 'handed_over', readings: before };
+  return { status: 'verified', readings: before };
 }

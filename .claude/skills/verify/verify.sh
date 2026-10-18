@@ -3,8 +3,8 @@
 #
 #   rexec '.claude/skills/verify/verify.sh doctor'                  read-only: is this workspace worth driving?
 #   rexec '.claude/skills/verify/verify.sh build'                   web/dist + the e2e server entry
-#   rexec '.claude/skills/verify/verify.sh run login-wall'          build, boot a throwaway server, drive, tear down
-#   rexec '.claude/skills/verify/verify.sh run login-wall --no-build'
+#   rexec '.claude/skills/verify/verify.sh run drafted'             build, boot a throwaway server, drive, tear down
+#   rexec '.claude/skills/verify/verify.sh run drafted --no-build'
 #   rexec '.claude/skills/verify/verify.sh clean'                   stop servers a killed run left behind
 #
 # Every run boots its own server (server/dist/e2e-main.mjs) on BAOX_PORT=0 and a fresh temp data directory, so runs

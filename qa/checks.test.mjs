@@ -217,7 +217,8 @@ test('the completed write — the browser-available path — is reported as the 
   const found = erpWriteFindings({ status: 'done' });
   assert.equal(found.filter((f) => f.level !== 'ok').length, 0);
   assert.match(found[0].text, /available/);
-  // ADR-0028: baox hands the filled form over; it never clicks 保存.
+  // ADR-0037: every 去报销 ends 暂存'd; baox never clicks 保存.
+  assert.match(found[0].text, /暂存/);
   assert.match(found[0].text, /保存/);
 });
 
@@ -227,10 +228,10 @@ test('an undetermined write result stays a defect, because the import cannot be 
   assert.match(found[0].text, /INVOICE_IMPORT_NOT_ANSWERED/);
 });
 
-test('a browser that is up but not logged in pauses the write, and says so', () => {
-  const found = erpWriteFindings({ status: 'waiting_login' });
-  assert.equal(found.filter((f) => f.level === 'DEFECT').length, 0);
-  assert.match(found.find((f) => f.level === 'WARN').text, /登录/);
+test('a browser nobody could sign in to is a clean abort, read like any other: nothing waits for a login', () => {
+  const reason = '上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：报销系统没有登录，本地执行器也没能用报销系统账号登录。';
+  assert.deepEqual(erpWriteFindings({ status: 'idle', abortReason: reason }), erpIdleFindings({ abortReason: reason }));
+  assert.equal(erpPollSettled({ status: 'idle', abortReason: reason }), true);
 });
 
 test('an idle view is still read by erpIdleFindings, unchanged', () => {
@@ -254,7 +255,7 @@ test('the ERP view still reports a clean abort as idle, which is why the above m
   // Anchor on the aborted case of `erpView` and read forward to the next case.
   const from = erpView.indexOf("case 'aborted':");
   assert.ok(from > 0, 'the ERP view no longer has an aborted phase');
-  const aborted = erpView.slice(from, erpView.indexOf("case 'handed_over':", from));
+  const aborted = erpView.slice(from, erpView.indexOf("case 'drafted':", from));
   assert.ok(aborted.includes('abortReason'), 'the aborted phase no longer sets abortReason');
   assert.ok(!/status: 'aborted'/.test(aborted), 'the aborted phase now sets status too — the driver can be simplified');
 });
@@ -273,7 +274,7 @@ test('a clean abort keeps the employee on 整单确认, where ReviewPage prints 
 test('a write that started moves the reason off 整单确认 and onto the task stage page', () => {
   // ReviewPage's branch is `!erpStarted && erp.abortReason`, and `erpStarted` is `erp.status !== 'idle'`, so the
   // caption the driver looked for is not rendered at all once a write has begun.
-  for (const status of ['aborted', 'running', 'done', 'waiting_login']) assert.equal(abortReasonPage(status), 'stage');
+  for (const status of ['aborted', 'running', 'done']) assert.equal(abortReasonPage(status), 'stage');
 });
 
 test('the stage→page map is the contract\'s own, or the driver follows the employee to the wrong page', async () => {

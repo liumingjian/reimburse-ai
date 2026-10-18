@@ -75,11 +75,11 @@ describe('reconcile job on the fake ERP', () => {
     expect([...buckets].sort()).toEqual(['不自洽', '已保存', '未保存·导入前', '未保存·已导入未写明细', '未保存·就绪待保存', '未知'].sort());
   });
 
-  it('records no verdict when the job pauses for login', async () => {
+  it('records no verdict when the job cannot log in', async () => {
     const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
     const { result, events, reconcile: judged } = await reconcile(fake, null);
-    expect(result).toMatchObject({ status: 'waiting_login', code: 'erp_login' });
-    expect(events.some((event) => event.type === 'waiting_login')).toBe(true);
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login' });
+    expect(events.some((event) => event.type === 'readback')).toBe(false);
     expect(judged).toBeNull();
   });
 

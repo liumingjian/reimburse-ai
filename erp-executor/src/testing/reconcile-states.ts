@@ -13,15 +13,15 @@ export const RECONCILE_STATES = [
   'blank_form', // new form opened, stopped before import (the fixture's blank detail row is unreadable)
   'blank_form_no_detail_row', // same, with the blank detail row removed
   'imported', // stopped before fill: receipts imported, no detail written
-  'filled', // the fill job ran to its hand-over: detail rows linked to receipts, nothing saved
+  'filled', // the fill job ran to its hand-over read-back and stopped before 暂存: detail rows linked to receipts, nothing saved
   'filled_unlinked', // fill done but receipt number (收票单号) left empty, as ERP leaves it; the strict read-back tolerates that (ADR-0023)
-  'saved', // the fill job handed over and then the employee clicked 保存 (save) themselves (ADR-0028)
+  'saved', // the fill stopped before 暂存 and then the employee clicked 保存 (save) themselves
 ] as const;
 export type ReconcileState = (typeof RECONCILE_STATES)[number];
 
-// `filled` needs no stop: the job's last step is a read-only hand-over, so it leaves the same filled, unsaved form.
+// The filled states stop before 暂存 (the `save` attempt), where the form is filled and still unsaved.
 const STOP_BEFORE: Partial<Record<ReconcileState, Mutation>> = {
-  blank_form: 'import', blank_form_no_detail_row: 'import', imported: 'fill',
+  blank_form: 'import', blank_form_no_detail_row: 'import', imported: 'fill', filled: 'save', filled_unlinked: 'save', saved: 'save',
 };
 
 /** The fake ERP left in `state`, and the approved preview the fill had reached (null before import). */

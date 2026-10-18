@@ -3,7 +3,10 @@
 // `attempt_started` only once its row is durable, and answers read-backs with the server's judge.
 //
 // The account's ERP lease is acquired by the action that starts the run (`tasks.ts`) and released here on every result:
-// login wait, abort, catalog mismatch, error and done.
+// abort, catalog mismatch, error and done.
+//
+// Every executor signs in with the account's hosted ERP 凭据 (ADR-0033, ADR-0037): the runner reads them for the job
+// and hands them to whichever executor runs it, the paired 本地执行器 or the development CDP one.
 
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database';
@@ -13,17 +16,40 @@ import type { MaintenanceLease } from '../maintenance';
 import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
 import { ExecutorEventSchema, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
+import type { ErpCredentials } from '@baox/erp-executor/sign-in';
+import { SIGN_IN_REFUSED_CODE } from '@baox/erp-executor/wire';
 
 // What started this run of the fill job, recorded on `erp_job.trigger` so the audit trail can tell them apart:
-// `start` is 去报销, `confirm_login` is 我已登录，继续, `refill` is 重新去报销 (the recovery after an import that was
-// never saved, ADR-0027). `refill` runs exactly like `start` — a fresh plan on a fresh 新增单 — and differs only in
+// `start` is 去报销, `refill` is 重新去报销 (the recovery after an import that was never saved, ADR-0027). `refill` runs exactly like `start` — a fresh plan on a fresh 新增单 — and differs only in
 // what it is allowed to start from, which `tasks.ts` decides. `rerun` is the 自动重新去报销 baox starts by itself
 // (ADR-0034): a `refill` nobody clicked, whose plan asks ERP first whether the task's bill already landed.
-export type FillTrigger = 'start' | 'confirm_login' | 'refill' | 'rerun';
+export type FillTrigger = 'start' | 'refill' | 'rerun';
 
-// `confirm_login` is the user's 我已登录，继续: the executor probes the login once and never polls for it. `signal` aborts
-// when the server has ended the job (its deadline): the executor should stop, and every event it sends after is refused.
-export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: { trigger: FillTrigger; signal?: AbortSignal }) => Promise<ResultEvent>;
+// `credentials`: the account's authorised ERP 凭据, which the executor signs in with; null when it has none (the job
+// then ends at its sign-in, before any attempt). `signal` aborts when the server has ended the job (its deadline): the
+// executor should stop, and every event it sends after is refused.
+export type ExecutorOptions = { signal?: AbortSignal; credentials: ErpCredentials | null };
+export type FillExecutor = (plan: FillPlan, channel: ExecutorChannel, options: ExecutorOptions & { trigger: FillTrigger }) => Promise<ResultEvent>;
+
+// What the ERP 凭据 service (`hosted-sign-in.ts`) offers a job: the 凭据 to sign in with, if any, and the news that
+// ERP refused them.
+export type JobCredentials = {
+  forJob(accountId: string): Promise<ErpCredentials | null>;
+  refusedInJob(accountId: string, used: ErpCredentials, message: string): Promise<void>;
+};
+export const NO_CREDENTIALS: JobCredentials = { forJob: async () => null, refusedInJob: async () => undefined };
+
+/**
+ * One run of an executor with the account's 凭据. A login ERP refuses in that run deletes them (`hosted-sign-in.ts`),
+ * so baox never tries a refused password again. `app.ts` refuses a 去报销 without authorised ones before any job exists
+ * (where jobs go to the 本地执行器); should they be refused or cleared before the run, it goes without them.
+ */
+export async function withCredentials(credentials: JobCredentials, accountId: string, run: (used: ErpCredentials | null) => Promise<ResultEvent>): Promise<ResultEvent> {
+  const used = await credentials.forJob(accountId);
+  const result = await run(used);
+  if (used && result?.code === SIGN_IN_REFUSED_CODE) await credentials.refusedInJob(accountId, used, result.message ?? '').catch(() => undefined);
+  return result;
+}
 
 export type FillRun = { jobId: string; accountId: string; taskId: string; trigger: FillTrigger; frozen: FrozenJob; maintenance?: MaintenanceLease };
 
@@ -32,12 +58,12 @@ export type RecordFacts = (accountId: string, taskId: string, write: (tx: Db) =>
 
 /**
  * The server's own guard (ADR-0014: any loss after `attempt_started` is reconcile, never a replay): once an attempt
- * of the job is durable, only a terminal success (`handed_over`, `drafted`, or the legacy `saved`) or `unknown` may end it. An
+ * of the job is durable, only a terminal success (`drafted`, or the legacy `saved`) or `unknown` may end it. An
  * executor that believes nothing was written (e.g. its acknowledgement failed after the server persisted the attempt)
  * still ends in `unknown`.
  */
 export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): Promise<ResultEvent> {
-  if (event.status === 'handed_over' || event.status === 'drafted' || event.status === 'saved' || event.status === 'unknown') return event;
+  if (event.status === 'drafted' || event.status === 'saved' || event.status === 'unknown') return event;
   const attempt = await tx.selectFrom('erp_attempt').select('attempt_id').where('job_id', '=', jobId).executeTakeFirst();
   if (!attempt) return event;
   const message = `已开始写入报销系统之后停止，写入结果不确定：${event.message ?? event.code ?? ''}`;
@@ -130,7 +156,7 @@ export async function ensureResult(db: Db, jobId: string, taskId: string, kind: 
 // service's call. `serverEnded`: the server, not the executor, gave the run its result (deadline, a throw, none at all).
 export type FillSettled = (run: FillRun, outcome: { serverEnded: boolean }) => Promise<unknown>;
 
-export function createFillJobs({ db, lease, execute, record, schedule = realTimer, deadlineMs = FILL_JOB_DEADLINE_MS, onSettled }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts; schedule?: Schedule; deadlineMs?: number; onSettled?: FillSettled }) {
+export function createFillJobs({ db, lease, execute, record, schedule = realTimer, deadlineMs = FILL_JOB_DEADLINE_MS, onSettled, credentials = NO_CREDENTIALS }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts; schedule?: Schedule; deadlineMs?: number; onSettled?: FillSettled; credentials?: JobCredentials }) {
   const active = new Set<Promise<void>>();
 
   async function drive({ jobId, accountId, taskId, trigger, frozen, maintenance }: FillRun): Promise<{ serverEnded: boolean }> {
@@ -177,7 +203,8 @@ export function createFillJobs({ db, lease, execute, record, schedule = realTime
     };
     const channel = { emit: emit as ExecutorChannel['emit'] };
     try {
-      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, (gated, signal) => execute(frozen.plan, gated, { trigger, signal }));
+      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, (gated, signal) =>
+        withCredentials(credentials, accountId, (used) => execute(frozen.plan, gated, { trigger, signal, credentials: used })));
       if (overdue && !finished) {
         serverEnded = true;
         await channel.emit({ type: 'result', status: 'aborted', code: JOB_DEADLINE_CODE, message: JOB_DEADLINE_COPY.fill, billNo: null, capture: null });

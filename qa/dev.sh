@@ -19,8 +19,10 @@
 # default ~/.baox-qa-dev). Every other BAOX_* variable (BAOX_ERP_CHROMIUM, BAOX_ERP_STOP_BEFORE_IMPORT, ...) passes
 # through to the server at `up`. One instance per Mac: `up` stops the previous one first, whichever checkout started it.
 #
-# `BAOX_DEV_ERP=paired qa/dev.sh up` sends 去报销 to the paired 浏览器扩展 or 本地执行器 instead of the dedicated
-# Chromium (server/src/dev-executors.ts), so a 本地执行器 installed from the 设置页 暂存s in the real ERP.
+# Either way 去报销 runs the production path (ADR-0037): it signs in with the account's ERP 凭据 saved on the 设置页
+# and ends at 暂存 (ERP 草稿已交接), so save them before the first 去报销. `BAOX_DEV_ERP=cdp` (the default) runs it in
+# the dedicated, headed Chromium on this Mac; `BAOX_DEV_ERP=paired qa/dev.sh up` sends it to the paired 本地执行器
+# instead (server/src/dev-executors.ts), so a 本地执行器 installed from the 设置页 暂存s in the real ERP.
 set -euo pipefail
 
 CHECKOUT=$(cd "$(dirname "$0")/.." && pwd)

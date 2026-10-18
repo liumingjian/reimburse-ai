@@ -17,6 +17,7 @@ import { parseArgs } from 'node:util';
 import { sleep, waitFor } from '@baox/erp-executor/pace';
 import { PROTOCOL_VERSION, type FillPlan } from '@baox/erp-executor/protocol';
 import { erpConfigFromEnv } from '../src/erp/config';
+import { draftMarkOf } from '../src/erp/fill-plan';
 import { readInvoice, standInApp } from './spike/modes';
 
 const { values: args } = parseArgs({
@@ -80,11 +81,12 @@ let passed = 0;
 for (let round = 1; round <= rounds; round += 1) {
   app.fresh();
   const started = Date.now();
+  const jobId = `local-r${round}-${started}`;
   const plan: FillPlan = {
-    protocolVersion: PROTOCOL_VERSION, kind: 'fill', jobId: `local-r${round}-${started}`, taskId: `local-r${round}`, erpOrigin: erp.origin,
+    protocolVersion: PROTOCOL_VERSION, kind: 'fill', jobId, taskId: `local-r${round}`, erpOrigin: erp.origin,
     compatibility: erp.compatibility, catalog: { projects: [], expenseItems: [] },
     invoices: [{ sha256: invoice.sha256, fileName: 'local-test-invoice.pdf', mime: invoice.mime }],
-    purpose: '本地执行器实测',
+    purpose: '本地执行器实测', draft: { mark: draftMarkOf(jobId) },
   };
   const result = await app.fill(plan, 'start', { account, password }).catch((error: Error) => ({ status: 'error', code: 'request_failed', message: error.message }));
   const events = app.events();

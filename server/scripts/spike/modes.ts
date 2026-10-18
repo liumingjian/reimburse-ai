@@ -38,6 +38,7 @@ import { navigationScene } from '@baox/erp-executor/scene';
 import { PROTOCOL_VERSION, type Compatibility, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { closeFormTab, tabActions } from '@baox/erp-executor/tabs';
 import { EXECUTOR_METHODS, wireChannel } from '@baox/erp-executor/wire';
+import { draftMarkOf } from '../../src/erp/fill-plan';
 import { carriesOrigin, stampedManifestProblem, stampOrigin } from '@baox/extension/template';
 import { launchBrowser, type Headless } from './browser';
 import { login, logout, observe } from './erp';
@@ -130,7 +131,7 @@ export async function standInApp({ port, invoice }: { port: number; invoice: { s
     /** The executor's `request` for a job run in this process: the same answers, the same log. */
     request: async (_method: string, payload: unknown) => record((payload as { event: ExecutorEvent }).event),
     /** One 去报销, as the remote executor sends it (with the ERP 凭据 for a 本地执行器). Resolves with the job's result. */
-    fill(plan: FillPlan, trigger: 'start' | 'confirm_login' = 'start', credentials?: { account: string; password: string }): Promise<ResultEvent> {
+    fill(plan: FillPlan, trigger: 'start' | 'refill' = 'start', credentials?: { account: string; password: string }): Promise<ResultEvent> {
       if (!socket) return Promise.reject(new Error('扩展没有连上替身应用'));
       seq += 1;
       const id = `s8-${seq}`;
@@ -220,12 +221,13 @@ export type ModeCtx = {
 
 export const sha256Of = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
-/** One task per run; a `confirm_login` is a new job of the same task, which is how the extension finds its tab again. */
+/** One task per run; a `refill` is a new job of the same task, which is how the extension finds its tab again. */
 const planFor = (ctx: ModeCtx, taskId: string, jobId = taskId): FillPlan => ({
   protocolVersion: PROTOCOL_VERSION, kind: 'fill', jobId, taskId, erpOrigin: ctx.origin, compatibility: ctx.compatibility,
   catalog: { projects: [], expenseItems: ctx.catalogItem ? [ctx.catalogItem] : [] },
   invoices: [{ sha256: ctx.invoice?.sha256 ?? '0'.repeat(64), fileName: 's8-test-invoice.pdf', mime: ctx.invoice?.mime ?? 'application/pdf' }],
   purpose: 'S8 执行方式对比',
+  draft: { mark: draftMarkOf(jobId) },
 });
 
 /** Every step's running→done (or →failed) time, in the order the job ran them. */
@@ -301,10 +303,10 @@ const pageIds = async (port: number, origin: string) =>
  *
  * Signing in follows each mode's real flow. The CDP modes sign in on the page the browser opened and run the job there.
  * The extension's 去报销 (`start`) always opens a tab of its own, and ERP keeps its login per tab — a session signed in
- * on another tab of the same browser is not seen there (measured 2026-10-12) — so, as in the product, the job stops at
- * `waiting_login`, the employee signs in on that tab, and 我已登录，继续 (`confirm_login`) runs the job in it. The
- * comparison times the job that ran: `confirm_login` for the extension, `start` for the others; the extension's
- * `start` and its login are reported beside it.
+ * on another tab of the same browser is not seen there (measured 2026-10-12) — so the job stops at its login
+ * (`erp_login`), the employee signs in on that tab, and a `refill` runs the job in it (我已登录，继续 went with ADR-0037).
+ * The comparison times the job that ran: `refill` for the extension, `start` for the others; the extension's `start`
+ * and its login are reported beside it.
  */
 export async function runMode(ctx: ModeCtx, mode: Mode, label: string, obs: Observations): Promise<Verdict> {
   const started = Date.now();
@@ -358,7 +360,7 @@ export async function runMode(ctx: ModeCtx, mode: Mode, label: string, obs: Obse
       const first = await race(ctx.app.fill(plan, 'start'));
       obs['start'] = { ms: Date.now() - s, status: first?.status ?? null, code: first?.code ?? null };
       if (!first) return { status: 'FAIL', reason: `去报销（start）${JOB_MS / 60_000} 分钟内没有结束` };
-      if (first.status === 'waiting_login') {
+      if (first.code === 'erp_login') {
         const browser = cdpBrowser(h.port);
         const tab = (await browser.listPages()).find((p) => sameOrigin(p.url, ctx.origin) && !before.has(String(p.cdpTargetId)));
         if (!tab) return { status: 'FAIL', reason: '扩展说在等登录，但找不到它新开的 ERP 标签页' };
@@ -370,7 +372,7 @@ export async function runMode(ctx: ModeCtx, mode: Mode, label: string, obs: Obse
         plan = planFor(ctx, plan.taskId, `${plan.taskId}-confirm`);
         ctx.app.fresh();
         jobStarted = Date.now();
-        result = await race(ctx.app.fill(plan, 'confirm_login'));
+        result = await race(ctx.app.fill(plan, 'refill'));
       } else {
         if (first.status === 'aborted') {
           // What the extension's tab showed when its login probe gave up: path, load state and shape, never its text.
@@ -402,7 +404,7 @@ export async function runMode(ctx: ModeCtx, mode: Mode, label: string, obs: Obse
       toBoundaryMs: boundary ? boundary.at - jobStarted : null,
       steps: stepTimes(events, jobStarted),
       result: result ? { status: result.status, code: result.code, message: (result.message ?? '').slice(0, 300) } : null,
-      waitingLogin: events.some((e) => e.event.type === 'waiting_login'),
+      waitingLogin: events.some((e) => e.event.type === 'result' && e.event.code === 'erp_login'),
     };
     obs['memory'] = h.memory();
     obs['crashes'] = [...h.crashes];

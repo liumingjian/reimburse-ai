@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { ProjectBookSchema, type Line, type TaskSnapshot, type TaskStage } from '@baox/contract';
 import { createCredentialVault } from '../erp/credential-vault';
-import { handedOver, scripted, type Script, type ScriptedExecutor } from '../erp/testing/fake-executor';
+import { drafted, scripted, type Script, type ScriptedExecutor } from '../erp/testing/fake-executor';
 import { api, sample, type Upload } from './api';
 import { BACKSTOP_MS } from './deadlines';
 import { createTestServer, type TestClient, type TestServer, type TestServerOptions } from './harness';
@@ -23,7 +23,9 @@ import { presetParser, type PresetParser } from './parse-presets';
 //   project    answer every 住宿 trio item with 确认没有    → project
 //   review     submit-project-assignment (`projects`)      → review
 //   actions    confirm-review                              → actions / choose_action
-//   erp        start-erp-write, wait for the job           → erp (login wall), done, reconcile, …
+//   erp        start-erp-write, wait for the job           → done (ERP 草稿已交接 by default), reconcile, actions, …
+//
+// The `erp` stage itself is never stopped on: it lasts only while a job runs, and the rung waits for the job to end.
 //
 // Parsing replays preset outcomes (`parse-presets.ts`) unless the server was given a real parser; the fill job is the
 // server's scripted executor, and `erp` queues the scripts this scene's task plays (right after the task is created, so
@@ -46,14 +48,14 @@ export type ScenarioServer = TestServer & {
 };
 
 // `createTestServer` with the scenario defaults: preset parsing and a scripted
-// fill executor that hands the form over. Any option overrides its default; `erpExecutor: 'extension'` keeps the
+// fill executor that 暂存s the bill (ERP 草稿已交接), as every 去报销 ends (ADR-0037). Any option overrides its default; `erpExecutor: 'extension'` keeps the
 // production wiring, where 去报销 runs in the account's paired 本地执行器 (a `fakeExtension` in tests), and gives the
 // server a key for the ERP 凭据 unless the test chose one.
 export type ScenarioServerOptions = Omit<TestServerOptions, 'erpExecutor'> & { erpExecutor?: TestServerOptions['erpExecutor'] | 'extension' };
 
 export async function scenarioServer(options: ScenarioServerOptions = {}): Promise<ScenarioServer> {
   const presets = options.parser ? null : presetParser();
-  const erp = options.erpExecutor ? null : scripted(handedOver());
+  const erp = options.erpExecutor ? null : scripted(drafted);
   const { erpExecutor, ...rest } = options;
   const key = 'erpCredentialKey' in rest ? (rest.erpCredentialKey ?? null) : erpExecutor === 'extension' ? randomBytes(32) : null;
   const server = await createTestServer({
@@ -113,7 +115,7 @@ export type Scene = {
   run: (name: string, body?: Record<string, unknown>) => Promise<TaskSnapshot>;
 };
 
-const LADDER: readonly TaskStage[] = ['upload', 'inventory', 'pending', 'project', 'review', 'actions', 'erp', 'done', 'reconcile'];
+const LADDER: readonly TaskStage[] = ['upload', 'inventory', 'pending', 'project', 'review', 'actions', 'done', 'reconcile'];
 const DEFAULT_MATERIALS = ['m01', 'm02'];
 
 // `client`: the account the task belongs to; a fresh signed-in account by default.

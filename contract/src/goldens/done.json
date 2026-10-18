@@ -1,5 +1,5 @@
 {
-  "revision": 23,
+  "revision": 27,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
     "name": "2000-01-01 新建报销",
@@ -600,24 +600,26 @@
     ],
     "currentStage": "handover",
     "progress": {
-      "label": "暂存到报销系统",
+      "label": "核对暂存单",
       "percent": 100
     },
     "externalWait": "none",
-    "outcome": "filled",
+    "outcome": "drafted",
     "allowedActions": [
       "refresh"
     ],
     "draftNo": null,
     "abortReason": null,
-    "loginNotice": null,
     "rerunNotice": null,
     "erpAccount": {
       "displayName": "测试员",
       "account": "erp.tester",
       "tenant": "测试账套"
     },
-    "review": null
+    "review": {
+      "url": "http://erp.antute.com.cn/k3cloud/html5/index.aspx",
+      "draftId": "119946"
+    }
   },
   "readback": {
     "status": "matched",
@@ -704,7 +706,7 @@
   },
   "step": {
     "kind": "none",
-    "stepToken": "00000000-0000-4000-8000-000000000001.23"
+    "stepToken": "00000000-0000-4000-8000-000000000001.27"
   },
   "allowedActions": [
     "print",

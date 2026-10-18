@@ -5,6 +5,7 @@
 // The ERP account and 账套 (account set) that the executor probes become the preview identity. It is recorded, never
 // compared with the app account (ADR-0016): the judge only needs one identity to scope the preview.
 
+import { createHash } from 'node:crypto';
 import type { Line, MaterialKind } from '@baox/contract';
 import type { Claim } from '../inventory-view';
 import type { ErpConfig } from './config';
@@ -58,6 +59,15 @@ export type JudgeBase = {
 // What `erp_job.plan` stores. `rerunOf` is an 自动重新去报销's cause (ADR-0034): the job whose unknown result it
 // starts over from, that result's code, and which re-run in a row this is.
 export type FrozenJob = { plan: FillPlan; judge: JudgeBase; rerunOf?: { jobId: string; code: string | null; no: number } };
+
+/** baox's ownership marker for a job (ADR-0029): one per job, the same on every send, unguessable as its job id is. */
+export const draftMarkOf = (jobId: string) => `baox-${createHash('sha256').update(`baox-draft:${jobId}`).digest('hex').slice(0, 10)}`;
+
+/**
+ * The plan as one job runs it: its id, and the ownership marker it 暂存s under, derived from that id. Every fill 暂存s
+ * (ADR-0037), whichever executor runs it.
+ */
+export const planOfJob = (plan: FillPlan, jobId: string): FillPlan => ({ ...plan, jobId, draft: { mark: draftMarkOf(jobId) } });
 
 const cents = (amount: string) => {
   const [whole = '0', fraction = ''] = amount.split('.');
@@ -149,6 +159,7 @@ export function buildFillJob(input: FillPlanInput): { ok: true; job: FrozenJob }
     protocolVersion: PROTOCOL_VERSION,
     kind: 'fill',
     jobId: input.jobId,
+    draft: { mark: draftMarkOf(input.jobId) },
     taskId: input.taskId,
     erpOrigin: input.config.origin,
     compatibility: input.config.compatibility,

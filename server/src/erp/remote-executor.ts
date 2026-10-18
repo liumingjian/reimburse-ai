@@ -22,19 +22,16 @@
 //   Nothing is re-sent in either direction: the plan is never asked for again, and the resumed extension is told how
 //   many of its events are on record so it sends none of them twice.
 // - ERP 凭据 (ADR-0033, ADR-0037). Every job carries the account's authorised 凭据 next to the plan (never in it: the
-//   plan is stored). A login ERP refuses in that job deletes them (`hosted-sign-in.ts`). Every fill plan also carries
-//   `draft` (ADR-0029): the 本地执行器 ends unattended, so it 暂存s the bill under baox's ownership marker, which is
-//   derived from the job id and lands on record with the `save` attempt before 暂存 is pressed.
+//   plan is stored), as the job runner hands them to every executor (`fill-jobs.ts`).
 
-import { createHash } from 'node:crypto';
 import type { Db } from '../db/database';
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE, ExtensionChannelError, realTimer, type ChannelRequestHandler, type ExtensionChannel, type Schedule } from '../extension/channel';
-import type { FillExecutor } from './fill-jobs';
+import type { ExecutorOptions, FillExecutor } from './fill-jobs';
 import type { ReconcileExecutor } from './reconcile-job';
 import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { abortedResult, type ExecutorChannel, type ExecutorEvent, type Preconditions, type ResultEvent } from '@baox/erp-executor/protocol';
 import {
-  EXECUTOR_METHODS, JOB_REFUSALS, JobEventRequestSchema, JobRefSchema, RECONNECT_WINDOW_MS, ResumeRequestSchema, resultOf, SIGN_IN_REFUSED_CODE,
+  EXECUTOR_METHODS, JOB_REFUSALS, JobEventRequestSchema, JobRefSchema, RECONNECT_WINDOW_MS, ResumeRequestSchema, resultOf,
   type FillRequest, type PageObservation, type ReconcileRequest, type ResumeRequest, type ResumeVerdict,
 } from '@baox/erp-executor/wire';
 
@@ -111,29 +108,15 @@ function reobservationProblems({ last, now }: Pick<ResumeRequest, 'last' | 'now'
   return problems;
 }
 
-// What the ERP 凭据 service (`hosted-sign-in.ts`) offers a job: the 凭据 to send, if any, and the news that ERP refused them.
-export type JobCredentials = {
-  forJob(accountId: string): Promise<ErpCredentials | null>;
-  refusedInJob(accountId: string, used: ErpCredentials, message: string): Promise<void>;
-};
-/** baox's ownership marker for a job (ADR-0029): one per job, the same on every send, unguessable as its job id is. */
-export const draftMarkOf = (jobId: string) => `baox-${createHash('sha256').update(`baox-draft:${jobId}`).digest('hex').slice(0, 10)}`;
-
 /**
- * What goes to the 本地执行器 (ADR-0037): every fill 暂存s its bill under the job's marker, and every job carries the
- * account's 凭据. `app.ts` refuses a 去报销 without authorised ones before any job exists; should they be refused or
- * cleared between that check and the dispatch, the job goes without them and ends at its sign-in.
+ * What goes to the 本地执行器 (ADR-0037): the plan (every fill plan carries its `draft`, `fill-plan.ts`) and the
+ * account's 凭据 the job runner read for it. Without them the job ends at its sign-in.
  */
-function payloadFor(method: string, payload: FillRequest | ReconcileRequest, credentials: ErpCredentials | null) {
-  const signIn = credentials ? { credentials } : {};
-  if (method !== EXECUTOR_METHODS.fill) return { ...payload, ...signIn };
-  const fill = payload as FillRequest;
-  return { ...fill, plan: { ...fill.plan, draft: { mark: draftMarkOf(fill.plan.jobId) } }, ...signIn };
+function payloadFor(payload: FillRequest | ReconcileRequest, credentials: ErpCredentials | null) {
+  return credentials ? { ...payload, credentials } : payload;
 }
 
-const NO_CREDENTIALS: JobCredentials = { forJob: async () => null, refusedInJob: async () => undefined };
-
-export function createRemoteExecutor({ db, extension, schedule = realTimer, credentials: hosted = NO_CREDENTIALS }: { db: Db; extension: Pick<ExtensionChannel, 'request'>; schedule?: Schedule; credentials?: JobCredentials }): RemoteExecutor {
+export function createRemoteExecutor({ db, extension, schedule = realTimer }: { db: Db; extension: Pick<ExtensionChannel, 'request'>; schedule?: Schedule }): RemoteExecutor {
   const running = new Map<string, Running>();
 
   // Ends the job on the server's say-so, after any event already in flight has landed, so the result is judged with
@@ -164,10 +147,9 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer, cred
     }, RECONNECT_WINDOW_MS);
   }
 
-  async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest, signal?: AbortSignal): Promise<ResultEvent> {
+  async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest, { signal, credentials }: ExecutorOptions): Promise<ResultEvent> {
     const { account_id: accountId } = await db.selectFrom('task').select('account_id').where('task_id', '=', plan.taskId).executeTakeFirstOrThrow();
     const originals = new Set((plan.invoices ?? []).map((invoice) => invoice.sha256));
-    const credentials = await hosted.forJob(accountId);
     let job!: Running;
     const outcome = new Promise<ResultEvent>((finish, fail) => {
       job = { accountId, taskId: plan.taskId, originals, channel, state: 'live', tail: Promise.resolve(), cancelWindow: null, lostWhileResuming: false, finish, fail };
@@ -180,7 +162,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer, cred
       job.state = 'ended';
       job.fail(new Error('这次任务已经被应用结束了。'));
     }, { once: true });
-    extension.request(accountId, method, payloadFor(method, payload, credentials)).then(
+    extension.request(accountId, method, payloadFor(payload, credentials)).then(
       // The executor's own answer counts only while the job is live: an interrupted job's late answer describes a page
       // nobody watched.
       (answer) => {
@@ -199,9 +181,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer, cred
       },
     );
     try {
-      const result = await outcome;
-      if (credentials && result.code === SIGN_IN_REFUSED_CODE) await hosted.refusedInJob(accountId, credentials, result.message ?? '').catch(() => undefined);
-      return result;
+      return await outcome;
     } finally {
       job.state = 'ended';
       job.cancelWindow?.();
@@ -248,8 +228,8 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer, cred
   }
 
   return {
-    fill: (plan, channel, { trigger, signal }) => run(plan, channel, EXECUTOR_METHODS.fill, { plan, trigger }, signal),
-    reconcile: (plan, channel, options) => run(plan, channel, EXECUTOR_METHODS.reconcile, { plan }, options?.signal),
+    fill: (plan, channel, { trigger, ...options }) => run(plan, channel, EXECUTOR_METHODS.fill, { plan, trigger }, options),
+    reconcile: (plan, channel, options) => run(plan, channel, EXECUTOR_METHODS.reconcile, { plan }, options ?? { credentials: null }),
     async answer(accountId, method, payload) {
       switch (method) {
         case EXECUTOR_METHODS.event: {
