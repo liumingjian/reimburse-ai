@@ -148,7 +148,8 @@ if [ ! -x "$node" ]; then
   node=${sh(runtime)}
   if [ ! -x "$node" ]; then
     mkdir -p ${sh(posix.dirname(runtime))}
-    if curl -fsS -o "$node.part" ${sh(runtimeUrl)} && want=$(curl -fsS ${sh(sumUrl)}) && [ "$(shasum -a 256 "$node.part" | cut -d ' ' -f 1)" = "$want" ]; then
+    # A download that stalls (under 1 KB/s for a minute) ends, so the start fails and launchd starts it again.
+    if curl -fsS --connect-timeout 20 --speed-limit 1024 --speed-time 60 -o "$node.part" ${sh(runtimeUrl)} && want=$(curl -fsS --connect-timeout 20 --max-time 60 ${sh(sumUrl)}) && [ "$(shasum -a 256 "$node.part" | cut -d ' ' -f 1)" = "$want" ]; then
       chmod 755 "$node.part" && mv -f "$node.part" "$node"
     else
       rm -f "$node.part"

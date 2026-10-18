@@ -238,6 +238,15 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     expect(await serverHolder()).toMatchObject({ holder: 'local_executor', token_sha256: expect.any(String) });
   }, 60_000);
 
+  it('gives up a download that stalls instead of hanging the install', async () => {
+    const script = await (await server.app.request(localExecutorInstallPath(await issue()))).text();
+    expect(script).toContain("stall='--speed-limit 1024 --speed-time 60'");
+    const curls = script.split('\n').filter((line) => line.includes('curl -sS'));
+    expect(curls.length).toBeGreaterThanOrEqual(2);
+    for (const line of curls) expect(line).toContain('$stall');
+    expect(script).toMatch(/node\.sha256" --max-time 60/);
+  });
+
   it('is POSIX sh that dash also parses', async () => {
     const code = await issue();
     for (const path of [localExecutorInstallPath(code), localExecutorUninstallPath('mac')]) {

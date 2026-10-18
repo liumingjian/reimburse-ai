@@ -93,8 +93,10 @@ exec 2>/dev/null
 { printf '\\n[%s] install for %s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$platform" >>"$log"; } 2>/dev/null || fail ${sh(SAY.disk)}
 exec 2>>"$log"
 
-# GET $1 into $2; the HTTP status on stdout, nothing when the app did not answer.
-get() { curl -sS --connect-timeout 20 -o "$2" -w '%{http_code}' "$origin$1" 2>>"$log"; }
+# GET $1 into $2 (any more arguments go to curl); the HTTP status on stdout, nothing when the app did not answer. A
+# download that stalls (under 1 KB/s for a minute) ends, so the install fails with its sentence instead of hanging.
+stall='--speed-limit 1024 --speed-time 60'
+get() { path=$1; into=$2; shift 2; curl -sS --connect-timeout 20 $stall "$@" -o "$into" -w '%{http_code}' "$origin$path" 2>>"$log"; }
 sha() { shasum -a 256 "$1" 2>>"$log" | cut -d ' ' -f 1; }
 
 say ${sh(SAY.checking)}
@@ -113,7 +115,7 @@ own=$(command -v node 2>/dev/null || true)
 if [ -n "$own" ] && usable "$own"; then
   node=$own
 else
-  status=$(get "${localExecutorRuntimeSha256Path('$platform')}" "$work/node.sha256") || status=''
+  status=$(get "${localExecutorRuntimeSha256Path('$platform')}" "$work/node.sha256" --max-time 60) || status=''
   [ -n "$status" ] && [ "$status" != 000 ] || fail ${sh(SAY.unreachable)}
   [ "$status" = 200 ] || fail ${sh(SAY.unavailable)}
   want=$(tr -d ' \\r\\n' <"$work/node.sha256")
@@ -121,7 +123,7 @@ else
     node="$app/runtime/node"
   else
     # The download in the background, its progress read off the file as it grows.
-    curl -sS --connect-timeout 20 -D "$work/headers" -o "$work/node" "$origin${localExecutorRuntimePath('$platform')}" </dev/null 2>>"$log" &
+    curl -sS --connect-timeout 20 $stall -D "$work/headers" -o "$work/node" "$origin${localExecutorRuntimePath('$platform')}" </dev/null 2>>"$log" &
     fetched=$!
     shown=-1
     show() {

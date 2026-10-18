@@ -93,6 +93,13 @@ describe('starting with the login on macOS', () => {
     expect(launcher!.content).toContain("node='/opt/homebrew/bin/node'");
     expect(launcher!.content).toContain(`exec "$node" --use-system-ca '/Users/zhang/.baox/local-executor/app/${PROGRAM_FILE}' run`);
   });
+
+  it('gives up a runtime download that stalls, instead of hanging the start at login', () => {
+    const curls = launcher!.content.split('\n').join(' ').match(/curl [^&|)]*/g) ?? [];
+    expect(curls).toHaveLength(2);
+    expect(curls[0]).toContain('--speed-limit 1024 --speed-time 60');
+    expect(curls[1]).toContain('--max-time 60');
+  });
 });
 
 // The LaunchAgent's own command, run as launchd would, over a stub Node that writes down what it was started with.
