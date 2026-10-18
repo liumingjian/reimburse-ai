@@ -4,11 +4,13 @@ import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_S
 import { App } from '../App';
 import type { ExtensionBridge, ExtensionPresence } from '../adapter/extension-bridge';
 import { MOCK_ACCOUNT } from '../mock/auth';
-import { createMockAdapter } from '../mock/mock-adapter';
+import { createMockAdapter, type MockOptions } from '../mock/mock-adapter';
 import { extensionSettingsHash } from '../router';
 import { EXTENSION_TUTORIAL_COPY } from './ExtensionTutorialPage';
 import type { LegacyOption } from '../mock/options';
 import { EXTENSION_INSTALL_COPY, EXTENSION_PAIRING_COPY } from './SettingsPage';
+import { LOCAL_EXECUTOR_COPY } from './LocalExecutorSection';
+import { REIMBURSE_METHOD_COPY } from './reimburse-method';
 
 // 设置页的旧数据导入面板（故事 81）：损坏的旧数据要说清楚坏在哪个文件，并且能重试或明确跳过。
 // 服务端的接口一直都在（#195），这里补的是它的界面。
@@ -50,6 +52,9 @@ function renderTutorial() {
 }
 
 const extensionPanel = () => screen.getByRole('region', { name: '浏览器扩展' });
+
+// With nothing paired the 设置页 opens on the 本地执行器 (#428); the extension's section renders once it is chosen.
+const chooseExtension = async () => fireEvent.click(await screen.findByRole('radio', { name: REIMBURSE_METHOD_COPY.options.extension }));
 
 describe('设置页：旧数据导入', () => {
   test('导入失败：逐个文件说明原因，并给出重试与跳过', async () => {
@@ -95,6 +100,7 @@ describe('设置页：旧数据导入', () => {
 describe('设置页：浏览器扩展', () => {
   test('还没有配对时给出第一次连接指导；生成后把那一串显示出来，并说明只显示这一次', async () => {
     renderPairing();
+    await chooseExtension();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
     expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_COPY.firstTimeLead('http://10.250.0.222:8888'))).toBeTruthy();
@@ -146,6 +152,7 @@ describe('设置页：浏览器扩展', () => {
 
   test('重置藏在高级设置里，第一次连接时不会和恢复操作混在一起', async () => {
     renderPairing();
+    await chooseExtension();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
     const advanced = screen.getByText('高级设置').closest('details');
     expect(advanced?.open).toBe(false);
@@ -161,6 +168,7 @@ describe('设置页：浏览器扩展', () => {
 describe('设置页：浏览器扩展的下载、安装与升级', () => {
   test('常规设置只保留下载入口和独立教程入口', async () => {
     renderPairing();
+    await chooseExtension();
     await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.none);
     const section = within(extensionPanel());
 
@@ -260,6 +268,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 
   test('没有扩展应答：安装步骤和手动配对码，和以前一样', async () => {
     renderWithExtension(fakeBridge(() => null));
+    await chooseExtension();
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
@@ -269,6 +278,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 
   test('扩展比这个应用要求的旧：说出装的版本和要求的版本，只给升级步骤', async () => {
     renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })));
+    await chooseExtension();
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeTruthy();
     const steps = section.getByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle });
@@ -293,13 +303,12 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 
   test('扩展配对的是另一个账号、也没回答能不能换：走手动配对码，不自动生成', async () => {
     const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' }));
-    renderWithExtension(bridge);
+    renderWithExtension(bridge, { paired: true });
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
-    expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
-    expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
+    expect(await section.findByRole('button', { name: '重新生成配对码' })).toBeTruthy();
     expect(bridge.switches).toEqual([MOCK_ACCOUNT.accountId]);
     expect(bridge.codes).toEqual([]);
-    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.paired)).toBeTruthy();
   });
 
   test('撤销配对之后再问一次扩展，不会留着过时的已连接', async () => {
@@ -357,7 +366,8 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 });
 
 // #291: an extension that answers but is not paired to this account is handed a freshly issued 配对码 and redeems it;
-// the employee types nothing. The mock server has no extension to redeem the code, so the adapter here plays the
+// the employee types nothing. Only while the extension holds the account's pairing (#428), so the server starts out
+// paired to an extension in another browser. The mock server has no extension to redeem the code, so the adapter here plays the
 // server's side once the fake bridge has "redeemed" it.
 describe('设置页：扩展应答但没有配对时一键配对', () => {
   const unpaired: ExtensionPresence = { version: EXTENSION_VERSION, paired: false, accountId: null };
@@ -368,7 +378,7 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
 
   async function renderAutoPair(redeem: Redeem, hash = '#/settings', { presence = unpaired, switchTo }: Before = {}) {
     const pairedView = await createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true }).getExtensionPairing();
-    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    const adapter = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true });
     let redeemed = false;
     const issued: number[] = [];
     const server: AppAdapter = {
@@ -393,7 +403,7 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
     return { bridge, issued, section: within(await screen.findByRole('region', { name: '浏览器扩展' })) };
   }
 
-  test('没有配对：自动生成配对码交给扩展，到已连接，不用输入', async () => {
+  test('扩展配对着但不在这台浏览器：自动生成配对码交给扩展，到已连接，不用输入', async () => {
     const { bridge, issued, section } = await renderAutoPair(() => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
     await settledPairedHere(section);
     expect(section.getByText('已连接')).toBeTruthy();
@@ -436,6 +446,7 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
     let issued = 0;
     window.location.hash = '#/settings';
     render(<App adapter={{ ...adapter, createExtensionPairingCode: async () => { issued += 1; return adapter.createExtensionPairingCode(); } }} bridge={fakeBridge(() => null)} />);
+    await chooseExtension();
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.firstTimeTitle)).toBeTruthy();
     expect(issued).toBe(0);
@@ -450,7 +461,7 @@ describe('设置页：扩展在替另一个账号报销时，先由扩展问员�
 
   function renderSwitch(switchTo: () => Promise<ExtensionSwitchOutcome | null>) {
     const pairedView = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true }).getExtensionPairing();
-    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    const adapter = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true });
     let redeemed = false;
     const issued: number[] = [];
     const server: AppAdapter = {
@@ -489,8 +500,8 @@ describe('设置页：扩展在替另一个账号报销时，先由扩展问员�
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.autoPairDeclinedTitle)).toBeTruthy();
     expect(section.getByText(EXTENSION_PAIRING_COPY.autoPairDeclined)).toBeTruthy();
-    expect(section.getByRole('button', { name: '生成配对码' })).toBeTruthy();
-    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(section.getByRole('button', { name: '重新生成配对码' })).toBeTruthy();
+    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.paired)).toBeTruthy();
     expect(bridge.codes).toEqual([]);
     expect(issued).toHaveLength(0);
   });
@@ -502,5 +513,174 @@ describe('设置页：扩展在替另一个账号报销时，先由扩展问员�
     expect(section.queryByRole('button', { name: '生成配对码' })).toBeNull();
     expect(bridge.codes).toEqual([]);
     expect(issued).toHaveLength(0);
+  });
+});
+
+// 去报销的方式 (#428, spec #412 D): one choice at the top, derived from which method holds the pairing; only that
+// method's section renders. Flipping it alone sends nothing; generating a 配对码 for the other method asks first,
+// because an account holds one pairing at a time.
+describe('设置页：去报销的方式', () => {
+  const localRegion = () => screen.queryByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
+  const extensionRegion = () => screen.queryByRole('region', { name: EXTENSION_PAIRING_COPY.title });
+  const choice = async (method: 'local_executor' | 'extension') => (await screen.findByRole('radio', { name: REIMBURSE_METHOD_COPY.options[method] })) as HTMLInputElement;
+
+  // Counts every write the page sends to the pairing, and every 配对码 the page hands to an extension.
+  function renderMethod(options: Partial<MockOptions> = {}, bridge: ExtensionBridge = fakeBridge(() => null)) {
+    window.location.hash = '#/settings';
+    const adapter = createMockAdapter({ seed: 'actions', fault: null, localExecutorInstallMs: 50, ...options });
+    const writes: string[] = [];
+    const server: AppAdapter = {
+      ...adapter,
+      createExtensionPairingCode: async (input) => {
+        writes.push('issue');
+        return adapter.createExtensionPairingCode(input);
+      },
+      revokeExtensionPairing: async () => {
+        writes.push('revoke');
+        return adapter.revokeExtensionPairing();
+      },
+    };
+    render(<App adapter={server} bridge={bridge} localExecutor={adapter.localExecutor} />);
+    return { adapter, writes };
+  }
+
+  test('没有配对：默认是本地执行器，浏览器扩展一节完全不显示', async () => {
+    renderMethod();
+    expect((await choice('local_executor')).checked).toBe(true);
+    expect((await choice('extension')).checked).toBe(false);
+    expect(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).toBeTruthy();
+    expect(extensionRegion()).toBeNull();
+    expect(screen.getByRole('group', { name: REIMBURSE_METHOD_COPY.legend })).toBeTruthy();
+  });
+
+  test('本地执行器配对着：选中本地执行器，只显示它这一节', async () => {
+    renderMethod({ localExecutor: 'paired' });
+    await waitFor(async () => expect((await choice('local_executor')).checked).toBe(true));
+    expect(await within((await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title }))).findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
+    expect(extensionRegion()).toBeNull();
+  });
+
+  test('浏览器扩展配对着：选中浏览器扩展，只显示它这一节', async () => {
+    renderMethod({ extensionPaired: true });
+    await waitFor(async () => expect((await choice('extension')).checked).toBe(true));
+    expect(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title })).toBeTruthy();
+    expect(localRegion()).toBeNull();
+  });
+
+  test('只切换方式、不生成配对码：服务端什么都不变', async () => {
+    const { adapter, writes } = renderMethod({ localExecutor: 'paired' });
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    fireEvent.click(await choice('extension'));
+    expect(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title })).toBeTruthy();
+    expect(localRegion()).toBeNull();
+    fireEvent.click(await choice('local_executor'));
+    expect(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).toBeTruthy();
+    expect(writes).toEqual([]);
+    expect(await adapter.getExtensionPairing()).toMatchObject({ status: 'paired', holder: 'local_executor' });
+  });
+
+  test('本地执行器配对着，切到浏览器扩展：那一节不把本地执行器的配对当成扩展的', async () => {
+    renderMethod({ localExecutor: 'paired' });
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    fireEvent.click(await choice('extension'));
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.none)).toBeTruthy();
+    expect(section.queryByRole('button', { name: EXTENSION_PAIRING_COPY.revoke })).toBeNull();
+  });
+
+  test('本地执行器配对着，给浏览器扩展生成配对码：先问，取消就什么都不发', async () => {
+    const { adapter, writes } = renderMethod({ localExecutor: 'paired' });
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    fireEvent.click(await choice('extension'));
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    fireEvent.click(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.issue }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(REIMBURSE_METHOD_COPY.switchBody.extension)).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(writes).toEqual([]);
+
+    fireEvent.click(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.issue }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: REIMBURSE_METHOD_COPY.switchConfirm.extension }));
+    expect(await section.findByText('K7MQ2PXD')).toBeTruthy();
+    expect(writes).toEqual(['issue']);
+    expect((await adapter.getExtensionPairing()).status).toBe('waiting');
+  });
+
+  test('浏览器扩展配对着，给本地执行器生成安装命令：先问，用反过来的那句话', async () => {
+    const { writes } = renderMethod({ extensionPaired: true });
+    await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title });
+    fireEvent.click(await choice('local_executor'));
+    const section = within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title }));
+    fireEvent.click(section.getByRole('radio', { name: LOCAL_EXECUTOR_COPY.systems.mac }));
+    fireEvent.click(section.getByRole('button', { name: LOCAL_EXECUTOR_COPY.generate }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(REIMBURSE_METHOD_COPY.switchBody.local_executor)).toBeTruthy();
+    expect(writes).toEqual([]);
+    fireEvent.click(dialog.getByRole('button', { name: REIMBURSE_METHOD_COPY.switchConfirm.local_executor }));
+    expect(await section.findByText('curl -fsSL http://10.250.0.222:8888/install/K7MQ2PXD | sh')).toBeTruthy();
+    expect(writes).toEqual(['issue']);
+  });
+
+  test('浏览器扩展配对着，连接这台电脑的执行器：也先问', async () => {
+    const { writes } = renderMethod({ extensionPaired: true, localExecutor: 'unpaired' });
+    await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title });
+    fireEvent.click(await choice('local_executor'));
+    fireEvent.click(await screen.findByRole('button', { name: LOCAL_EXECUTOR_COPY.connectHere }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(REIMBURSE_METHOD_COPY.switchBody.local_executor)).toBeTruthy();
+    expect(writes).toEqual([]);
+    fireEvent.click(dialog.getByRole('button', { name: REIMBURSE_METHOD_COPY.switchConfirm.local_executor }));
+    expect(await within(screen.getByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
+    expect(writes).toEqual(['issue']);
+  });
+
+  test('没有配对时生成配对码不用问', async () => {
+    const { writes } = renderMethod();
+    fireEvent.click(await choice('extension'));
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    fireEvent.click(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.issue }));
+    expect(await section.findByText('K7MQ2PXD')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(writes).toEqual(['issue']);
+  });
+
+  test('本地执行器生成的安装命令，切到浏览器扩展后不出现在扩展那一节', async () => {
+    renderMethod({ localExecutorInstallMs: 60_000 });
+    const local = within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title }));
+    fireEvent.click(local.getByRole('radio', { name: LOCAL_EXECUTOR_COPY.systems.mac }));
+    fireEvent.click(local.getByRole('button', { name: LOCAL_EXECUTOR_COPY.generate }));
+    await local.findByText('curl -fsSL http://10.250.0.222:8888/install/K7MQ2PXD | sh');
+    fireEvent.click(await choice('extension'));
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    expect(section.queryByText('K7MQ2PXD')).toBeNull();
+  });
+
+  test('本地执行器配对着、这台浏览器里的扩展应答但没配对：不自动生成配对码', async () => {
+    const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: false, accountId: null }), () => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
+    const { writes } = renderMethod({ localExecutor: 'paired' }, bridge);
+    await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
+    fireEvent.click(await choice('extension'));
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.issue })).toBeTruthy();
+    expect(writes).toEqual([]);
+    expect(bridge.codes).toEqual([]);
+    expect(bridge.switches).toEqual([]);
+  });
+
+  test('什么都没配对、扩展应答：不自动生成配对码，切到浏览器扩展也不会', async () => {
+    const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: false, accountId: null }), () => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
+    const { writes } = renderMethod({}, bridge);
+    await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
+    fireEvent.click(await choice('extension'));
+    const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
+    expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.issue })).toBeTruthy();
+    expect(writes).toEqual([]);
+    expect(bridge.codes).toEqual([]);
+  });
+
+  test('文案说报销系统，不用破折号，不说重试', () => {
+    const copy = JSON.stringify(REIMBURSE_METHOD_COPY);
+    expect(copy).not.toMatch(/ERP|Node|重试|[\u2013\u2014]/);
   });
 });

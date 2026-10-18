@@ -124,6 +124,20 @@ describe('扩展配对 (extension pairing)', () => {
     expect(Date.parse(later.lastConnectedAt ?? '')).toBeGreaterThan(Date.parse(paired.pairedAt ?? ''));
   });
 
+  // 去报销的方式 on the 设置页 (#428) is derived from this: the page reads which method holds the pairing.
+  it('names the pairing\'s holder: the 本地执行器 when it said so, otherwise the 浏览器扩展, and none before pairing', async () => {
+    expect((await view(alice)).holder).toBeNull();
+    const issued = await issue(alice);
+    expect(issued.holder).toBeNull();
+    const byExecutor = await server.app.request(EXTENSION_PAIR_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code: codeOf(issued), version: EXTENSION_VERSION, holder: 'local_executor' }) });
+    expect(byExecutor.status).toBe(200);
+    expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'local_executor' });
+
+    await pair(alice);
+    expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'extension' });
+    expect((await revoke(alice)).holder).toBeNull();
+  });
+
   it('pairs per 应用账号: one colleague\'s 配对码 never reaches another\'s account', async () => {
     const bob = await server.signIn('bob');
     const bobsCode = codeOf(await issue(bob));

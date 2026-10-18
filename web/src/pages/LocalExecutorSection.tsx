@@ -6,6 +6,7 @@ import { useAppStore, useExtensionPairing, useLocalExecutorPort, useSession } fr
 import { ActionGroup } from '../shell/ActionGroup';
 import { copyText } from '../shell/clipboard';
 import { ConfirmDialog } from '../shell/Dialog';
+import { endsOtherMethod, SwitchMethodDialog } from './reimburse-method';
 
 // baox 本地执行器 (ADR-0033, ADR-0035 amended 2026-10-17): the program that does 去报销 on this PC in a browser nobody
 // sees, instead of the 浏览器扩展. The employee picks Mac or Windows (neither is picked for them) and pastes the one
@@ -15,7 +16,9 @@ import { ConfirmDialog } from '../shell/Dialog';
 //
 // An executor already running on this PC answers on 47319 (`adapter/local-executor-port.ts`): then the section offers
 // one click instead, which issues a code and hands it straight over. An executor paired to another 应用账号 is asked
-// about first. An account has one pairing at a time, so pairing the executor replaces the extension's.
+// about first. An account has one pairing at a time, so pairing the executor replaces the extension's: with the
+// extension paired, both actions ask first (`SwitchMethodDialog`, #428). 已连接 is the server's word: the pairing's
+// holder is the 本地执行器.
 
 export const LOCAL_EXECUTOR_COPY = {
   title: 'baox 本地执行器',
@@ -57,11 +60,13 @@ export function LocalExecutorSection() {
   const [probe, setProbe] = useState<LocalExecutorPairingState | null | undefined>(undefined);
   const [system, setSystem] = useState<InstallSystem | null>(null);
   const [command, setCommand] = useState<{ system: InstallSystem; text: string } | null>(null);
-  // This section issued the code now pending, or paired the executor here: the server's pairing is then its.
+  // This section issued the code now pending, so it reads the pairing until that code lands.
   const [mine, setMine] = useState(false);
   const [busy, setBusy] = useState<'generate' | 'connect' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // Which action waits for the employee to agree to end the extension's pairing.
+  const [switching, setSwitching] = useState<'generate' | 'connect' | null>(null);
   const [copied, setCopied] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -75,7 +80,7 @@ export function LocalExecutorSection() {
   }, [port]);
 
   const view = pairing.data;
-  const connected = view?.status === 'paired' && (mine || (probe?.paired === true && probe.accountId === accountId));
+  const connected = view?.status === 'paired' && view.holder === 'local_executor';
   const pending = mine && view?.status === 'waiting' && (!view.codeExpiresAt || Date.parse(view.codeExpiresAt) > Date.now());
 
   useEffect(() => {
@@ -84,8 +89,13 @@ export function LocalExecutorSection() {
     return () => clearInterval(timer);
   }, [pending, store]);
 
-  const generate = async () => {
+  const generate = async (agreed: boolean) => {
     if (!system) return;
+    if (!agreed && endsOtherMethod(view, 'local_executor')) {
+      setSwitching('generate');
+      return;
+    }
+    setSwitching(null);
     setBusy('generate');
     setError(null);
     setCopied(null);
@@ -99,7 +109,13 @@ export function LocalExecutorSection() {
     setCommand(outcome.pairing.code ? { system, text: localExecutorInstallCommand(system, outcome.pairing.activeOrigin, outcome.pairing.code) } : null);
   };
 
-  const connect = async (agreed: boolean) => {
+  // `switched`: the employee agreed to end the extension's pairing; `agreed`: to take the executor from another account.
+  const connect = async (agreed: boolean, switched = false) => {
+    if (!switched && endsOtherMethod(view, 'local_executor')) {
+      setSwitching('connect');
+      return;
+    }
+    setSwitching(null);
     if (!agreed && probe?.paired && probe.accountId !== accountId) {
       setConfirming(true);
       return;
@@ -163,7 +179,7 @@ export function LocalExecutorSection() {
             <RadioButton id="local-executor-system-windows" value="windows" labelText={LOCAL_EXECUTOR_COPY.systems.windows} />
           </RadioButtonGroup>
           <ActionGroup caption={LOCAL_EXECUTOR_COPY.replaces}>
-            <Button kind={command ? 'secondary' : 'primary'} size="md" disabled={system === null || busy !== null} onClick={() => void generate()}>
+            <Button kind={command ? 'secondary' : 'primary'} size="md" disabled={system === null || busy !== null} onClick={() => void generate(false)}>
               {LOCAL_EXECUTOR_COPY.generate}
             </Button>
           </ActionGroup>
@@ -186,12 +202,15 @@ export function LocalExecutorSection() {
         </>
       ) : null}
       {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
+      {switching ? (
+        <SwitchMethodDialog to="local_executor" onConfirm={() => void (switching === 'generate' ? generate(true) : connect(false, true))} onCancel={() => setSwitching(null)} />
+      ) : null}
       {confirming ? (
         <ConfirmDialog
           title={LOCAL_EXECUTOR_COPY.otherAccountTitle}
           confirmLabel={LOCAL_EXECUTOR_COPY.otherAccountConfirm}
           busy={busy === 'connect'}
-          onConfirm={() => void connect(true)}
+          onConfirm={() => void connect(true, true)}
           onCancel={() => setConfirming(false)}
         >
           <p>{LOCAL_EXECUTOR_COPY.otherAccountBody}</p>

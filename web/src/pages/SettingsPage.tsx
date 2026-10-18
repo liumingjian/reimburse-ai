@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react';
-import { Button, InlineNotification } from '@carbon/react';
+import { Button, InlineNotification, RadioButton, RadioButtonGroup } from '@carbon/react';
 import { Download, Launch } from '@carbon/icons-react';
 import { useAppStore, useExtensionPairing, useLegacyImport } from '../adapter/context';
-import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
+import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, type ExtensionPairing, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
 import { SETTINGS_PASSWORD_HASH, SETTINGS_TUTORIAL_HASH, TASKS_HASH, navigate } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
 import { ActionGroup } from '../shell/ActionGroup';
@@ -14,6 +14,7 @@ import { ErpCredentialsSection } from './ErpCredentialsSection';
 import { LocalExecutorSection } from './LocalExecutorSection';
 import { EXTENSION_INSTALL_COPY, UpgradeSteps } from './ExtensionTutorialPage';
 import { awaitsPairing, useAutoPair, useExtensionSetup } from './extension-setup';
+import { endsOtherMethod, REIMBURSE_METHOD_COPY, SwitchMethodDialog, useReimburseMethod, type ReimburseMethod } from './reimburse-method';
 
 export { EXTENSION_INSTALL_COPY } from './ExtensionTutorialPage';
 
@@ -209,16 +210,30 @@ export const EXTENSION_PAIRING_COPY = {
 // An extension that answers but is not paired to this account is paired on the spot (`useAutoPair`, #291), after the
 // extension has asked the employee when it acts for another account (#292); the manual flow stays for when it does not
 // answer, the switch is declined, or the pairing fails.
-function ExtensionPairingSection() {
+//
+// This section renders only when 去报销的方式 is the 浏览器扩展 (#428). It pairs on the spot only when the extension
+// holds the pairing (`autoPair`): with the 本地执行器 paired, or nothing paired, it never issues a code by itself,
+// since issuing ends the current pairing. A pairing the 本地执行器 holds, and a 配对码 another section issued, are
+// not the extension's, so this section shows neither.
+function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boolean }) {
   const store = useAppStore();
   const state = useExtensionPairing();
   const { step, reprobe } = useExtensionSetup();
-  const autoPair = useAutoPair(step, reprobe);
+  const autoPair = useAutoPair(step, reprobe, autoPairWanted);
   const [busy, setBusy] = useState<'issue' | 'revoke' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  // This section issued the 配对码 now waiting (by a click, or by pairing on the spot).
+  const [issued, setIssued] = useState(false);
 
-  const act = async (which: 'issue' | 'revoke') => {
+  const act = async (which: 'issue' | 'revoke', agreed = false) => {
+    if (which === 'issue' && !agreed && endsOtherMethod(state.data, 'extension')) {
+      setSwitching(true);
+      return;
+    }
+    setSwitching(false);
+    if (which === 'issue') setIssued(true);
     setBusy(which);
     setError(null);
     const outcome = await store.extensionPairingAction((adapter) => (which === 'issue' ? adapter.createExtensionPairingCode() : adapter.revokeExtensionPairing()));
@@ -232,7 +247,7 @@ function ExtensionPairingSection() {
     reprobe();
   };
 
-  const view = state.data;
+  const view = extensionView(state.data, issued || autoPair.status !== 'idle');
   const activeOrigin = view?.activeOrigin ?? '';
   const guided = awaitsPairing(step) && autoPair.status !== 'pairing' && autoPair.status !== 'confirming';
   const next = view?.status === 'paired'
@@ -390,6 +405,7 @@ function ExtensionPairingSection() {
           {error ? <InlineNotification kind="error" role="alert" lowContrast hideCloseButton statusIconDescription="错误" title={error} /> : null}
         </>
       )}
+      {switching ? <SwitchMethodDialog to="extension" busy={busy === 'issue'} onConfirm={() => void act('issue', true)} onCancel={() => setSwitching(false)} /> : null}
       {confirming ? (
         <ConfirmDialog
           danger
@@ -407,6 +423,46 @@ function ExtensionPairingSection() {
         </ConfirmDialog>
       ) : null}
     </section>
+  );
+}
+
+// The pairing as the extension section shows it: a pairing the 本地执行器 holds is no pairing of the extension's, and
+// a waiting 配对码 this section did not issue (an install command's) is not its to show.
+function extensionView(pairing: ExtensionPairing | null, issuedHere: boolean): ExtensionPairing | null {
+  if (!pairing) return null;
+  const foreign = (pairing.status === 'paired' && pairing.holder !== 'extension') || (pairing.status === 'waiting' && !issuedHere);
+  if (!foreign) return issuedHere ? pairing : { ...pairing, code: null };
+  return { ...pairing, status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, holder: null, code: null };
+}
+
+// 去报销的方式 (#428): the one choice at the top, and the chosen method's section only.
+function ReimburseMethodSection() {
+  const store = useAppStore();
+  const pairing = useExtensionPairing();
+  const [method, setMethod] = useReimburseMethod(pairing.data);
+  if (!pairing.data) {
+    return pairing.status === 'error' ? (
+      <div className="app-empty">
+        <p>{EXTENSION_PAIRING_COPY.loadFailed}</p>
+        <p>{pairing.error}</p>
+        <Button size="md" kind="secondary" onClick={() => void store.loadExtensionPairing()}>
+          {EXTENSION_PAIRING_COPY.retryLoad}
+        </Button>
+      </div>
+    ) : (
+      <p className="app-loading" role="status">
+        {EXTENSION_PAIRING_COPY.loading}
+      </p>
+    );
+  }
+  return (
+    <>
+      <RadioButtonGroup legendText={REIMBURSE_METHOD_COPY.legend} name="reimburse-method" orientation="horizontal" valueSelected={method} onChange={(value) => setMethod(value as ReimburseMethod)}>
+        <RadioButton id="reimburse-method-local-executor" value="local_executor" labelText={REIMBURSE_METHOD_COPY.options.local_executor} />
+        <RadioButton id="reimburse-method-extension" value="extension" labelText={REIMBURSE_METHOD_COPY.options.extension} />
+      </RadioButtonGroup>
+      {method === 'extension' ? <ExtensionPairingSection autoPair={pairing.data.status === 'paired' && pairing.data.holder === 'extension'} /> : <LocalExecutorSection />}
+    </>
   );
 }
 
@@ -447,8 +503,7 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
             </ActionGroup>
           </section>
         ) : null}
-        <ExtensionPairingSection />
-        <LocalExecutorSection />
+        <ReimburseMethodSection />
         <ErpCredentialsSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">
