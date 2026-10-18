@@ -8,10 +8,12 @@
 //                                                it stays up and waits on 47319 for a 配对码 from the 设置页
 //   pair --origin http://<app> <配对码>          pair with the 应用账号 that issued the code
 //   unpair                                       撤销配对, on the app and here
-//   uninstall                                    stop starting with the login, and 撤销配对
 //   finish-install --origin <app> --platform <p> the install script's last step: record the Node, write the start
 //     --node <path> --account <id> --code <码>   entry, pair (unless already paired to that account), start
 //   self-check                                   load and answer: what an update asks of a new program first
+//
+// Uninstalling is the /uninstall/<系统> command from the 设置页, which never revokes the pairing (spec #412 story 35);
+// this program has no uninstall of its own.
 //
 // The ERP 凭据 are the app's to keep (ADR-0033): the employee saves them on the settings page, and each job brings
 // them down with it. This program never asks for them and never writes them anywhere.
@@ -27,7 +29,7 @@ import { serverBlobs } from '@baox/extension/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
 import { launchHeadless } from './headless';
 import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
-import { autostartFiles, downloadedRuntimePath, LAUNCH_AGENT, removeInstallFiles, RESTART_EXIT_CODE, type InstallFile } from './install';
+import { autostartFiles, downloadedRuntimePath, LAUNCH_AGENT, RESTART_EXIT_CODE, type InstallFile } from './install';
 import { createPairingHolder, pairingListener } from './pairing-port';
 import { createLocalRunner } from './runner';
 import { ensureDownloaded, NODE_MAJOR, nodeProbe } from './runtime';
@@ -90,7 +92,7 @@ const where = { platform: process.platform, appDir: store.appDir, logsDir: store
 const installedConfig = () => join(store.appDir, LOCAL_EXECUTOR_CONFIG_FILE);
 const downloadedRuntime = downloadedRuntimePath(store.appDir, process.platform);
 
-/** The start-at-login files as the installed config has them; their paths are what uninstalling needs. */
+/** The start-at-login files as the installed config has them; what starting in the background writes. */
 const installFiles = (): InstallFile[] => {
   const installedCfg = existsSync(installedConfig()) ? readConfig(installedConfig()) : config;
   return autostartFiles({ ...where, node: installedCfg?.node ?? downloadedRuntime, origin: installedCfg?.origin ?? '', runtimePlatform: installedCfg?.platform ?? hostPlatform() });
@@ -165,15 +167,6 @@ async function finishInstall(args: string[]) {
     console.error(error);
     process.exit(1);
   }
-}
-
-async function uninstall() {
-  if (process.platform === 'darwin') {
-    try { execFileSync('launchctl', ['bootout', `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT}`], { stdio: 'ignore' }); } catch { /* was not loaded */ }
-  }
-  removeInstallFiles(installFiles());
-  await unpair();
-  say('不会再随登录启动。');
 }
 
 async function run(args: string[]) {
@@ -303,7 +296,6 @@ const [command, ...rest] = process.argv.slice(2);
 if (command === 'self-check') process.stdout.write(`${SELF_CHECK_ANSWER}\n`);
 else if (command === 'pair') await pair(rest);
 else if (command === 'unpair') await unpair();
-else if (command === 'uninstall') await uninstall();
 else if (command === 'finish-install') await finishInstall(rest);
 else if (command === 'run') await run(rest);
-else fail('用法：run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair | uninstall');
+else fail('用法：run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair');

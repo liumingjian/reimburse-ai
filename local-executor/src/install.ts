@@ -15,7 +15,7 @@
 // A clean exit (0) means "nothing to do": another copy already running, or stopped on purpose. Anything else
 // restarts it, which is how a self-update (exit 3, `update.ts`) takes effect. Nothing here needs administrator rights.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, win32 } from 'node:path';
 import { localExecutorRuntimePath, localExecutorRuntimeSha256Path, type LocalExecutorPlatform } from '@baox/contract';
 import { CODE_LOADING_ENV, windowsPath } from './runtime';
@@ -189,8 +189,4 @@ export function syncInstallFiles(files: readonly InstallFile[]): boolean {
     changed = true;
   }
   return changed;
-}
-
-export function removeInstallFiles(files: readonly InstallFile[]): void {
-  for (const file of files) rmSync(file.path, { force: true });
 }
