@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { Button, InlineNotification, RadioButton, RadioButtonGroup } from '@carbon/react';
 import { Download, Launch } from '@carbon/icons-react';
 import { useAppStore, useExtensionPairing, useLegacyImport } from '../adapter/context';
-import { compareExtensionVersions, EXTENSION_DOWNLOAD_PATH, type ExtensionPairing, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
+import { compareClientVersions, EXTENSION_DOWNLOAD_PATH, type PairingView, PAIRING_STATUS_LABELS, CLIENT_VERSION, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type LegacyImportReport } from '@baox/contract';
 import { SETTINGS_PASSWORD_HASH, SETTINGS_TUTORIAL_HASH, TASKS_HASH, navigate } from '../router';
 import { ConfirmDialog } from '../shell/Dialog';
 import { ActionGroup } from '../shell/ActionGroup';
@@ -291,7 +291,7 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
             <div className="app-extension-state">
               <div className="app-extension-state-heading">
                 <div>
-                  <h3>{EXTENSION_PAIRING_STATUS_LABELS[view.status]}</h3>
+                  <h3>{PAIRING_STATUS_LABELS[view.status]}</h3>
                 </div>
                 <span className={`app-extension-state-mark app-extension-state-mark-${view.status}`} aria-hidden="true" />
               </div>
@@ -380,8 +380,8 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
                   <p>{EXTENSION_PAIRING_COPY.migrationOldPair(view.activeOrigin)}</p>
                 </InlineNotification>
               ) : null}
-              {view.status === 'paired' && view.version !== null && compareExtensionVersions(view.version, EXTENSION_VERSION) < 0 ? (
-                <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, EXTENSION_VERSION)} />
+              {view.status === 'paired' && view.version !== null && compareClientVersions(view.version, CLIENT_VERSION) < 0 ? (
+                <InlineNotification kind="warning" role="status" lowContrast hideCloseButton statusIconDescription="注意" title={EXTENSION_INSTALL_COPY.outdated(view.version, CLIENT_VERSION)} />
               ) : null}
               {/* Download, then the one next step (primary last). Revoking sits apart in its own group. */}
               <ActionGroup caption={view.status === 'paired' ? EXTENSION_PAIRING_COPY.replaceHint : undefined}>
@@ -449,7 +449,7 @@ function ExtensionPairingSection({ autoPair: autoPairWanted }: { autoPair: boole
 
 // The pairing as the extension section shows it: a pairing the 本地执行器 holds is no pairing of the extension's, and
 // a waiting 配对码 this section did not issue (an install command's) is not its to show.
-function extensionView(pairing: ExtensionPairing | null, issuedHere: boolean): ExtensionPairing | null {
+function extensionView(pairing: PairingView | null, issuedHere: boolean): PairingView | null {
   if (!pairing) return null;
   const foreign = (pairing.status === 'paired' && pairing.holder !== 'extension') || (pairing.status === 'waiting' && !issuedHere);
   if (!foreign) return issuedHere ? pairing : { ...pairing, code: null };

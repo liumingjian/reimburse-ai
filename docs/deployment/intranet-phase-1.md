@@ -235,7 +235,7 @@ For an existing deployment whose origin differs from the new default, follow the
 
 When the release changes the extension, employees re-download it from the settings page and reload it in the browser
 (the settings page carries the Chinese walkthrough); the server refuses extensions older than
-`EXTENSION_MINIMUM_VERSION`. A controlled repair with the same tarball rebuilds nothing and only restarts.
+`MINIMUM_CLIENT_VERSION`. A controlled repair with the same tarball rebuilds nothing and only restarts.
 
 **Rollback** is `ln -sfn releases/<older> /opt/tools/baox/current && systemctl restart baox`. It is safe only if the
 newer release added no schema migration: the database is never migrated backwards, and there is no backup to return to.

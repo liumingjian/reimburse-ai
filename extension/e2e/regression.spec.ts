@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page } from '@playwright/test';
 import { jobEnded, test, type App, type Client } from './app';
-import { DETACHED_MID_COMMAND } from '../src/job-link';
+import { DETACHED_MID_COMMAND } from '@baox/channel/job-link';
 import { detachLikeChrome, type ErpSites } from './harness';
 
 type ErpRecord = { mutations: Array<{ kind: string; detail: string }>; importMode: string | null };

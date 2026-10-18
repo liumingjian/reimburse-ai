@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
-  ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_PAIR_PATH, extensionBlobPath, type ChannelMessage,
+  ChannelMessageSchema, CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, PAIRING_PATH, invoiceBlobPath, type ChannelMessage,
 } from '@baox/contract';
 import { cdpBrowser } from '@baox/erp-executor/browser';
 import { connect, evalIn, type CdpSession } from '@baox/erp-executor/cdp';
@@ -84,11 +84,11 @@ export async function standInApp({ port, invoice }: { port: number; invoice: { s
   const record = (event: ExecutorEvent) => { log.push({ at: Date.now(), event }); return answer(event); };
 
   const server: Server = createServer((request, response) => {
-    if (request.method === 'POST' && request.url === EXTENSION_PAIR_PATH) {
+    if (request.method === 'POST' && request.url === PAIRING_PATH) {
       seen.pairRequests += 1;
       request.resume();
       request.on('end', () => { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ token: 's8-token', accountId: 's8-account' })); });
-    } else if (invoice && request.method === 'GET' && request.url === extensionBlobPath(invoice.sha256)) {
+    } else if (invoice && request.method === 'GET' && request.url === invoiceBlobPath(invoice.sha256)) {
       response.writeHead(200, { 'content-type': 'application/octet-stream' });
       response.end(Buffer.from(invoice.bytes));
     } else {
@@ -96,7 +96,7 @@ export async function standInApp({ port, invoice }: { port: number; invoice: { s
       response.end('not found');
     }
   });
-  const channel = new WebSocketServer({ server, path: EXTENSION_CHANNEL_PATH });
+  const channel = new WebSocketServer({ server, path: CHANNEL_PATH });
   const write = (ws: WebSocket, message: ChannelMessage) => ws.send(JSON.stringify(message));
   channel.on('connection', (ws) => {
     seen.sockets += 1;
@@ -106,7 +106,7 @@ export async function standInApp({ port, invoice }: { port: number; invoice: { s
       if (message.type === 'hello') {
         seen.hellos += 1;
         socket = ws;
-        write(ws, { type: 'ready', accountId: 's8-account', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+        write(ws, { type: 'ready', accountId: 's8-account', heartbeatMs: CHANNEL_HEARTBEAT_MS });
       } else if (message.type === 'response') {
         pending.get(message.id)?.(message);
         pending.delete(message.id);

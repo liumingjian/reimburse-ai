@@ -1,8 +1,8 @@
-import { EXTENSION_BRIDGE_NAMESPACE, EXTENSION_PAIR_PATH, EXTENSION_VERSION, extensionVersionRefusal } from '@baox/contract';
+import { EXTENSION_BRIDGE_NAMESPACE, PAIRING_PATH, CLIENT_VERSION, clientVersionRefusal } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { bridgeRequestFrom, relayPageBridge, type BridgeMessageEvent, type BridgeRequest, type RelayWindow } from './bridge';
-import type { ChannelStatus } from './connection';
-import { APP_UNREACHABLE } from './messages';
+import type { ChannelStatus } from '@baox/channel/connection';
+import { APP_UNREACHABLE } from '@baox/channel/messages';
 import { createPairingRequests, type ConfirmSwitch, type CurrentAccount, type PairingChannel, type StoredPairing } from './pairing-requests';
 
 // The page bridge (#290) at its protocol: what the baox page posts, and what it is answered. The page's window and
@@ -96,15 +96,15 @@ describe('the page bridge', () => {
     dispatch({});
     await settle();
 
-    expect(posted).toEqual([{ message: { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: EXTENSION_VERSION, paired: true, accountId: 'a1' }, targetOrigin: ORIGIN }]);
-    expect(seen).toEqual([{ url: `${ORIGIN}${EXTENSION_PAIR_PATH}`, authorization: 'Bearer tok' }]);
+    expect(posted).toEqual([{ message: { namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: CLIENT_VERSION, paired: true, accountId: 'a1' }, targetOrigin: ORIGIN }]);
+    expect(seen).toEqual([{ url: `${ORIGIN}${PAIRING_PATH}`, authorization: 'Bearer tok' }]);
   });
 
   it('answers unpaired when nothing is stored', async () => {
     const { dispatch, posted } = extensionOnPage();
     dispatch({});
     await settle();
-    expect(posted.map((post) => post.message)).toEqual([{ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: EXTENSION_VERSION, paired: false, accountId: null }]);
+    expect(posted.map((post) => post.message)).toEqual([{ namespace: EXTENSION_BRIDGE_NAMESPACE, kind: 'presence', version: CLIENT_VERSION, paired: false, accountId: null }]);
   });
 
   it('announces itself when the content script loads', async () => {
@@ -253,7 +253,7 @@ describe('pairing through the page bridge', () => {
     dispatch(pairRequest());
     await settle();
 
-    expect(redeemed).toEqual([{ url: `${ORIGIN}${EXTENSION_PAIR_PATH}`, method: 'POST', body: { code: 'K7MQ2PXD', browser: 'Chrome 142 Windows', version: EXTENSION_VERSION } }]);
+    expect(redeemed).toEqual([{ url: `${ORIGIN}${PAIRING_PATH}`, method: 'POST', body: { code: 'K7MQ2PXD', browser: 'Chrome 142 Windows', version: CLIENT_VERSION } }]);
     expect(items.get('pairing')).toEqual({ token: 'tok-new', accountId: 'a1' });
     expect(started).toEqual([{ token: 'tok-new', accountId: 'a1' }]);
     expect(posted).toEqual([{ message: outcomeOf({ status: 'paired', accountId: 'a1' }), targetOrigin: ORIGIN }]);
@@ -268,7 +268,7 @@ describe('pairing through the page bridge', () => {
   });
 
   it('answers a refusal with the server\'s code and message, and keeps what was stored', async () => {
-    const tooOld = extensionVersionRefusal('0.9.0', '2.0.0') ?? '';
+    const tooOld = clientVersionRefusal('0.9.0', '2.0.0') ?? '';
     const cases = [
       { app: refusal(400, 'code_invalid', '配对码不对'), outcome: { status: 'failed', code: 'code_invalid', message: '配对码不对' } },
       { app: refusal(403, 'version_too_old', tooOld), outcome: { status: 'failed', code: 'version_too_old', message: tooOld } },

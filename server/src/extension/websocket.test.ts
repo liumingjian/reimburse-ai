@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EXTENSION_CHANNEL_PATH } from '@baox/contract';
+import { CHANNEL_PATH } from '@baox/contract';
 import { parsePublicOrigin } from '../public-origin';
 import { createTestServer, type TestServer } from '../test/harness';
 import { attachExtensionChannel } from './websocket';
@@ -38,7 +38,7 @@ function upgrade(port: number, host: string): Promise<number> {
     const sent = request({
       host: '127.0.0.1',
       port,
-      path: EXTENSION_CHANNEL_PATH,
+      path: CHANNEL_PATH,
       headers: { host, connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': randomBytes(16).toString('base64') },
     });
     sent.on('upgrade', (response, socket) => {

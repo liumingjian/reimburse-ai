@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
 import { TaskActionSchema, TaskStageSchema } from './stage';
 import { TaskPeriodSchema } from './task-list';
-import type { ExtensionHolder } from './extension';
+import type { PairingHolderKind } from './channel';
 
 // 接口二：单任务完整快照。前端只渲染这里的值，不保存第二份业务状态，不计算、不判定。
 // 本文件在 #100 定下所有分节的名字与最小形状；后续票只加深分节，不重排结构。
@@ -887,7 +887,7 @@ export const ERP_LOCAL_EXECUTOR_STEPS = [
 
 // 去报销的方式 a job ran on: the pairing holder when it started (ADR-0033). The server records it with the job, so
 // switching methods later rewrites no past job's steps.
-export type ErpRoute = ExtensionHolder;
+export type ErpRoute = PairingHolderKind;
 export type ErpStepCopy = { readonly key: ErpProgressStage; readonly title: string; readonly description: string };
 export const ERP_ROUTE_STEPS: Readonly<Record<ErpRoute, readonly ErpStepCopy[]>> = {
   extension: ERP_EXTENSION_STEPS,

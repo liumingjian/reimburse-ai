@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, inflateRawSync } from 'node:zlib';
-import { compareExtensionVersions, EXTENSION_DOWNLOAD_ERRORS, EXTENSION_DOWNLOAD_FILENAME, EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_ORIGIN_PLACEHOLDER, EXTENSION_VERSION } from '@baox/contract';
+import { compareClientVersions, EXTENSION_DOWNLOAD_ERRORS, EXTENSION_DOWNLOAD_FILENAME, EXTENSION_DOWNLOAD_PATH, MINIMUM_CLIENT_VERSION, EXTENSION_ORIGIN_PLACEHOLDER, CLIENT_VERSION } from '@baox/contract';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createTestServer, TEST_PASSWORD, type TestServer } from '../test/harness';
 
@@ -93,8 +93,8 @@ describe('the extension download on the settings page', () => {
 
   it('serves the version this server ships, which is never one it would refuse', async () => {
     const { manifest } = await download(await intranetDownload(template));
-    expect(manifest.version).toBe(EXTENSION_VERSION);
-    expect(compareExtensionVersions(manifest.version, EXTENSION_MINIMUM_VERSION)).toBeGreaterThanOrEqual(0);
+    expect(manifest.version).toBe(CLIENT_VERSION);
+    expect(compareClientVersions(manifest.version, MINIMUM_CLIENT_VERSION)).toBeGreaterThanOrEqual(0);
   });
 
   it('on a loopback-only install bakes in the loopback address the browser used', async () => {

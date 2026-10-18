@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, EXTENSION_BLOB_PATH, EXTENSION_PAIR_PATH, EXTENSION_PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, INVOICE_BLOB_PATH, PAIRING_PATH, PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -236,7 +236,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     if (!admitsHost(publicOrigin, host)) return forbidden(c);
     const origin = c.req.header('origin');
     // `null` is a sandboxed/opaque origin, never this app's own page.
-    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== EXTENSION_PAIR_PATH && !admitsOrigin(publicOrigin, origin)) return forbidden(c);
+    if (WRITE_METHODS.has(c.req.method) && origin !== undefined && c.req.path !== PAIRING_PATH && !admitsOrigin(publicOrigin, origin)) return forbidden(c);
     // This also holds GET routes until recovery has either completed or made the gate fail closed. Some reads have
     // narrowly admitted housekeeping writes (session and pairing liveness), so they cannot begin while startup work
     // is still deciding the durable boundary.
@@ -304,9 +304,9 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // reason: the extension's token is its only credential. Three answers read alike, so nothing can be learnt by
   // probing: no running job, a sha256 its plan does not name, and another account's original. The task service is
   // the token's account's, so the owner check every read path carries is made here too, on top of the plan's.
-  app.get(`${EXTENSION_BLOB_PATH}/:sha256`, async (c) => {
+  app.get(`${INVOICE_BLOB_PATH}/:sha256`, async (c) => {
     const paired = await pairings.lookup(bearer(c));
-    if (!paired) return failure(c, 401, 'not_paired', EXTENSION_PAIRING_ERRORS.notPaired);
+    if (!paired) return failure(c, 401, 'not_paired', PAIRING_ERRORS.notPaired);
     const sha256 = c.req.param('sha256');
     const job = remote.runningOriginal(paired.accountId, sha256);
     const found = job ? await serviceFor(paired.accountId).file(job.taskId, sha256) : null;

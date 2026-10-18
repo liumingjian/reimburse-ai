@@ -69,9 +69,9 @@ final report:
 
 | Watch | Hit means |
 |---|---|
-| `EXTENSION_MINIMUM_VERSION` raised in `contract/src/extension.ts` | Every QA browser's old extension is refused: re-download from the settings page and reload it before QA. |
-| `EXTENSION_VERSION` raised, minimum unchanged | A new extension is available; reload it to QA the extension change. |
-| `extension/` changed, `EXTENSION_VERSION` unchanged | The extension changed without a version bump; QA browsers keep running the old build. Flag it as a probable release mistake. |
+| `MINIMUM_CLIENT_VERSION` raised in `contract/src/channel.ts` | Every QA browser's old extension is refused: re-download from the settings page and reload it before QA. |
+| `CLIENT_VERSION` raised, minimum unchanged | A new extension is available; reload it to QA the extension change. |
+| `extension/` changed, `CLIENT_VERSION` unchanged | The extension changed without a version bump; QA browsers keep running the old build. Flag it as a probable release mistake. |
 | A new key in the migrations map of `server/src/db/migrations.ts` | Schema migration: rollback to the previous release is unsafe from now on (the database never migrates backwards, and there is no backup). |
 
 Routine releases keep the installed origin, so 扩展配对 (extension pairing) survives; say so only if the user asks.

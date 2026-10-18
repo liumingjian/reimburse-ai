@@ -18,6 +18,22 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@24.13.3)(jsdom@27.4.0)(sass@1.104.1)(tsx@4.23.13)
 
+  channel:
+    dependencies:
+      '@baox/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@baox/erp-executor':
+        specifier: workspace:*
+        version: link:../erp-executor
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   contract:
     dependencies:
       zod:
@@ -64,6 +80,9 @@ importers:
 
   extension:
     dependencies:
+      '@baox/channel':
+        specifier: workspace:*
+        version: link:../channel
       '@baox/contract':
         specifier: workspace:*
         version: link:../contract
@@ -97,15 +116,15 @@ importers:
 
   local-executor:
     dependencies:
+      '@baox/channel':
+        specifier: workspace:*
+        version: link:../channel
       '@baox/contract':
         specifier: workspace:*
         version: link:../contract
       '@baox/erp-executor':
         specifier: workspace:*
         version: link:../erp-executor
-      '@baox/extension':
-        specifier: workspace:*
-        version: link:../extension
       zod:
         specifier: 4.6.2
         version: 4.6.2
@@ -125,6 +144,9 @@ importers:
 
   server:
     dependencies:
+      '@baox/channel':
+        specifier: workspace:*
+        version: link:../channel
       '@baox/contract':
         specifier: workspace:*
         version: link:../contract

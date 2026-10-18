@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAdaptorServer } from '@hono/node-server';
 import {
-  EXTENSION_PAIRING_CODE_TTL_MS, ExtensionPairingSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_EXIT as EXIT, LOCAL_EXECUTOR_INSTALL_MESSAGES as SAY,
+  PAIRING_CODE_TTL_MS, PairingViewSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_EXIT as EXIT, LOCAL_EXECUTOR_INSTALL_MESSAGES as SAY,
   localExecutorInstallPath, localExecutorUninstallPath,
 } from '@baox/contract';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -139,7 +139,7 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
   const startupEntry = () => join(appData(), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'baox-local-executor.cmd');
   const installLog = () => (existsSync(join(executorHome(), 'logs', 'install.log')) ? readFileSync(join(executorHome(), 'logs', 'install.log'), 'utf8').slice(-3000) : 'no install log');
   const finishArgs = () => readFileSync(notes(), 'utf8').trim().split('\n');
-  const issue = async () => ExtensionPairingSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'windows' })).json()).code!;
+  const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'windows' })).json()).code!;
 
   /** `irm <app><path> | iex` as the command on the 设置页 runs it: what the employee sees, line by line, and the exit. */
   function run(path: string, env: Record<string, string> = {}): Promise<{ lines: string[]; status: number | null }> {
@@ -219,7 +219,7 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
   it('ends an expired code in its one sentence', async () => {
     ownNode('24.9.0');
     const code = await issue();
-    server.clock.advance(EXTENSION_PAIRING_CODE_TTL_MS + 1);
+    server.clock.advance(PAIRING_CODE_TTL_MS + 1);
     const { lines, status } = await run(localExecutorInstallPath(code));
     expect(lines).toEqual([SAY.expired]);
     expect(status).toBe(1);

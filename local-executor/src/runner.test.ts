@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErpOptions, type FakeInvoice } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS } from '@baox/erp-executor/wire';
-import { channelWatch } from '@baox/extension/connection';
+import { channelWatch } from '@baox/channel/connection';
 import { BUSY, NO_CREDENTIALS, createLocalRunner } from './runner';
 
 const ERP_ORIGIN = 'http://erp.antute.com.cn';

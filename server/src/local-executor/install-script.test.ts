@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAdaptorServer } from '@hono/node-server';
 import {
-  EXTENSION_PAIR_PATH, ExtensionPairingSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_MESSAGES as SAY, LocalExecutorConfigSchema,
+  PAIRING_PATH, PairingViewSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_MESSAGES as SAY, LocalExecutorConfigSchema,
   localExecutorInstallPath, localExecutorUninstallPath,
 } from '@baox/contract';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -82,7 +82,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     stub('codesign', `#!/bin/sh\necho "$*" >> '${join(home, 'codesign.log')}'\nexit ${signed ? 0 : 1}\n`);
   }
 
-  const issue = async () => ExtensionPairingSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'mac' })).json()).code!;
+  const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'mac' })).json()).code!;
 
   /** What the employee sees in the terminal, line by line, and how it ended. */
   function run(path: string): Promise<{ lines: string[]; status: number | null }> {
@@ -190,7 +190,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
   it('ends a failure in one Chinese sentence: a code another holder spent before this PC paired', async () => {
     ownNode('24.9.0', true);
     const code = await issue();
-    const spent = await server.app.request(EXTENSION_PAIR_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, version: '9.9.9' }) });
+    const spent = await server.app.request(PAIRING_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, version: '9.9.9' }) });
     expect(spent.status).toBe(200);
     const { lines, status } = await run(localExecutorInstallPath(code));
     expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.expired]);

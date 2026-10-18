@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
-import { EXTENSION_DOWNLOAD_ERRORS, EXTENSION_DOWNLOAD_FILENAME, EXTENSION_DOWNLOAD_PATH, EXTENSION_VERSION } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_ERRORS, EXTENSION_DOWNLOAD_FILENAME, EXTENSION_DOWNLOAD_PATH, CLIENT_VERSION } from '@baox/contract';
 import { carriesOrigin, stampedManifestProblem, stampOrigin } from '@baox/extension/template';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
@@ -21,7 +21,7 @@ import { zip } from './zip';
 class ExtensionTemplateUnusable extends Error {}
 
 // The installable extension for `origin`. Refuses rather than serve something the employee would install in vain: a
-// template that is missing, one from another build than this server's (its version is not EXTENSION_VERSION, so the
+// template that is missing, one from another build than this server's (its version is not CLIENT_VERSION, so the
 // server may refuse it on connect), or one whose `host_permissions` or content-script `matches` did not come out as
 // exactly this origin.
 export function packageExtension(templateDir: string, origin: string): Buffer<ArrayBuffer> {
@@ -33,8 +33,8 @@ export function packageExtension(templateDir: string, origin: string): Buffer<Ar
   });
   const manifestEntry = entries.find((entry) => entry.name === 'manifest.json');
   const manifest = JSON.parse(Buffer.from(manifestEntry?.data ?? '').toString('utf8')) as { version?: unknown; host_permissions?: unknown; content_scripts?: unknown };
-  if (manifest.version !== EXTENSION_VERSION) {
-    throw new ExtensionTemplateUnusable(`extension template is version ${String(manifest.version)}, this server ships ${EXTENSION_VERSION}; rebuild the extension`);
+  if (manifest.version !== CLIENT_VERSION) {
+    throw new ExtensionTemplateUnusable(`extension template is version ${String(manifest.version)}, this server ships ${CLIENT_VERSION}; rebuild the extension`);
   }
   const problem = stampedManifestProblem(manifest, origin);
   if (problem) throw new ExtensionTemplateUnusable(problem);

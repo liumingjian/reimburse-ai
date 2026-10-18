@@ -1,4 +1,4 @@
-import { EXTENSION_CHANNEL_PATH, LOCAL_EXECUTOR_INSTALL_PATH, LOCAL_EXECUTOR_UNINSTALL_PATH, localExecutorUninstallPath } from '@baox/contract';
+import { CHANNEL_PATH, LOCAL_EXECUTOR_INSTALL_PATH, LOCAL_EXECUTOR_UNINSTALL_PATH, localExecutorUninstallPath } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { devProxy } from './dev-proxy';
 
@@ -20,7 +20,7 @@ describe('the dev server proxy', () => {
   });
 
   it('forwards the channel WebSocket an installed executor opens through the same address', () => {
-    const prefix = forwarded(EXTENSION_CHANNEL_PATH);
+    const prefix = forwarded(CHANNEL_PATH);
     expect(prefix).toBeDefined();
     expect(proxy[prefix!]).toMatchObject({ ws: true });
   });

@@ -9,7 +9,7 @@ import {
   type AppAdapter,
   type AuthOutcome,
   type ErpCredentialsOutcome,
-  type ExtensionPairingOutcome,
+  type PairingChangeOutcome,
   type LegacyImportOutcome,
   type ProjectBookOutcome,
   type TaskListOutcome,
@@ -270,9 +270,9 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome | ErpCredentialsOutcome>;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome>;
     const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
-    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome | ErpCredentialsOutcome =>
+    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome =>
       ACCOUNT_METHODS.has(key)
         ? { ok: false, error: unavailable, accountList: null }
         : LEGACY_METHODS.has(key)

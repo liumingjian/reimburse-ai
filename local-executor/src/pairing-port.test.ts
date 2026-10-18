@@ -4,7 +4,7 @@
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { LOCAL_EXECUTOR_PAIRING_ERRORS, LOCAL_EXECUTOR_PAIRING_PATH } from '@baox/contract';
-import type { PairingOutcome } from '@baox/extension/pairing';
+import type { PairingOutcome } from '@baox/channel/pairing';
 import { claimInstance } from './instance';
 import { createPairingHolder, pairingListener } from './pairing-port';
 import type { StoredPairing } from './store';

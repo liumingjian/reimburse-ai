@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  EXTENSION_PAIR_PATH, EXTENSION_PAIRING_CODE_TTL_MS, ExtensionPairingSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_MESSAGES,
+  PAIRING_PATH, PAIRING_CODE_TTL_MS, PairingViewSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_MESSAGES,
   localExecutorInstallPath, localExecutorInstallProgramPath, localExecutorUninstallPath,
 } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -36,11 +36,11 @@ afterEach(async () => {
 const issue = async (body: unknown = { system: 'mac' }) => {
   const answer = await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, body);
   expect(answer.status).toBe(200);
-  return ExtensionPairingSchema.parse(await answer.json()).code!;
+  return PairingViewSchema.parse(await answer.json()).code!;
 };
 const POWERSHELL = { 'user-agent': 'Mozilla/5.0 (Windows NT; Windows NT 10.0; zh-CN) WindowsPowerShell/5.1.19041.1' };
 const fetchScript = (code: string, headers: Record<string, string> = { 'user-agent': 'curl/8.7.1' }) => server.app.request(localExecutorInstallPath(code), { headers });
-const redeem = (code: string) => server.app.request(EXTENSION_PAIR_PATH, {
+const redeem = (code: string) => server.app.request(PAIRING_PATH, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, holder: 'local_executor', version: '9.9.9' }),
 });
 const expiredScript = (body: string) => {
@@ -65,7 +65,7 @@ describe('generating a 配对码 for an install', () => {
   it('still issues a code without a system, as the 浏览器扩展 asks for one, and that code installs nothing', async () => {
     const answer = await alice.request(HTTP_ENDPOINTS.createExtensionPairingCode.path, { method: 'POST' });
     expect(answer.status).toBe(200);
-    const code = ExtensionPairingSchema.parse(await answer.json()).code!;
+    const code = PairingViewSchema.parse(await answer.json()).code!;
     expiredScript(await (await fetchScript(code)).text());
   });
 });
@@ -105,7 +105,7 @@ describe('the install script route', () => {
 
   it('answers the Chinese error script, never an HTTP error, for a code that expired, was replaced or never existed', async () => {
     const expired = await issue();
-    server.clock.advance(EXTENSION_PAIRING_CODE_TTL_MS + 1);
+    server.clock.advance(PAIRING_CODE_TTL_MS + 1);
     const replaced = await issue();
     await issue();
     for (const code of [expired, replaced, 'NOSUCHCODE']) {
@@ -140,7 +140,7 @@ describe('the install script route', () => {
 
   it('answers the PowerShell error script for a Windows code that expired', async () => {
     const code = await issue({ system: 'windows' });
-    server.clock.advance(EXTENSION_PAIRING_CODE_TTL_MS + 1);
+    server.clock.advance(PAIRING_CODE_TTL_MS + 1);
     const script = await (await fetchScript(code, POWERSHELL)).text();
     expect(script).toContain('exit 1');
     expect(script).not.toContain('#!/bin/sh');

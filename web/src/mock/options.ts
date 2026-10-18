@@ -1,4 +1,4 @@
-import { EXTENSION_HOLDERS, TASK_STAGES, type ErpRoute, type TaskStage } from '@baox/contract';
+import { PAIRING_HOLDER_KINDS, TASK_STAGES, type ErpRoute, type TaskStage } from '@baox/contract';
 
 // Stages a task can be seeded at. The server never projects `catalog` or `preparation` (it checks the catalog inside
 // the ERP job), so the mock has no snapshot for them either.
@@ -158,8 +158,8 @@ export function readMockOptions(search: string): MockOptions {
   }
   const route = params.get('route');
   if (route !== null) {
-    if ((EXTENSION_HOLDERS as readonly string[]).includes(route)) options.erpRoute = route as ErpRoute;
-    else console.warn(`未知的 route「${route}」，可用值：${EXTENSION_HOLDERS.join(', ')}`);
+    if ((PAIRING_HOLDER_KINDS as readonly string[]).includes(route)) options.erpRoute = route as ErpRoute;
+    else console.warn(`未知的 route「${route}」，可用值：${PAIRING_HOLDER_KINDS.join(', ')}`);
   }
   const auth = params.get('auth');
   if (auth !== null) {

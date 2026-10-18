@@ -23,10 +23,10 @@ import { existsSync, readFileSync, realpathSync, statSync, truncateSync } from '
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
-import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
-import { serverBlobs } from '@baox/extension/blobs';
-import { redeemPairingCode, revokePairing } from '@baox/extension/pairing';
+import { PAIRING_PATH, CLIENT_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
+import { channelWatch, createChannelClient, type ClientSocket } from '@baox/channel/connection';
+import { serverBlobs } from '@baox/channel/blobs';
+import { redeemPairingCode, revokePairing } from '@baox/channel/pairing';
 import { launchHeadless } from './headless';
 import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
 import { autostartFiles, downloadedRuntimePath, LAUNCH_AGENT, RESTART_EXIT_CODE, type InstallFile } from './install';
@@ -62,7 +62,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LOG_LIMIT_BYTES = 5 * 1024 * 1024;
 
 async function redeem(origin: string, code: string) {
-  return redeemPairingCode({ origin: origin.replace(/\/+$/, ''), code, browser: `baox 本地执行器（${process.platform}）`, version: EXTENSION_VERSION, holder: 'local_executor' });
+  return redeemPairingCode({ origin: origin.replace(/\/+$/, ''), code, browser: `baox 本地执行器（${process.platform}）`, version: CLIENT_VERSION, holder: 'local_executor' });
 }
 
 async function pair(args: string[]) {
@@ -123,7 +123,7 @@ function startInBackground(files: readonly InstallFile[]): boolean {
 /** Is this stored pairing still one the app knows? Unknown (the app not answering) counts as yes. */
 async function stillPaired(pairing: { origin: string; token: string }): Promise<boolean> {
   try {
-    const answer = await fetch(`${pairing.origin}${EXTENSION_PAIR_PATH}`, { headers: { authorization: `Bearer ${pairing.token}` } });
+    const answer = await fetch(`${pairing.origin}${PAIRING_PATH}`, { headers: { authorization: `Bearer ${pairing.token}` } });
     return answer.status !== 401;
   } catch {
     return true;

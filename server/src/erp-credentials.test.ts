@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ErpCredentialsViewSchema, ExtensionPairingSchema, ExtensionTokenSchema, type ExtensionHolder } from '@baox/contract';
+import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, PAIRING_PATH, CLIENT_VERSION, ErpCredentialsViewSchema, PairingViewSchema, PairingTokenSchema, type PairingHolderKind } from '@baox/contract';
 import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
@@ -28,19 +28,19 @@ async function start(key: Buffer | null = randomBytes(32)) {
 beforeEach(() => start());
 afterEach(() => server.close());
 
-async function pair(owner: TestClient, holder?: ExtensionHolder): Promise<string> {
-  const issued = ExtensionPairingSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
-  const redeemed = await server.app.request(EXTENSION_PAIR_PATH, {
+async function pair(owner: TestClient, holder?: PairingHolderKind): Promise<string> {
+  const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
+  const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXTENSION_VERSION, ...(holder ? { holder } : {}) }),
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, ...(holder ? { holder } : {}) }),
   });
-  return ExtensionTokenSchema.parse(await redeemed.json()).token;
+  return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
 const trials: TrySignInRequest[] = [];
 beforeEach(() => { trials.length = 0; });
-async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner, holder: ExtensionHolder = 'local_executor'): Promise<FakeExtension> {
+async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner, holder: PairingHolderKind = 'local_executor'): Promise<FakeExtension> {
   const extension = fakeExtension(server.app.extensionChannel, await pair(alice, holder), {
     trySignIn: async (request) => { trials.push(request); return answer; },
     ...(fill ? { fill } : {}),

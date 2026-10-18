@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, extensionBlobPath } from '@baox/contract';
+import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, invoiceBlobPath } from '@baox/contract';
 import type { FillPlan } from '@baox/erp-executor/protocol';
 import { RECONNECT_WINDOW_MS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -28,18 +28,18 @@ afterEach(() => server.close());
 const client = api(() => alice);
 
 async function pair(owner: TestClient): Promise<string> {
-  const issued = ExtensionPairingSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
-  const redeemed = await server.app.request(EXTENSION_PAIR_PATH, {
+  const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
+  const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: EXTENSION_VERSION }),
+    body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: CLIENT_VERSION }),
   });
-  return ExtensionTokenSchema.parse(await redeemed.json()).token;
+  return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
 // As the extension asks: a GET from its own origin, the token as a bearer.
 const fetchBlob = (sha256: string, token: string | null) =>
-  server.app.request(extensionBlobPath(sha256), { headers: { origin: EXTENSION_ORIGIN, ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+  server.app.request(invoiceBlobPath(sha256), { headers: { origin: EXTENSION_ORIGIN, ...(token ? { authorization: `Bearer ${token}` } : {}) } });
 
 /**
  * A 去报销 held open in alice's extension until `finish` is called, so the test can fetch while it runs. The task is
@@ -132,7 +132,7 @@ describe('the extension\'s invoice originals', () => {
     expect((await fetchBlob(invoice, null)).status).toBe(401);
     expect((await fetchBlob(invoice, 'not-a-token')).status).toBe(401);
     // A session cookie is not the extension's credential.
-    expect((await alice.request(extensionBlobPath(invoice))).status).toBe(401);
+    expect((await alice.request(invoiceBlobPath(invoice))).status).toBe(401);
     await job.finish();
   });
 
@@ -140,7 +140,7 @@ describe('the extension\'s invoice originals', () => {
     const token = await pair(alice);
     const job = await running(token);
 
-    const rebound = await server.app.request(`http://evil.example.com${extensionBlobPath(job.plan.invoices[0]!.sha256)}`, { headers: { authorization: `Bearer ${token}` } });
+    const rebound = await server.app.request(`http://evil.example.com${invoiceBlobPath(job.plan.invoices[0]!.sha256)}`, { headers: { authorization: `Bearer ${token}` } });
 
     expect(rebound.status).toBe(403);
     await job.finish();

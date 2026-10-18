@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  AccountListSchema, EXTENSION_DOWNLOAD_PATH, ExtensionPairingSchema, HTTP_ENDPOINTS, STAY_TRIO_CONFIRM_NONE,
+  AccountListSchema, EXTENSION_DOWNLOAD_PATH, PairingViewSchema, HTTP_ENDPOINTS, STAY_TRIO_CONFIRM_NONE,
   stayTrioElementOf, TaskSnapshotSchema, type TaskSnapshot,
 } from '@baox/contract';
 import { test as base } from '@playwright/test';
@@ -128,7 +128,7 @@ export async function startApp({ erpOrigin }: { erpOrigin: string }) {
 
     /** A fresh 配对码 (pairing code), as the settings page's 生成配对码 issues it. */
     async pairingCode(client: Client): Promise<string> {
-      const issued = ExtensionPairingSchema.parse(await (await ok(await client.post(HTTP_ENDPOINTS.createExtensionPairingCode.path))).json());
+      const issued = PairingViewSchema.parse(await (await ok(await client.post(HTTP_ENDPOINTS.createExtensionPairingCode.path))).json());
       if (!issued.code) throw new Error('no 配对码 was issued');
       return issued.code;
     },
@@ -136,7 +136,7 @@ export async function startApp({ erpOrigin }: { erpOrigin: string }) {
     /** Resolves once the account's paired extension holds its channel open, as the settings page shows it. */
     async connected(client: Client, timeoutMs = 15_000): Promise<void> {
       const deadline = Date.now() + timeoutMs;
-      while (!ExtensionPairingSchema.parse(await (await ok(await client.request(HTTP_ENDPOINTS.getExtensionPairing.path))).json()).connected) {
+      while (!PairingViewSchema.parse(await (await ok(await client.request(HTTP_ENDPOINTS.getExtensionPairing.path))).json()).connected) {
         if (Date.now() > deadline) throw new Error('the paired extension never connected');
         await new Promise((resolve) => setTimeout(resolve, 100));
       }

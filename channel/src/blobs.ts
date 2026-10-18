@@ -1,4 +1,4 @@
-import { extensionBlobPath } from '@baox/contract';
+import { invoiceBlobPath } from '@baox/contract';
 import { ExecutorError } from '@baox/erp-executor/page';
 import type { BlobSource } from '@baox/erp-executor/protocol';
 
@@ -17,7 +17,7 @@ export function serverBlobs({ origin, token, fetch }: { origin: string; token: (
       if (!bearer) throw unavailable(ref.fileName, '这个浏览器扩展没有配对');
       let response: Response;
       try {
-        response = await fetch(`${origin}${extensionBlobPath(ref.sha256)}`, { headers: { authorization: `Bearer ${bearer}` } });
+        response = await fetch(`${origin}${invoiceBlobPath(ref.sha256)}`, { headers: { authorization: `Bearer ${bearer}` } });
       } catch (error) {
         throw unavailable(ref.fileName, String((error as Error)?.message ?? error));
       }

@@ -15,7 +15,7 @@ import {
   LOCAL_EXECUTOR_PAIRING_ERRORS, LOCAL_EXECUTOR_PAIRING_PATH, LocalExecutorPairRequestSchema,
   type LocalExecutorPairAnswer, type LocalExecutorPairingState,
 } from '@baox/contract';
-import type { PairingOutcome } from '@baox/extension/pairing';
+import type { PairingOutcome } from '@baox/channel/pairing';
 import type { Store, StoredPairing } from './store';
 
 export type PairingHolderPorts = {

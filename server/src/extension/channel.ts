@@ -2,11 +2,11 @@ import {
   CHANNEL_CLOSE,
   CHANNEL_PING_METHOD,
   ChannelMessageSchema,
-  EXTENSION_CHANNEL_ERRORS,
-  EXTENSION_HEARTBEAT_MS,
-  EXTENSION_MINIMUM_VERSION,
-  EXTENSION_VERSION_TOO_OLD_CODE,
-  extensionVersionRefusal,
+  CHANNEL_ERRORS,
+  CHANNEL_HEARTBEAT_MS,
+  MINIMUM_CLIENT_VERSION,
+  CLIENT_VERSION_TOO_OLD_CODE,
+  clientVersionRefusal,
   type ChannelMessage,
 } from '@baox/contract';
 import type { Clock } from '../accounts/accounts';
@@ -134,7 +134,7 @@ export const EXTENSION_OFFLINE_CODE = 'extension_offline';
 export const EXTENSION_NOT_PAIRED_CODE = 'extension_not_paired';
 export const EXTENSION_CONNECTION_LOST_CODE = 'extension_connection_lost';
 
-export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSION_MINIMUM_VERSION, onRequest, onEvent, onLost, silenceMs = EXTENSION_HEARTBEAT_MS * 3, helloDeadlineMs = EXTENSION_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
+export function createExtensionChannel({ pairings, now, minimumVersion = MINIMUM_CLIENT_VERSION, onRequest, onEvent, onLost, silenceMs = CHANNEL_HEARTBEAT_MS * 3, helloDeadlineMs = CHANNEL_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
   const byAccount = new Map<string, Connection>();
   let nextId = 0;
   // `disconnect` bumps the generation and notes it per account. A `hello` whose token was looked up before a
@@ -148,7 +148,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
     write(socket, { type: 'refused', code: reason, message });
     socket.close(code, reason);
   };
-  const refuseNotPaired = (socket: ChannelSocket) => refuse(socket, CHANNEL_CLOSE.notPaired, 'not_paired', EXTENSION_CHANNEL_ERRORS.notPaired);
+  const refuseNotPaired = (socket: ChannelSocket) => refuse(socket, CHANNEL_CLOSE.notPaired, 'not_paired', CHANNEL_ERRORS.notPaired);
 
   // Every way a connection ends funnels through here, so "a lost socket is heard about" is one rule in one place.
   function drop(connection: Connection): void {
@@ -164,7 +164,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
   }
 
   // A socket that stopped answering still looks open to TCP for minutes. The extension sends a ping every
-  // EXTENSION_HEARTBEAT_MS; three missed ones is gone, and gone interrupts whatever job ran over it.
+  // CHANNEL_HEARTBEAT_MS; three missed ones is gone, and gone interrupts whatever job ran over it.
   const sweep = setInterval(() => {
     const deadline = now().getTime() - silenceMs;
     for (const connection of [...byAccount.values()]) {
@@ -193,9 +193,9 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
         if (connection === null) {
           // Nothing but `hello` is read before the extension has said who it is: an unauthenticated socket gets no
           // side effects at all.
-          if (message.type !== 'hello') return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', EXTENSION_CHANNEL_ERRORS.badMessage);
-          const tooOld = extensionVersionRefusal(message.version, minimumVersion);
-          if (tooOld) return refuse(socket, CHANNEL_CLOSE.versionTooOld, EXTENSION_VERSION_TOO_OLD_CODE, tooOld);
+          if (message.type !== 'hello') return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', CHANNEL_ERRORS.badMessage);
+          const tooOld = clientVersionRefusal(message.version, minimumVersion);
+          if (tooOld) return refuse(socket, CHANNEL_CLOSE.versionTooOld, CLIENT_VERSION_TOO_OLD_CODE, tooOld);
           const lookedUpAt = generation;
           const found = await pairings.lookup(message.token);
           if (!found) return refuseNotPaired(socket);
@@ -214,7 +214,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
             previous.pending.clear();
             previous.socket.close(GOING_AWAY, 'replaced');
           }
-          write(socket, { type: 'ready', accountId: found.accountId, heartbeatMs: EXTENSION_HEARTBEAT_MS });
+          write(socket, { type: 'ready', accountId: found.accountId, heartbeatMs: CHANNEL_HEARTBEAT_MS });
           return;
         }
         const live = connection;
@@ -248,7 +248,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
             // `hello` twice, or anything only the server may send. Nothing here is a message an extension sends on a
             // live channel, so it is a protocol error rather than something to ignore.
             drop(live);
-            return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', EXTENSION_CHANNEL_ERRORS.badMessage);
+            return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', CHANNEL_ERRORS.badMessage);
         }
       }
 
@@ -264,7 +264,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = EXTENSI
           })());
           if (!parsed.success) {
             if (connection) drop(connection);
-            return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', EXTENSION_CHANNEL_ERRORS.badMessage);
+            return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', CHANNEL_ERRORS.badMessage);
           }
           await handle(parsed.data);
         },

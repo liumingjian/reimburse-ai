@@ -1,6 +1,6 @@
 // The local executor's end of the executor protocol (`@baox/erp-executor/wire`), the counterpart of the extension's
 // `erp-runner.ts`: `erp.fill` and `erp.reconcile` arrive as channel requests, each runs in a headless Chromium of its
-// own, and every executor event goes back through the job's link (`@baox/extension/job-link`), so `attempt_started`
+// own, and every executor event goes back through the job's link (`@baox/channel/job-link`), so `attempt_started`
 // still waits for its durable ack and a dropped channel is resumed inside the reconnection window.
 //
 // What differs from the extension is the page's lifetime. Nobody sees this browser, so the job signs in with the
@@ -20,8 +20,8 @@ import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { navigationScene } from '@baox/erp-executor/scene';
 import { signIn, signOut, type ErpCredentials, type SignInTiming } from '@baox/erp-executor/sign-in';
 import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, TrySignInRequestSchema, type TrySignInAnswer, type WireRequest } from '@baox/erp-executor/wire';
-import { createJobLink, type AttachedPage, type ChannelWatch, type JobLink } from '@baox/extension/job-link';
-import { CHANNEL_CLOSED } from '@baox/extension/messages';
+import { createJobLink, type AttachedPage, type ChannelWatch, type JobLink } from '@baox/channel/job-link';
+import { CHANNEL_CLOSED } from '@baox/channel/messages';
 import type { Headless } from './headless';
 
 export type LocalRunnerPorts = {

@@ -1,4 +1,4 @@
-import { EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
+import { CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { channelUrl, channelWatch, createChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 
@@ -44,9 +44,9 @@ describe('the extension opens the channel and holds it', () => {
     const client = createChannelClient({ origin: 'http://10.250.0.222', token: 'secret-token', open: server.open });
     server.accept();
 
-    expect(server.dialled).toEqual([`ws://10.250.0.222${EXTENSION_CHANNEL_PATH}`]);
+    expect(server.dialled).toEqual([`ws://10.250.0.222${CHANNEL_PATH}`]);
     expect(server.dialled[0]).not.toContain('secret-token');
-    expect(server.said[0]).toEqual({ type: 'hello', token: 'secret-token', version: EXTENSION_VERSION });
+    expect(server.said[0]).toEqual({ type: 'hello', token: 'secret-token', version: CLIENT_VERSION });
     client.stop();
   });
 
@@ -54,13 +54,13 @@ describe('the extension opens the channel and holds it', () => {
     const server = fakeServer();
     const client = createChannelClient({ origin: 'http://10.250.0.222', token: 't', open: server.open });
     server.accept();
-    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: CHANNEL_HEARTBEAT_MS });
     server.drop();
     // The reconnect is on a timer; the second dial is a second `hello`, carrying the version again.
     vi.advanceTimersByTime(600);
     server.accept();
 
-    expect(server.said.filter((message) => message.type === 'hello').map((message) => 'version' in message && message.version)).toEqual([EXTENSION_VERSION, EXTENSION_VERSION]);
+    expect(server.said.filter((message) => message.type === 'hello').map((message) => 'version' in message && message.version)).toEqual([CLIENT_VERSION, CLIENT_VERSION]);
     client.stop();
   });
 
@@ -68,9 +68,9 @@ describe('the extension opens the channel and holds it', () => {
     const server = fakeServer();
     const client = createChannelClient({ origin: 'http://127.0.0.1:4319', token: 't', open: server.open });
     server.accept();
-    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: CHANNEL_HEARTBEAT_MS });
 
-    expect(EXTENSION_HEARTBEAT_MS).toBeLessThanOrEqual(20_000);
+    expect(CHANNEL_HEARTBEAT_MS).toBeLessThanOrEqual(20_000);
     vi.advanceTimersByTime(20_000);
     const pings = server.said.filter((message) => message.type === 'request' && message.method === 'ping');
     expect(pings.length).toBeGreaterThanOrEqual(1);
@@ -86,7 +86,7 @@ describe('the extension opens the channel and holds it', () => {
       onRequest: async (method, payload) => ({ ran: method, saw: payload }),
     });
     server.accept();
-    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: CHANNEL_HEARTBEAT_MS });
 
     // Extension asks, server answers out of order: two requests are in flight and only the id says which is which.
     const first = client.request('readback', { bill: 1 });
@@ -139,7 +139,7 @@ describe('the extension opens the channel and holds it', () => {
   });
 
   it('follows the scheme the app is served over', () => {
-    expect(channelUrl('https://baox.example.com')).toBe(`wss://baox.example.com${EXTENSION_CHANNEL_PATH}`);
+    expect(channelUrl('https://baox.example.com')).toBe(`wss://baox.example.com${CHANNEL_PATH}`);
   });
 });
 
@@ -153,7 +153,7 @@ describe('what a running 去报销 hears of the channel', () => {
     });
     const client = createChannelClient({ origin: 'http://10.250.0.222', token: 't', open: server.open, onStatus: watch.status });
     server.accept();
-    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: CHANNEL_HEARTBEAT_MS });
     await watch.ready();
 
     server.drop();
@@ -167,7 +167,7 @@ describe('what a running 去报销 hears of the channel', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 600));
     server.accept();
-    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: EXTENSION_HEARTBEAT_MS });
+    server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: CHANNEL_HEARTBEAT_MS });
     await waiting;
     expect(closed).toBe(1);
     client.stop();

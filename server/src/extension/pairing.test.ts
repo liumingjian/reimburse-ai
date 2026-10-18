@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionIdentitySchema, ExtensionPairingSchema, ExtensionTokenSchema, type ExtensionPairing } from '@baox/contract';
+import { PAIRING_CODE_TTL_MS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingViewSchema, PairingTokenSchema, type PairingView } from '@baox/contract';
 import { createTestServer, TEST_PASSWORD, type TestClient, type TestServer } from '../test/harness';
 
 // The HTTP seam (spec #246 Testing Decisions): 扩展配对 (extension pairing, ADR-0019) driven through `app.request()`,
 // which is where both sides of it live — the settings page behind the session cookie, and the extension, which has
-// no session, at EXTENSION_PAIR_PATH.
+// no session, at PAIRING_PATH.
 //
 // The extension's requests are written the way a real one arrives: an `Origin` of its own
 // `chrome-extension://…`, which the app's exact-origin guard would refuse for any other write.
@@ -22,9 +22,9 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
-const parse = async (response: Response): Promise<ExtensionPairing> => {
+const parse = async (response: Response): Promise<PairingView> => {
   expect(response.status).toBe(200);
-  return ExtensionPairingSchema.parse(await response.json());
+  return PairingViewSchema.parse(await response.json());
 };
 const view = (client: TestClient) => client.request(PAIRING).then(parse);
 const issue = (client: TestClient) => client.post(`${PAIRING}/code`, {}).then(parse);
@@ -32,17 +32,17 @@ const revoke = (client: TestClient) => client.post(`${PAIRING}/revoke`, {}).then
 
 // Every real extension reports its version (ADR-0021); `channel.test.ts` covers what happens when it is too old.
 const redeem = (code: string, browser?: string) =>
-  server.app.request(EXTENSION_PAIR_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: EXTENSION_VERSION, ...(browser === undefined ? {} : { browser }) }) });
-const whoami = (token: string) => server.app.request(EXTENSION_PAIR_PATH, { headers: { authorization: `Bearer ${token}` } });
+  server.app.request(PAIRING_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION, ...(browser === undefined ? {} : { browser }) }) });
+const whoami = (token: string) => server.app.request(PAIRING_PATH, { headers: { authorization: `Bearer ${token}` } });
 
-const codeOf = (pairing: ExtensionPairing): string => {
+const codeOf = (pairing: PairingView): string => {
   expect(pairing.code).not.toBeNull();
   return pairing.code ?? '';
 };
 const pair = async (client: TestClient, browser?: string): Promise<string> => {
   const redeemed = await redeem(codeOf(await issue(client)), browser);
   expect(redeemed.status).toBe(200);
-  return ExtensionTokenSchema.parse(await redeemed.json()).token;
+  return PairingTokenSchema.parse(await redeemed.json()).token;
 };
 const errorOf = async (response: Response): Promise<string> => ((await response.json()) as { error: { code: string } }).error.code;
 
@@ -51,15 +51,15 @@ describe('扩展配对 (extension pairing)', () => {
     const issued = await issue(alice);
     expect(issued.status).toBe('waiting');
     expect(codeOf(issued)).toMatch(/^[A-Z2-9]{8}$/);
-    expect(Date.parse(issued.codeExpiresAt ?? '') - server.clock.now().getTime()).toBeCloseTo(EXTENSION_PAIRING_CODE_TTL_MS, -3);
+    expect(Date.parse(issued.codeExpiresAt ?? '') - server.clock.now().getTime()).toBeCloseTo(PAIRING_CODE_TTL_MS, -3);
 
     const redeemed = await redeem(codeOf(issued), 'Chrome 142 on Windows');
     expect(redeemed.status).toBe(200);
-    const paired = ExtensionTokenSchema.parse(await redeemed.json());
+    const paired = PairingTokenSchema.parse(await redeemed.json());
     expect(paired.accountId).toBe(alice.account.accountId);
     // The token is what routes ERP work afterwards, and it names the same 应用账号 without a session anywhere near it.
     // The username is how the extension names this account before switching away from it (#292).
-    expect(ExtensionIdentitySchema.parse(await (await whoami(paired.token)).json())).toEqual({ accountId: alice.account.accountId, username: 'alice' });
+    expect(PairingIdentitySchema.parse(await (await whoami(paired.token)).json())).toEqual({ accountId: alice.account.accountId, username: 'alice' });
 
     // Single use: the code the employee read is spent, and reading it again pairs nothing.
     const again = await redeem(codeOf(issued));
@@ -74,7 +74,7 @@ describe('扩展配对 (extension pairing)', () => {
 
   it('refuses a 配对码 older than ten minutes, and the settings page then shows no pairing at all', async () => {
     const issued = await issue(alice);
-    server.clock.advance(EXTENSION_PAIRING_CODE_TTL_MS + 1000);
+    server.clock.advance(PAIRING_CODE_TTL_MS + 1000);
 
     const late = await redeem(codeOf(issued));
     expect(late.status).toBe(401);
@@ -108,7 +108,7 @@ describe('扩展配对 (extension pairing)', () => {
     expect((await alice.post('/api/auth/logout', {})).status).toBe(200);
     expect((await alice.request('/api/tasks')).status).toBe(401);
     // A logout is not an unpair: the extension keeps working for the 应用账号 it was paired with.
-    expect(ExtensionIdentitySchema.parse(await (await whoami(kept)).json()).accountId).toBe(alice.account.accountId);
+    expect(PairingIdentitySchema.parse(await (await whoami(kept)).json()).accountId).toBe(alice.account.accountId);
   });
 
   it('lists the paired browser and its last connection, and the connection time follows the extension', async () => {
@@ -129,7 +129,7 @@ describe('扩展配对 (extension pairing)', () => {
     expect((await view(alice)).holder).toBeNull();
     const issued = await issue(alice);
     expect(issued.holder).toBeNull();
-    const byExecutor = await server.app.request(EXTENSION_PAIR_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code: codeOf(issued), version: EXTENSION_VERSION, holder: 'local_executor' }) });
+    const byExecutor = await server.app.request(PAIRING_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code: codeOf(issued), version: CLIENT_VERSION, holder: 'local_executor' }) });
     expect(byExecutor.status).toBe(200);
     expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'local_executor' });
 
@@ -143,10 +143,10 @@ describe('扩展配对 (extension pairing)', () => {
     const bobsCode = codeOf(await issue(bob));
     const aliceToken = await pair(alice);
 
-    expect(ExtensionIdentitySchema.parse(await (await whoami(aliceToken)).json()).accountId).toBe(alice.account.accountId);
+    expect(PairingIdentitySchema.parse(await (await whoami(aliceToken)).json()).accountId).toBe(alice.account.accountId);
     // Alice pairing hers left Bob's outstanding code alone, and redeeming it pairs Bob, never Alice.
     const redeemed = await redeem(bobsCode);
-    expect(ExtensionTokenSchema.parse(await redeemed.json()).accountId).toBe(bob.account.accountId);
+    expect(PairingTokenSchema.parse(await redeemed.json()).accountId).toBe(bob.account.accountId);
   });
 });
 
@@ -172,8 +172,8 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
       expect(setup.status).toBe(200);
       const configuredCookie = (setup.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
 
-      const initial = ExtensionPairingSchema.parse(await (await configured.app.request(`${origin}${PAIRING}`, { headers: { cookie: configuredCookie } })).json());
-      const issued = ExtensionPairingSchema.parse(await (await configured.app.request(`${origin}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin, cookie: configuredCookie }, body: '{}' })).json());
+      const initial = PairingViewSchema.parse(await (await configured.app.request(`${origin}${PAIRING}`, { headers: { cookie: configuredCookie } })).json());
+      const issued = PairingViewSchema.parse(await (await configured.app.request(`${origin}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin, cookie: configuredCookie }, body: '{}' })).json());
 
       expect(initial.activeOrigin).toBe(origin);
       expect(issued.activeOrigin).toBe(origin);
@@ -183,10 +183,10 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
   });
 
   it('admits the extension\'s redemption from its own origin while still refusing every other cross-origin write', async () => {
-    const issued = ExtensionPairingSchema.parse(await (await intranet.app.request(`${INTRANET}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin: INTRANET, cookie }, body: '{}' })).json());
+    const issued = PairingViewSchema.parse(await (await intranet.app.request(`${INTRANET}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin: INTRANET, cookie }, body: '{}' })).json());
     const code = issued.code ?? '';
 
-    const fromExtension = await intranet.app.request(`${INTRANET}${EXTENSION_PAIR_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: EXTENSION_VERSION }) });
+    const fromExtension = await intranet.app.request(`${INTRANET}${PAIRING_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION }) });
     expect(fromExtension.status).toBe(200);
 
     // The exemption is this one route, not the guard going soft: another origin's write is still refused.
@@ -195,7 +195,7 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
     expect(await errorOf(write)).toBe('forbidden_host');
 
     // And the Host check still covers the redemption: a rebound name reaches it no more than anything else.
-    const rebound = await intranet.app.request(`http://evil.example.com${EXTENSION_PAIR_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: EXTENSION_VERSION }) });
+    const rebound = await intranet.app.request(`http://evil.example.com${PAIRING_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION }) });
     expect(rebound.status).toBe(403);
     expect(await errorOf(rebound)).toBe('forbidden_host');
   });

@@ -18,9 +18,9 @@ import {
   type Session,
   type TaskListOutcome,
   type Unsubscribe,
-  ExtensionPairingSchema,
-  type ExtensionPairing,
-  type ExtensionPairingOutcome,
+  PairingViewSchema,
+  type PairingView,
+  type PairingChangeOutcome,
   LegacyImportSchema,
   type LegacyImport,
   type LegacyImportOutcome,
@@ -73,9 +73,9 @@ export type LegacyImportState = {
 
 // 扩展配对 (extension pairing, ADR-0019): read when the settings page opens; afterwards replaced by the result of
 // issuing a 配对码 (pairing code) or revoking the pairing.
-export type ExtensionPairingState = {
+export type PairingState = {
   readonly status: LoadStatus;
-  readonly data: ExtensionPairing | null;
+  readonly data: PairingView | null;
   readonly error: string | null;
 };
 
@@ -100,7 +100,7 @@ export type AppState = {
   readonly publicBook: ProjectBookState;
   readonly accounts: AccountsState;
   readonly legacyImport: LegacyImportState;
-  readonly extensionPairing: ExtensionPairingState;
+  readonly extensionPairing: PairingState;
   readonly tasks: Readonly<Record<string, TaskEntry>>;
   readonly connection: ConnectionState;
 };
@@ -328,7 +328,7 @@ export class AppStore {
     this.setState({ extensionPairing: { status: 'loading', data: previous.data, error: null } });
     try {
       const raw = await this.adapter.getExtensionPairing();
-      const data = this.options.validate ? ExtensionPairingSchema.parse(raw) : raw;
+      const data = this.options.validate ? PairingViewSchema.parse(raw) : raw;
       this.setState({ extensionPairing: { status: 'ready', data, error: null } });
     } catch (error) {
       this.setState({ extensionPairing: { status: 'error', data: this.state.extensionPairing.data, error: describe(error) } });
@@ -349,13 +349,13 @@ export class AppStore {
 
   // Issuing a 配对码 or revoking: the pairing in the result replaces the current one. A freshly issued code appears
   // in this result only; no later read carries it again.
-  async extensionPairingAction(run: (adapter: AppAdapter) => Promise<ExtensionPairingOutcome>): Promise<ExtensionPairingOutcome> {
-    let outcome: ExtensionPairingOutcome;
-    let data: ExtensionPairing | null;
+  async extensionPairingAction(run: (adapter: AppAdapter) => Promise<PairingChangeOutcome>): Promise<PairingChangeOutcome> {
+    let outcome: PairingChangeOutcome;
+    let data: PairingView | null;
     try {
       outcome = await run(this.adapter);
       const raw = outcome.pairing;
-      data = raw && this.options.validate ? ExtensionPairingSchema.parse(raw) : raw;
+      data = raw && this.options.validate ? PairingViewSchema.parse(raw) : raw;
     } catch (error) {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, pairing: null };
     }

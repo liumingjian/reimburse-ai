@@ -2,6 +2,7 @@ packages:
   - web
   - server
   - erp-executor
+  - channel
   - extension
   - local-executor
   - contract

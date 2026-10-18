@@ -152,7 +152,7 @@ push() {
     return
   fi
   # A new program is what an installed executor updates itself to (local-executor/src/update.ts).
-  if grep -Eq '(^|/| )(local-executor|erp-executor|extension|contract)/src/' <<<"$changed"; then
+  if grep -Eq '(^|/| )(local-executor|channel|erp-executor|extension|contract)/src/' <<<"$changed"; then
     (cd "$SRC" && pnpm --filter @baox/local-executor build >/dev/null)
     echo "rebuilt the 本地执行器 program; an installed one picks it up at its next update check"
   fi

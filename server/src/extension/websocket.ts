@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { EXTENSION_CHANNEL_PATH } from '@baox/contract';
+import { CHANNEL_PATH } from '@baox/contract';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { admitsHost, type PublicOrigin } from '../public-origin';
 import type { ExtensionChannel } from './channel';
@@ -27,7 +27,7 @@ export function attachExtensionChannel(server: UpgradeHost, channel: ExtensionCh
 
   const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     // `request.url` is a path here, never absolute; the base only makes it parseable.
-    if (new URL(request.url ?? '/', 'http://localhost').pathname !== EXTENSION_CHANNEL_PATH) {
+    if (new URL(request.url ?? '/', 'http://localhost').pathname !== CHANNEL_PATH) {
       socket.destroy();
       return;
     }

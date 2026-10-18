@@ -1,7 +1,7 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import {
-  EXTENSION_PAIRING_ERRORS, LOCAL_EXECUTOR_INSTALL_MESSAGES, LOCAL_EXECUTOR_INSTALL_PATH, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_ERRORS,
+  PAIRING_ERRORS, LOCAL_EXECUTOR_INSTALL_MESSAGES, LOCAL_EXECUTOR_INSTALL_PATH, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_ERRORS,
   LOCAL_EXECUTOR_RELEASE_PATH, LOCAL_EXECUTOR_RUNTIME_ERRORS, LOCAL_EXECUTOR_RUNTIME_PATH, LocalExecutorPlatformSchema, localExecutorUninstallPath,
 } from '@baox/contract';
 import type { Context, Hono } from 'hono';
@@ -25,7 +25,7 @@ const unavailable = (c: Context, error: unknown) => {
 // fetches the program when that is not what it runs (`local-executor/src/update.ts`).
 export function mountLocalExecutorReleaseRoutes(app: Hono<AppEnv>, dist: LocalExecutorDist | null, pairings: PairingService): void {
   const paired = async (c: Context) => (await pairings.lookup(bearer(c))) !== null;
-  const notPaired = (c: Context) => c.json({ error: { code: 'not_paired', message: EXTENSION_PAIRING_ERRORS.notPaired } }, 401);
+  const notPaired = (c: Context) => c.json({ error: { code: 'not_paired', message: PAIRING_ERRORS.notPaired } }, 401);
   app.get(LOCAL_EXECUTOR_RELEASE_PATH, async (c) => {
     if (!(await paired(c))) return notPaired(c);
     try {

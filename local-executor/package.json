@@ -15,9 +15,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@baox/channel": "workspace:*",
     "@baox/contract": "workspace:*",
     "@baox/erp-executor": "workspace:*",
-    "@baox/extension": "workspace:*",
     "zod": "4.6.2"
   },
   "devDependencies": {

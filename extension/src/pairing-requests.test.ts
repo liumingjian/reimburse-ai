@@ -1,6 +1,6 @@
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION } from '@baox/contract';
+import { PAIRING_PATH, CLIENT_VERSION } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
-import type { ChannelStatus } from './connection';
+import type { ChannelStatus } from '@baox/channel/connection';
 import { createPairingRequests, type PairingChannel, type PairingStorage, type StoredPairing } from './pairing-requests';
 
 const ORIGIN = 'http://10.250.0.222';
@@ -59,10 +59,10 @@ describe('pairing from the popup', () => {
 
     const answer = await requests.answer({ kind: 'pair', code: 'K7MQ2PXD' });
 
-    expect(seen).toEqual({ url: `${ORIGIN}${EXTENSION_PAIR_PATH}`, body: { code: 'K7MQ2PXD', browser: 'Chrome 142 Windows', version: EXTENSION_VERSION } });
+    expect(seen).toEqual({ url: `${ORIGIN}${PAIRING_PATH}`, body: { code: 'K7MQ2PXD', browser: 'Chrome 142 Windows', version: CLIENT_VERSION } });
     expect(items.get('pairing')).toEqual({ token: 'tok', accountId: 'a1' });
     expect(started).toEqual([{ token: 'tok', accountId: 'a1' }]);
-    expect(answer).toEqual({ paired: true, accountId: 'a1', version: EXTENSION_VERSION, status: { state: 'connecting' }, error: null });
+    expect(answer).toEqual({ paired: true, accountId: 'a1', version: CLIENT_VERSION, status: { state: 'connecting' }, error: null });
   });
 
   it('stores nothing when the app refuses, and shows the refusal as the app wrote it', async () => {
@@ -81,7 +81,7 @@ describe('pairing from the popup', () => {
 
     expect(items.size).toBe(0);
     expect(started).toEqual([]);
-    expect(answer).toEqual({ paired: false, accountId: null, version: EXTENSION_VERSION, status: null, error: message });
+    expect(answer).toEqual({ paired: false, accountId: null, version: CLIENT_VERSION, status: null, error: message });
   });
 });
 
@@ -109,7 +109,7 @@ describe('撤销配对 from the popup', () => {
     const answer = await requests.answer({ kind: 'unpair' });
 
     expect(items.has('pairing')).toBe(false);
-    expect(answer).toEqual({ paired: false, accountId: null, version: EXTENSION_VERSION, status: null, error: null });
+    expect(answer).toEqual({ paired: false, accountId: null, version: CLIENT_VERSION, status: null, error: null });
   });
 });
 
@@ -124,7 +124,7 @@ describe('the popup asking for status', () => {
     const answer = await requests.answer({ kind: 'status' });
 
     expect(started).toEqual([PAIRED.pairing]);
-    expect(answer).toEqual({ paired: true, accountId: 'a1', version: EXTENSION_VERSION, status: { state: 'connecting' }, error: null });
+    expect(answer).toEqual({ paired: true, accountId: 'a1', version: CLIENT_VERSION, status: { state: 'connecting' }, error: null });
   });
 
   it('leaves a running client alone, and starts nothing when unpaired', async () => {

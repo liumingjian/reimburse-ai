@@ -9,7 +9,7 @@
 // by id with what it re-observed, and only then carries on over `channel(jobId)`. A `chrome.debugger` detach is
 // `detached(jobId)` on a socket that stays up.
 
-import { EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
+import { CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ReconcilePlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, ResumeVerdictSchema, TrySignInRequestSchema, wireChannel, type FillRequest, type PageObservation, type ResumeVerdict, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
 import type { ExtensionChannel } from '../../extension/channel';
@@ -119,7 +119,7 @@ export function fakeExtension(channel: ExtensionChannel, token: string, runners:
 
   return {
     async connect() {
-      say({ type: 'hello', token, version: EXTENSION_VERSION });
+      say({ type: 'hello', token, version: CLIENT_VERSION });
       await readied;
     },
     disconnect() {

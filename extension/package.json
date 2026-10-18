@@ -20,6 +20,7 @@
     "test:browser": "playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
+    "@baox/channel": "workspace:*",
     "@baox/contract": "workspace:*",
     "@baox/erp-executor": "workspace:*"
   },

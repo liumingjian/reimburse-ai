@@ -13,7 +13,7 @@ import { manifestFor, readExtensionVersion, readOriginPlaceholder } from './mani
 // exact-origin guard compares it as a literal string, so `http://10.250.0.222` and `http://10.250.0.222:80` are two
 // different addresses to it. Baking the address in here would leave two copies of the deployment's most expensive
 // constant, one read at build time and one at run time, free to disagree. Filled in by the server, the zip carries
-// exactly the origin the guard admits. The version is fixed here, from EXTENSION_VERSION (see `manifest.mjs`).
+// exactly the origin the guard admits. The version is fixed here, from CLIENT_VERSION (see `manifest.mjs`).
 //
 // There is still no way to change the origin after download: `origin.ts` is the only place the extension learns where
 // the app is, and the popup has no field for it (user story 7).
@@ -22,7 +22,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const dist = process.argv[2] ? resolve(process.argv[2]) : join(root, 'dist');
 
-const contract = readFileSync(join(root, '..', 'contract', 'src', 'extension.ts'), 'utf8');
+// The version lives with the channel (shared with the 本地执行器), the origin placeholder with the extension.
+const contract = ['channel.ts', 'extension.ts'].map((file) => readFileSync(join(root, '..', 'contract', 'src', file), 'utf8')).join('\n');
 const version = readExtensionVersion(contract);
 const placeholder = readOriginPlaceholder(contract);
 

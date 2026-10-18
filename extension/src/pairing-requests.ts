@@ -1,15 +1,15 @@
 import {
   bridgeMessage,
-  EXTENSION_VERSION,
+  CLIENT_VERSION,
   type ExtensionBridgeExtensionMessage,
   type ExtensionBridgePageMessage,
   type ExtensionBridgePairOutcome,
   type ExtensionBridgePresence,
   type ExtensionBridgeSwitchOutcome,
 } from '@baox/contract';
-import type { ChannelStatus } from './connection';
-import { APP_UNREACHABLE } from './messages';
-import { checkPairing, redeemPairingCode, revokePairing, type PairingOutcome } from './pairing';
+import type { ChannelStatus } from '@baox/channel/connection';
+import { APP_UNREACHABLE } from '@baox/channel/messages';
+import { checkPairing, redeemPairingCode, revokePairing, type PairingOutcome } from '@baox/channel/pairing';
 
 // What the popup asks the service worker about the pairing: pair with a 配对码 (pairing code), 撤销配对 (revoke the
 // pairing), and status. The service worker only wires `chrome` into this; storage, the network and the channel are
@@ -81,7 +81,7 @@ export function createPairingRequests({ origin, storage, channel, browser, confi
   // 配对码, because issuing it already ends the signed-in account's earlier pairing on the server; the pair request
   // that follows then redeems without asking a second time. Used up by that one pair request.
   let agreed: { from: string; to: string } | null = null;
-  const base = () => ({ version: EXTENSION_VERSION, status: channel.status(), error: null as string | null });
+  const base = () => ({ version: CLIENT_VERSION, status: channel.status(), error: null as string | null });
 
   async function readPairing(): Promise<StoredPairing | null> {
     const stored = await storage.get(PAIRING_KEY);
@@ -164,7 +164,7 @@ export function createPairingRequests({ origin, storage, channel, browser, confi
     const paired = pairing !== null && (await stillPaired(pairing));
     // A page visit is as good a time as the popup's to bring the connection back.
     if (pairing && paired && !channel.running()) channel.start(pairing);
-    return bridgeMessage({ kind: 'presence', version: EXTENSION_VERSION, paired, accountId: paired ? pairing.accountId : null });
+    return bridgeMessage({ kind: 'presence', version: CLIENT_VERSION, paired, accountId: paired ? pairing.accountId : null });
   }
 
   /**

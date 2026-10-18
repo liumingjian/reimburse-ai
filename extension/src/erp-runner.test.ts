@@ -8,11 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErpOptions, type FakeInvoice } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS, JOB_REFUSALS, type FillRequest, type PageObservation, type ResumeVerdict } from '@baox/erp-executor/wire';
-import { channelWatch } from './connection';
+import { channelWatch } from '@baox/channel/connection';
 import type { DebuggerApi } from './debugger-session';
 import { createErpRunner, type Interruption } from './erp-runner';
 import { dedicatedErpTab, type ErpTab } from './erp-tab';
-import { DETACHED_MID_COMMAND } from './job-link';
+import { DETACHED_MID_COMMAND } from '@baox/channel/job-link';
 import { fakeChrome, type FakeChromeOptions } from './testing/fake-chrome';
 
 const ERP_ORIGIN = 'http://erp.antute.com.cn';

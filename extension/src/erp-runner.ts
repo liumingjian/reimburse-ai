@@ -6,10 +6,10 @@ import type { BlobSource, ResultEvent } from '@baox/erp-executor/protocol';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, type FillRequest, type WireRequest } from '@baox/erp-executor/wire';
 import type { ErpTab, TabChoice } from './erp-tab';
-import { CHANNEL_CLOSED } from './messages';
-import { createJobLink, type AttachedPage, type ChannelWatch, type Interruption, type JobLink } from './job-link';
+import { CHANNEL_CLOSED } from '@baox/channel/messages';
+import { createJobLink, type AttachedPage, type ChannelWatch, type Interruption, type JobLink } from '@baox/channel/job-link';
 
-export type { ChannelWatch, Interruption } from './job-link';
+export type { ChannelWatch, Interruption } from '@baox/channel/job-link';
 
 // The extension's end of #254's executor protocol (`@baox/erp-executor/wire`): `erp.fill` and `erp.reconcile` arrive
 // as channel requests, the real executor runs them over the `chrome.debugger` adapter, and every executor event goes

@@ -1,6 +1,6 @@
 import { Button, InlineNotification } from '@carbon/react';
 import { CheckmarkFilled, Download, Extensions, SettingsAdjust } from '@carbon/icons-react';
-import { EXTENSION_DOWNLOAD_PATH, EXTENSION_VERSION } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, CLIENT_VERSION } from '@baox/contract';
 import { ActionGroup } from '../shell/ActionGroup';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
@@ -188,7 +188,7 @@ function InstallSections() {
           <p>{EXTENSION_TUTORIAL_COPY.installLead}</p>
         </div>
         <BrowserIllustration />
-        <ActionGroup caption={EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION)}>
+        <ActionGroup caption={EXTENSION_INSTALL_COPY.offeredVersion(CLIENT_VERSION)}>
           <Button kind="primary" size="md" href={EXTENSION_DOWNLOAD_PATH} renderIcon={Download}>
             {EXTENSION_TUTORIAL_COPY.download}
           </Button>

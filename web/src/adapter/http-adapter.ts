@@ -25,13 +25,13 @@ import {
   HTTP_ENDPOINTS,
   SNAPSHOT_EVENT,
   STALE_STEP_HTTP_STATUS,
-  ExtensionPairingFailureSchema,
-  ExtensionPairingSchema,
+  PairingFailureSchema,
+  PairingViewSchema,
   ErpCredentialsViewSchema,
   type ErpCredentialsOutcome,
   type ErpCredentialsView,
-  type ExtensionPairing,
-  type ExtensionPairingOutcome,
+  type PairingView,
+  type PairingChangeOutcome,
   LegacyImportFailureSchema,
   LegacyImportSchema,
   type LegacyImport,
@@ -181,23 +181,23 @@ export function parseLegacyImportActionResponse(status: number, body: unknown): 
 }
 
 // 扩展配对 (extension pairing): the GET is a read (401 throws UnauthenticatedError).
-export function parseExtensionPairingResponse(status: number, body: unknown): ExtensionPairing {
+export function parseExtensionPairingResponse(status: number, body: unknown): PairingView {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`配对情况加载失败（HTTP ${status}）`);
-  const parsed = ExtensionPairingSchema.safeParse(body);
+  const parsed = PairingViewSchema.safeParse(body);
   if (!parsed.success) throw new Error('配对情况的格式与契约不符');
   return parsed.data;
 }
 
 // 生成配对码 / 撤销配对 (issue a pairing code / revoke the pairing): success is the new pairing (a freshly issued code
 // appears in this answer only); failure is { error } alone.
-export function parseExtensionPairingActionResponse(status: number, body: unknown): ExtensionPairingOutcome {
+export function parseExtensionPairingActionResponse(status: number, body: unknown): PairingChangeOutcome {
   if (isSuccess(status)) {
-    const view = ExtensionPairingSchema.safeParse(body);
+    const view = PairingViewSchema.safeParse(body);
     if (view.success) return { ok: true, pairing: view.data };
     return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的配对情况格式与契约不符。' }, pairing: null };
   }
-  const failure = ExtensionPairingFailureSchema.safeParse(body);
+  const failure = PairingFailureSchema.safeParse(body);
   if (failure.success) return { ok: false, error: failure.data.error, pairing: null };
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, pairing: null };
 }
@@ -217,7 +217,7 @@ export function parseErpCredentialsActionResponse(status: number, body: unknown)
     if (view.success) return { ok: true, credentials: view.data };
     return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的报销系统账号密码情况格式与契约不符。' }, credentials: null };
   }
-  const failure = ExtensionPairingFailureSchema.safeParse(body);
+  const failure = PairingFailureSchema.safeParse(body);
   if (failure.success) return { ok: false, error: failure.data.error, credentials: null };
   return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, credentials: null };
 }
@@ -325,7 +325,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseLegacyImportActionResponse(response.status, await readJson(response));
   }
-  async function pairingAction(target: string, payload: Record<string, unknown> = {}): Promise<ExtensionPairingOutcome> {
+  async function pairingAction(target: string, payload: Record<string, unknown> = {}): Promise<PairingChangeOutcome> {
     let response: Response;
     try {
       response = await fetch(target, { method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' } });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { compareExtensionVersions, EXTENSION_MINIMUM_VERSION, type ExtensionPairing } from '@baox/contract';
+import { compareClientVersions, MINIMUM_CLIENT_VERSION, type PairingView } from '@baox/contract';
 import { useAppStore, useExtensionBridge, useExtensionPairing, useSession } from '../adapter/context';
 import type { ExtensionPresence } from '../adapter/extension-bridge';
 
@@ -9,7 +9,7 @@ import type { ExtensionPresence } from '../adapter/extension-bridge';
 //
 // - checking: the probe is out; nothing is known yet.
 // - notInstalled: nothing answered. Install steps and the manual 配对码 (pairing code), as before the bridge.
-// - outdated: an extension answered with a version below EXTENSION_MINIMUM_VERSION. Only the upgrade steps.
+// - outdated: an extension answered with a version below MINIMUM_CLIENT_VERSION. Only the upgrade steps.
 // - notPairedHere: installed and new enough, and unpaired (or paired to this account while the server says otherwise).
 //   The settings page issues a 配对码 and hands it to the extension (`useAutoPair`, #291).
 // - pairedElsewhere: installed and new enough, but acting for another 应用账号. The extension asks the employee
@@ -27,11 +27,11 @@ export type ExtensionSetupStep =
   | { kind: 'pairedElsewhere'; presence: ExtensionPresence }
   | { kind: 'pairedHere'; presence: ExtensionPresence };
 
-export function extensionSetupStep(probe: ExtensionProbe, accountId: string | null, pairing: ExtensionPairing | null, minimum: string = EXTENSION_MINIMUM_VERSION): ExtensionSetupStep {
+export function extensionSetupStep(probe: ExtensionProbe, accountId: string | null, pairing: PairingView | null, minimum: string = MINIMUM_CLIENT_VERSION): ExtensionSetupStep {
   if (probe.status === 'probing') return { kind: 'checking' };
   const presence = probe.presence;
   if (!presence) return { kind: 'notInstalled' };
-  if (compareExtensionVersions(presence.version, minimum) < 0) return { kind: 'outdated', installed: presence.version, minimum };
+  if (compareClientVersions(presence.version, minimum) < 0) return { kind: 'outdated', installed: presence.version, minimum };
   // Both halves must agree. The extension alone could be answering for a pairing the server has since replaced; the
   // server alone cannot tell whether that pairing lives in this browser. A pairing the 本地执行器 holds is never this
   // extension's (#428).

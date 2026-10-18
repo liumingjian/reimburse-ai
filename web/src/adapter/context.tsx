@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { SILENT_EXTENSION_BRIDGE, type ExtensionBridge } from './extension-bridge';
 import { SILENT_LOCAL_EXECUTOR_PORT, type LocalExecutorPort } from './local-executor-port';
-import type { AccountsState, AppState, AppStore, BookScope, ExtensionPairingState, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
+import type { AccountsState, AppState, AppStore, BookScope, PairingState, LegacyImportState, ProjectBookState, SessionState, TaskEntry, TaskListState } from './store';
 
 // 适配器经 React Context 注入：页面只认 useAppStore()，换适配器不改页面。
 
@@ -90,7 +90,7 @@ export function useLegacyImport(): LegacyImportState {
   return state.legacyImport;
 }
 
-export function useExtensionPairing(): ExtensionPairingState {
+export function useExtensionPairing(): PairingState {
   const store = useAppStore();
   const state = useAppState();
   useEffect(() => {

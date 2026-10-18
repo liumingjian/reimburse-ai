@@ -1,5 +1,5 @@
-import { EXTENSION_PAIRING_CODE_LENGTH, EXTENSION_VERSION } from '@baox/contract';
-import { APP_UNREACHABLE } from './messages';
+import { PAIRING_CODE_LENGTH, CLIENT_VERSION } from '@baox/contract';
+import { APP_UNREACHABLE } from '@baox/channel/messages';
 import type { PopupAnswer } from './pairing-requests';
 
 // The popup. One field: the 配对码 (pairing code). There is deliberately no server address here — see `origin.ts`.
@@ -29,8 +29,8 @@ const statusLine = el<HTMLParagraphElement>('status');
 const errorLine = el<HTMLParagraphElement>('error');
 const versionLine = el<HTMLParagraphElement>('version');
 
-codeInput.maxLength = EXTENSION_PAIRING_CODE_LENGTH * 2;
-versionLine.textContent = `${POPUP_COPY.version} ${EXTENSION_VERSION}`;
+codeInput.maxLength = PAIRING_CODE_LENGTH * 2;
+versionLine.textContent = `${POPUP_COPY.version} ${CLIENT_VERSION}`;
 
 function describe(answer: PopupAnswer): string {
   if (!answer.paired) return POPUP_COPY.notPaired;

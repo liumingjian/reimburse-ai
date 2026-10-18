@@ -65,7 +65,7 @@ export const HTTP_ENDPOINTS = {
   skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
   // 扩展配对 (extension pairing, ADR-0019): GET answers this account's pairing; issuing a 配对码 (pairing code)
   // answers the pairing with that code in it (this once only) and voids the old pairing at once; revoking answers
-  // the unpaired pairing. Failures are { error }. The extension's own endpoints (EXTENSION_PAIR_PATH) are not in this
+  // the unpaired pairing. Failures are { error }. The extension's own endpoints (PAIRING_PATH) are not in this
   // table: they carry no session and no page sends them.
   getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
   createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: ['system'] },

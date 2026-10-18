@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as base, chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_PAIR_PATH, type ChannelMessage } from '@baox/contract';
+import { ChannelMessageSchema, CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, PAIRING_PATH, type ChannelMessage } from '@baox/contract';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan, type ResultEvent } from '@baox/erp-executor/protocol';
 import { answerBillQuery, erpFixtureHtml, fixture, type FakeMasterData } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS } from '@baox/erp-executor/wire';
@@ -188,14 +188,14 @@ export async function fakeBaox({ accountId = 'harness-account' } = {}) {
   let seq = 0;
 
   const { server, port } = await listen(async (request, response) => {
-    if (request.method === 'POST' && request.url === EXTENSION_PAIR_PATH) {
+    if (request.method === 'POST' && request.url === PAIRING_PATH) {
       await bodyOf(request);
       send(response, 200, 'application/json', JSON.stringify({ token: 'harness-token', accountId }));
     } else {
       send(response, 404, 'text/plain', 'not found');
     }
   });
-  const channel = new WebSocketServer({ server, path: EXTENSION_CHANNEL_PATH });
+  const channel = new WebSocketServer({ server, path: CHANNEL_PATH });
   const write = (ws: WebSocket, message: ChannelMessage) => ws.send(JSON.stringify(message));
 
   channel.on('connection', (ws) => {
@@ -203,7 +203,7 @@ export async function fakeBaox({ accountId = 'harness-account' } = {}) {
       const message = ChannelMessageSchema.parse(JSON.parse(String(data)));
       if (message.type === 'hello') {
         socket = ws;
-        write(ws, { type: 'ready', accountId, heartbeatMs: EXTENSION_HEARTBEAT_MS });
+        write(ws, { type: 'ready', accountId, heartbeatMs: CHANNEL_HEARTBEAT_MS });
         markConnected();
       } else if (message.type === 'response') {
         pending.get(message.id)?.(message);

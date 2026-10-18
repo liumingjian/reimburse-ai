@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ExtensionHolder, type TaskSnapshot } from '@baox/contract';
+import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type PairingHolderKind, type TaskSnapshot } from '@baox/contract';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
@@ -23,15 +23,15 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
-async function executor(scripts: FillRunner[], holder: ExtensionHolder = 'local_executor'): Promise<FakeExtension> {
-  const issued = ExtensionPairingSchema.parse(await (await alice.post('/api/extension/pairing/code', {})).json());
-  const redeemed = await server.app.request(EXTENSION_PAIR_PATH, {
+async function executor(scripts: FillRunner[], holder: PairingHolderKind = 'local_executor'): Promise<FakeExtension> {
+  const issued = PairingViewSchema.parse(await (await alice.post('/api/extension/pairing/code', {})).json());
+  const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXTENSION_VERSION, holder }),
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, holder }),
   });
   let run = 0;
-  const extension = fakeExtension(server.app.extensionChannel, ExtensionTokenSchema.parse(await redeemed.json()).token, {
+  const extension = fakeExtension(server.app.extensionChannel, PairingTokenSchema.parse(await redeemed.json()).token, {
     trySignIn: async () => ({ ok: true }),
     fill: (plan, channel, trigger) => scripts[Math.min(run++, scripts.length - 1)]!(plan, channel, trigger),
   });

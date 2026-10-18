@@ -1,10 +1,10 @@
 import type { ExtensionBridgeExtensionMessage } from '@baox/contract';
-import { serverBlobs } from './blobs';
+import { serverBlobs } from '@baox/channel/blobs';
 import { bridgeRequestFrom, fromContentScript } from './bridge';
-import { channelWatch, createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from './connection';
+import { channelWatch, createChannelClient, type ChannelClient, type ChannelStatus, type ClientSocket } from '@baox/channel/connection';
 import { createErpRunner } from './erp-runner';
 import { dedicatedErpTab } from './erp-tab';
-import { channelClosed } from './messages';
+import { channelClosed } from '@baox/channel/messages';
 import { BAOX_ORIGIN } from './origin';
 import { createPairingRequests, type PopupAnswer, type PopupRequest, type StoredPairing } from './pairing-requests';
 import { createSwitchDialog, SWITCH_PAGE } from './switch-dialog';

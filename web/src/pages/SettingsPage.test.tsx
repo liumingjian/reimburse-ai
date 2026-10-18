@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { EXTENSION_DOWNLOAD_PATH, EXTENSION_MINIMUM_VERSION, EXTENSION_PAIRING_STATUS_LABELS, EXTENSION_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type AppAdapter, type ExtensionPairOutcome, type ExtensionSwitchOutcome } from '@baox/contract';
+import { EXTENSION_DOWNLOAD_PATH, MINIMUM_CLIENT_VERSION, PAIRING_STATUS_LABELS, CLIENT_VERSION, LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY, type AppAdapter, type ExtensionPairOutcome, type ExtensionSwitchOutcome } from '@baox/contract';
 import { App } from '../App';
 import type { ExtensionBridge, ExtensionPresence } from '../adapter/extension-bridge';
 import { MOCK_ACCOUNT } from '../mock/auth';
@@ -122,13 +122,13 @@ describe('设置页：浏览器扩展', () => {
 
     fireEvent.click(within(extensionPanel()).getByRole('button', { name: '生成配对码' }));
     expect(await within(extensionPanel()).findByText('K7MQ2PXD')).toBeTruthy();
-    expect(within(extensionPanel()).getByText(EXTENSION_PAIRING_STATUS_LABELS.waiting)).toBeTruthy();
+    expect(within(extensionPanel()).getByText(PAIRING_STATUS_LABELS.waiting)).toBeTruthy();
     expect(within(extensionPanel()).getByText('把这串字符填进扩展里。它只显示这一次，10 分钟内有效，用过就失效。')).toBeTruthy();
   });
 
   test('已配对时列出是哪台浏览器、扩展有没有连着与最近一次连接；撤销要先确认，而且不会退出登录', async () => {
     renderPairing({ paired: true });
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    await screen.findByText(PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).getByText('Chrome 142 · Windows 11')).toBeTruthy();
     expect(within(extensionPanel()).getByText('2026-02-03 14:20')).toBeTruthy();
     // Paired is not enough: whether 去报销 can run depends on the extension being connected right now.
@@ -146,7 +146,7 @@ describe('设置页：浏览器扩展', () => {
     const origin = 'https://baox.example.com:9443';
     renderPairing({ paired: true, connected: false, origin });
 
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    await screen.findByText(PAIRING_STATUS_LABELS.paired);
     const section = within(extensionPanel());
     expect(section.getByText(origin)).toBeTruthy();
     expect(section.getByText(EXTENSION_PAIRING_COPY.disconnectedLead(origin))).toBeTruthy();
@@ -196,7 +196,7 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
     renderTutorial();
     expect(await screen.findByRole('heading', { level: 1, name: '浏览器扩展安装教程' })).toBeTruthy();
     expect(screen.getByRole('img', { name: '浏览器扩展安装示意图' })).toBeTruthy();
-    expect(screen.getByText(EXTENSION_INSTALL_COPY.offeredVersion(EXTENSION_VERSION))).toBeTruthy();
+    expect(screen.getByText(EXTENSION_INSTALL_COPY.offeredVersion(CLIENT_VERSION))).toBeTruthy();
     const install = screen.getByRole('list', { name: '安装步骤' }).textContent ?? '';
     for (const words of ['chrome://extensions', 'edge://extensions', '开发者模式', '开发人员模式', '加载已解压的扩展程序', '加载解压缩的扩展', '配对码']) expect(install).toContain(words);
     expect(screen.getByRole('region', { name: '去报销时浏览器顶部的提示条' })).toBeTruthy();
@@ -217,15 +217,15 @@ describe('设置页：浏览器扩展的下载、安装与升级', () => {
     const adapter = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true });
     const paired = await adapter.getExtensionPairing();
     render(<App adapter={{ ...adapter, getExtensionPairing: async () => ({ ...paired, version: '0.9.0' }) }} />);
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
-    const notice = within(extensionPanel()).getByText(EXTENSION_INSTALL_COPY.outdated('0.9.0', EXTENSION_VERSION));
+    await screen.findByText(PAIRING_STATUS_LABELS.paired);
+    const notice = within(extensionPanel()).getByText(EXTENSION_INSTALL_COPY.outdated('0.9.0', CLIENT_VERSION));
     expect(notice).toBeTruthy();
     expect(notice.textContent).not.toContain('配对');
   });
 
   test('配对的扩展已是这一版时不提醒升级', async () => {
     renderPairing({ paired: true });
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    await screen.findByText(PAIRING_STATUS_LABELS.paired);
     expect(within(extensionPanel()).queryByText(/请按下面“升级扩展”的步骤/)).toBeNull();
   });
 });
@@ -277,7 +277,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
     render(<App adapter={createMockAdapter({ seed: 'actions', fault: null, ...(paired ? { extensionPaired: true } : {}) })} bridge={bridge} />);
   }
 
-  const mine = (version = EXTENSION_VERSION): ExtensionPresence => ({ version, paired: true, accountId: MOCK_ACCOUNT.accountId });
+  const mine = (version = CLIENT_VERSION): ExtensionPresence => ({ version, paired: true, accountId: MOCK_ACCOUNT.accountId });
 
   test('没有扩展应答：安装步骤和手动配对码，和以前一样', async () => {
     renderWithExtension(fakeBridge(() => null));
@@ -292,7 +292,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
   test('扩展比这个应用要求的旧、配对在扩展上：说出装的版本和要求的版本，只给升级步骤', async () => {
     renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })), { paired: true });
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
-    expect(await section.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeTruthy();
+    expect(await section.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', MINIMUM_CLIENT_VERSION))).toBeTruthy();
     const steps = section.getByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle });
     expect(within(steps).getAllByRole('listitem')).toHaveLength(EXTENSION_INSTALL_COPY.upgradeSteps.length);
     expect(steps.textContent).not.toContain('配对');
@@ -314,18 +314,18 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
   });
 
   test('扩展配对的是另一个账号、也没回答能不能换：走手动配对码，不自动生成', async () => {
-    const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' }));
+    const bridge = fakeBridge(() => ({ version: CLIENT_VERSION, paired: true, accountId: 'someone-else' }));
     renderWithExtension(bridge, { paired: true });
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByRole('button', { name: '重新生成配对码' })).toBeTruthy();
     expect(bridge.switches).toEqual([MOCK_ACCOUNT.accountId]);
     expect(bridge.codes).toEqual([]);
-    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.paired)).toBeTruthy();
+    expect(section.getByText(PAIRING_STATUS_LABELS.paired)).toBeTruthy();
   });
 
   test('撤销配对之后再问一次扩展，不会留着过时的已连接', async () => {
     let paired = true;
-    const bridge = fakeBridge(() => (paired ? mine() : { version: EXTENSION_VERSION, paired: false, accountId: null }));
+    const bridge = fakeBridge(() => (paired ? mine() : { version: CLIENT_VERSION, paired: false, accountId: null }));
     renderWithExtension(bridge, { paired: true });
     const section = within(await screen.findByRole('region', { name: '浏览器扩展' }));
     expect(await section.findByText(EXTENSION_PAIRING_COPY.connectedTitle)).toBeTruthy();
@@ -344,7 +344,7 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 
   test('独立教程也跟着走：扩展太旧只给升级步骤，已配对不给安装步骤', async () => {
     renderWithExtension(fakeBridge(() => ({ version: '1.0.0', paired: false, accountId: null })), { hash: '#/settings/tutorial' });
-    expect(await screen.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeTruthy();
+    expect(await screen.findByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', MINIMUM_CLIENT_VERSION))).toBeTruthy();
     expect(screen.getByRole('list', { name: '升级扩展' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: '安装步骤' })).toBeNull();
     cleanup();
@@ -357,8 +357,8 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 
   test('独立教程：扩展装好了但没和这个账号配对，只说回设置页配对，不给安装和升级步骤', async () => {
     const cases: { presence: ExtensionPresence; lead: string }[] = [
-      { presence: { version: EXTENSION_VERSION, paired: false, accountId: null }, lead: EXTENSION_TUTORIAL_COPY.pairOnSettings },
-      { presence: { version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' }, lead: EXTENSION_TUTORIAL_COPY.pairOnSettingsSwitch },
+      { presence: { version: CLIENT_VERSION, paired: false, accountId: null }, lead: EXTENSION_TUTORIAL_COPY.pairOnSettings },
+      { presence: { version: CLIENT_VERSION, paired: true, accountId: 'someone-else' }, lead: EXTENSION_TUTORIAL_COPY.pairOnSettingsSwitch },
     ];
     for (const { presence, lead } of cases) {
       const bridge = fakeBridge(() => presence);
@@ -382,8 +382,8 @@ describe('设置页：按这台浏览器里的扩展只显示当前这一步', (
 // paired to an extension in another browser. The mock server has no extension to redeem the code, so the adapter here plays the
 // server's side once the fake bridge has "redeemed" it.
 describe('设置页：扩展应答但没有配对时一键配对', () => {
-  const unpaired: ExtensionPresence = { version: EXTENSION_VERSION, paired: false, accountId: null };
-  const mine: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
+  const unpaired: ExtensionPresence = { version: CLIENT_VERSION, paired: false, accountId: null };
+  const mine: ExtensionPresence = { version: CLIENT_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
 
   type Redeem = (code: string) => ExtensionPairOutcome | null;
   type Before = { presence?: ExtensionPresence; switchTo?: () => Promise<ExtensionSwitchOutcome | null> };
@@ -467,8 +467,8 @@ describe('设置页：扩展应答但没有配对时一键配对', () => {
 // #292: an extension acting for another 应用账号 asks the employee, in a window of its own, before it switches. The
 // page asks it first and issues a 配对码 only after a yes, because issuing one ends this account's earlier pairing.
 describe('设置页：扩展在替另一个账号报销时，先由扩展问员工要不要换', () => {
-  const colleague: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: 'someone-else' };
-  const mine: ExtensionPresence = { version: EXTENSION_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
+  const colleague: ExtensionPresence = { version: CLIENT_VERSION, paired: true, accountId: 'someone-else' };
+  const mine: ExtensionPresence = { version: CLIENT_VERSION, paired: true, accountId: MOCK_ACCOUNT.accountId };
 
   function renderSwitch(switchTo: () => Promise<ExtensionSwitchOutcome | null>) {
     const pairedView = createMockAdapter({ seed: 'actions', fault: null, extensionPaired: true }).getExtensionPairing();
@@ -512,7 +512,7 @@ describe('设置页：扩展在替另一个账号报销时，先由扩展问员�
     expect(await section.findByText(EXTENSION_PAIRING_COPY.autoPairDeclinedTitle)).toBeTruthy();
     expect(section.getByText(EXTENSION_PAIRING_COPY.autoPairDeclined)).toBeTruthy();
     expect(section.getByRole('button', { name: '重新生成配对码' })).toBeTruthy();
-    expect(section.getByText(EXTENSION_PAIRING_STATUS_LABELS.paired)).toBeTruthy();
+    expect(section.getByText(PAIRING_STATUS_LABELS.paired)).toBeTruthy();
     expect(bridge.codes).toEqual([]);
     expect(issued).toHaveLength(0);
   });
@@ -668,7 +668,7 @@ describe('设置页：去报销的方式', () => {
   });
 
   test('本地执行器配对着、这台浏览器里的扩展应答但没配对：不自动生成配对码', async () => {
-    const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: false, accountId: null }), () => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
+    const bridge = fakeBridge(() => ({ version: CLIENT_VERSION, paired: false, accountId: null }), () => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
     const { writes } = renderMethod({ localExecutor: 'paired' }, bridge);
     await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
     fireEvent.click(await choice('extension'));
@@ -680,7 +680,7 @@ describe('设置页：去报销的方式', () => {
   });
 
   test('什么都没配对、扩展应答：不自动生成配对码，切到浏览器扩展也不会', async () => {
-    const bridge = fakeBridge(() => ({ version: EXTENSION_VERSION, paired: false, accountId: null }), () => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
+    const bridge = fakeBridge(() => ({ version: CLIENT_VERSION, paired: false, accountId: null }), () => ({ status: 'paired', accountId: MOCK_ACCOUNT.accountId }));
     const { writes } = renderMethod({}, bridge);
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     fireEvent.click(await choice('extension'));
@@ -732,7 +732,7 @@ describe('设置页：每种方式一句话与「安装遇到问题？」', () =
 
   test('浏览器扩展配对着：页面打开在浏览器扩展上，没有报销系统账号表单', async () => {
     renderPage({ extensionPaired: true });
-    await screen.findByText(EXTENSION_PAIRING_STATUS_LABELS.paired);
+    await screen.findByText(PAIRING_STATUS_LABELS.paired);
     expect(accountForm()).toBeNull();
   });
 
@@ -794,7 +794,7 @@ describe('设置页：每种方式一句话与「安装遇到问题？」', () =
     const section = within(await screen.findByRole('region', { name: EXTENSION_PAIRING_COPY.title }));
     expect(await section.findByRole('button', { name: EXTENSION_PAIRING_COPY.firstTimeAction })).toBeTruthy();
     expect(section.queryByRole('list', { name: EXTENSION_INSTALL_COPY.upgradeTitle })).toBeNull();
-    expect(section.queryByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', EXTENSION_MINIMUM_VERSION))).toBeNull();
+    expect(section.queryByText(EXTENSION_INSTALL_COPY.tooOld('1.0.0', MINIMUM_CLIENT_VERSION))).toBeNull();
     expect(section.getByRole('button', { name: EXTENSION_PAIRING_COPY.issue })).toBeTruthy();
     expect(section.getByRole('link', { name: EXTENSION_PAIRING_COPY.download }).getAttribute('href')).toBe(EXTENSION_DOWNLOAD_PATH);
   });

@@ -1,7 +1,7 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { ErpCredentialsOutcome, ErpCredentialsView, SaveErpCredentialsInput } from './erp-credentials';
-import type { ExtensionPairing, ExtensionPairingOutcome } from './extension';
+import type { PairingView, PairingChangeOutcome } from './channel';
 import type { CreatePairingCodeInput } from './local-executor';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
@@ -104,10 +104,10 @@ export interface AppAdapter {
   // 扩展配对 (extension pairing, ADR-0019): read this account's pairing; issue a 配对码 (pairing code), which voids
   // the old pairing; revoke the pairing. Pairing and login are independent: revoking signs nobody out, and signing out
   // revokes nothing.
-  getExtensionPairing(): Promise<ExtensionPairing>;
+  getExtensionPairing(): Promise<PairingView>;
   // `system`: the one-command install's choice of Mac or Windows, stored with the code (`/install/<配对码>`).
-  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<ExtensionPairingOutcome>;
-  revokeExtensionPairing(): Promise<ExtensionPairingOutcome>;
+  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
+  revokeExtensionPairing(): Promise<PairingChangeOutcome>;
   // ERP 凭据 (ADR-0033): read the view (never the password); save, which runs a 试登录 through the paired baox 本地执行器;
   // run the 试登录 again; clear, which deletes them.
   getErpCredentials(): Promise<ErpCredentialsView>;

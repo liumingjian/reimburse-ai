@@ -3,7 +3,8 @@ import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached, type TaskStage } from './stage';
 import { UrlSchema } from './primitives';
-import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema, extensionVersionRefusal } from './extension';
+import { clientVersionRefusal } from './channel';
+import { EXTENSION_BRIDGE_NAMESPACE, bridgeMessage, ExtensionBridgeExtensionMessageSchema, ExtensionBridgePageMessageSchema } from './extension';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_EXTENSION_STEPS, ERP_HANDOVER_STEP_COPY, ERP_LOCAL_EXECUTOR_STEPS, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
@@ -130,7 +131,7 @@ describe('交接文案', () => {
 describe('扩展版本太旧的拒绝文案', () => {
   test('只说下载、覆盖原来的目录、重新加载，不再要求重新配对', () => {
     for (const reported of ['0.9.0', null]) {
-      const refusal = extensionVersionRefusal(reported, '2.0.0') ?? '';
+      const refusal = clientVersionRefusal(reported, '2.0.0') ?? '';
       for (const step of ['重新下载扩展包', '覆盖原来的目录', '“重新加载”']) expect(refusal).toContain(step);
       expect(refusal).not.toContain('配对');
     }

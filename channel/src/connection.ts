@@ -1,4 +1,4 @@
-import { CHANNEL_PING_METHOD, ChannelMessageSchema, EXTENSION_CHANNEL_PATH, EXTENSION_HEARTBEAT_MS, EXTENSION_VERSION, type ChannelMessage } from '@baox/contract';
+import { CHANNEL_PING_METHOD, ChannelMessageSchema, CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
 import { CHANNEL_CLOSED } from './messages';
 
 // The extension's side of the channel. It dials; the server never dials it, because a browser on an employee's
@@ -52,7 +52,7 @@ export const RECONNECT_MAX_MS = 10_000;
 export const reconnectDelay = (attempt: number): number => Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** attempt);
 
 export function channelUrl(origin: string): string {
-  return `${origin.replace(/^http/, 'ws')}${EXTENSION_CHANNEL_PATH}`;
+  return `${origin.replace(/^http/, 'ws')}${CHANNEL_PATH}`;
 }
 
 class RequestFailed extends Error {
@@ -65,7 +65,7 @@ class RequestFailed extends Error {
   }
 }
 
-export function createChannelClient({ origin, token, open, version = EXTENSION_VERSION, onRequest, onStatus }: ChannelClientOptions): ChannelClient {
+export function createChannelClient({ origin, token, open, version = CLIENT_VERSION, onRequest, onStatus }: ChannelClientOptions): ChannelClient {
   type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
   const pending = new Map<string, Pending>();
   let socket: ClientSocket | null = null;
@@ -126,7 +126,7 @@ export function createChannelClient({ origin, token, open, version = EXTENSION_V
         attempt = 0;
         announce({ state: 'ready', accountId: message.accountId });
         // Started only once the server has accepted us; an unauthenticated socket sends nothing but `hello`.
-        heartbeat = setInterval(beat, EXTENSION_HEARTBEAT_MS);
+        heartbeat = setInterval(beat, CHANNEL_HEARTBEAT_MS);
         return;
       case 'refused':
         // Terminal by design (ADR-0021): a version the server will not talk to, or a pairing that is gone. Both need

@@ -1,4 +1,4 @@
-import { EXTENSION_PAIRING_CODE_TTL_MS, EXTENSION_PAIRING_ERRORS, EXTENSION_VERSION, type CreatePairingCodeInput, type ExtensionHolder, type ExtensionPairing, type ExtensionPairingOutcome, type LocalExecutorPairingState } from '@baox/contract';
+import { PAIRING_CODE_TTL_MS, PAIRING_ERRORS, CLIENT_VERSION, type CreatePairingCodeInput, type PairingHolderKind, type PairingView, type PairingChangeOutcome, type LocalExecutorPairingState } from '@baox/contract';
 import type { LocalExecutorPort } from '../adapter/local-executor-port';
 import { MOCK_ACCOUNT } from './auth';
 import type { MockOptions } from './options';
@@ -23,20 +23,20 @@ const DEFAULT_INSTALL_MS = 4_000;
 const OTHER_ACCOUNT_ID = 'A9';
 const EXECUTOR_BROWSER = 'baox 本地执行器（darwin）';
 
-const unpaired = (activeOrigin: string): ExtensionPairing => ({ activeOrigin, status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, holder: null, code: null });
+const unpaired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, holder: null, code: null });
 // Paired counts as connected in the normal mock state: there is no real extension to connect.
-const paired = (activeOrigin: string, connected: boolean, holder: ExtensionHolder = 'extension', browser = 'Chrome 142 · Windows 11'): ExtensionPairing => ({ activeOrigin, status: 'paired', browser, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected, version: EXTENSION_VERSION, holder, code: null });
+const paired = (activeOrigin: string, connected: boolean, holder: PairingHolderKind = 'extension', browser = 'Chrome 142 · Windows 11'): PairingView => ({ activeOrigin, status: 'paired', browser, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected, version: CLIENT_VERSION, holder, code: null });
 
 export type ExtensionPairingFlow = {
-  getExtensionPairing(): Promise<ExtensionPairing>;
-  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<ExtensionPairingOutcome>;
-  revokeExtensionPairing(): Promise<ExtensionPairingOutcome>;
+  getExtensionPairing(): Promise<PairingView>;
+  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
+  revokeExtensionPairing(): Promise<PairingChangeOutcome>;
 };
 
 export function createExtensionPairingFlow(options: MockOptions): { flow: ExtensionPairingFlow; localExecutor: LocalExecutorPort } {
   const activeOrigin = options.extensionOrigin ?? DEFAULT_ACTIVE_ORIGIN;
   // An executor paired to this account holds the account's pairing too, unless `?extension=` says the extension does.
-  let current: ExtensionPairing = options.extensionPaired
+  let current: PairingView = options.extensionPaired
     ? paired(activeOrigin, options.extensionConnected ?? true)
     : options.localExecutor === 'paired'
       ? paired(activeOrigin, true, 'local_executor', EXECUTOR_BROWSER)
@@ -63,7 +63,7 @@ export function createExtensionPairingFlow(options: MockOptions): { flow: Extens
     // The code appears only in the answer that issued it; no later read returns it, as on the server.
     async createExtensionPairingCode(input) {
       cancelInstall();
-      const codeExpiresAt = new Date(Date.now() + EXTENSION_PAIRING_CODE_TTL_MS).toISOString();
+      const codeExpiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
       current = { activeOrigin, status: 'waiting', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt, connected: false, version: null, holder: null, code: null };
       if (input?.system) {
         installing = setTimeout(() => {
@@ -83,7 +83,7 @@ export function createExtensionPairingFlow(options: MockOptions): { flow: Extens
     probe: async () => executor,
     async pair(code) {
       if (executor === null) return null;
-      if (code !== MOCK_CODE || current.status !== 'waiting') return { ok: false, code: 'pairing_code_invalid', message: EXTENSION_PAIRING_ERRORS.codeInvalid };
+      if (code !== MOCK_CODE || current.status !== 'waiting') return { ok: false, code: 'pairing_code_invalid', message: PAIRING_ERRORS.codeInvalid };
       cancelInstall();
       landExecutorPairing();
       return { ok: true, accountId: MOCK_ACCOUNT.accountId };

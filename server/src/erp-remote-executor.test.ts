@@ -1,11 +1,11 @@
-import { ERP_ACTION_ERRORS, EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ChannelMessage } from '@baox/contract';
+import { ERP_ACTION_ERRORS, PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type ChannelMessage } from '@baox/contract';
 import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS, RECONNECT_WINDOW_MS, type PageObservation } from '@baox/erp-executor/wire';
-import { serverBlobs } from '@baox/extension/blobs';
-import { channelWatch, createChannelClient, type ClientSocket } from '@baox/extension/connection';
+import { serverBlobs } from '@baox/channel/blobs';
+import { channelWatch, createChannelClient, type ClientSocket } from '@baox/channel/connection';
 import type { DebuggerApi } from '@baox/extension/debugger-session';
 import { createErpRunner } from '@baox/extension/erp-runner';
 import { dedicatedErpTab } from '@baox/extension/erp-tab';
@@ -46,13 +46,13 @@ beforeEach(async () => {
 afterEach(() => server.close());
 
 async function pair(owner: TestClient): Promise<string> {
-  const issued = ExtensionPairingSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
-  const redeemed = await server.app.request(EXTENSION_PAIR_PATH, {
+  const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
+  const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: EXTENSION_VERSION }),
+    body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: CLIENT_VERSION }),
   });
-  return ExtensionTokenSchema.parse(await redeemed.json()).token;
+  return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
 async function connected(token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner }): Promise<FakeExtension> {
