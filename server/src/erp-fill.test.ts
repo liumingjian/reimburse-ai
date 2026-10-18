@@ -1,4 +1,4 @@
-import { ERP_HANDOVER_STEP_COPY, TaskListSchema } from '@baox/contract';
+import { ERP_DRAFT_STEP_COPY, TaskListSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, TEST_ERP_ACCOUNT, type Script, type ScriptedExecutor } from './erp/testing/fake-executor';
@@ -177,9 +177,9 @@ describe('去报销 on a fake executor', () => {
     expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows.every((row) => row.matched)).toBe(true);
     expect(done.erp.steps.every((step) => step.status === 'done')).toBe(true);
-    // The list closes on the hand-over step, and its copy comes from the contract: the web mock's step list reads the
-    // same constant, so the two lists cannot drift apart (ADR-0028).
-    expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_HANDOVER_STEP_COPY, status: 'done' });
+    // The list is the one 本地执行器 list (ADR-0037), and its copy comes from the contract: the web mock's step list
+    // reads the same constant, so the two lists cannot drift apart.
+    expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_DRAFT_STEP_COPY, status: 'done' });
     expect(done.erp.steps.some((step) => step.title.includes('保存'))).toBe(false);
     expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
 

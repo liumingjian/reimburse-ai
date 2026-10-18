@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { PAIRING_CODE_LENGTH, PAIRING_CODE_TTL_MS, PAIRING_ERRORS, InstallSystemSchema, type PairingHolderKind, type PairingState, type InstallSystem } from '@baox/contract';
+import { PAIRING_CODE_LENGTH, PAIRING_CODE_TTL_MS, PAIRING_ERRORS, InstallSystemSchema, type PairingState, type InstallSystem } from '@baox/contract';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
 
-// 扩展配对 (extension pairing, ADR-0019): one 浏览器扩展 (browser extension) bound to one 应用账号 (app account).
-// The settings page issues a 配对码 (pairing code); the extension exchanges it once for a long-lived token.
+// 配对 (pairing, ADR-0019, ADR-0037): one baox 本地执行器 bound to one 应用账号 (app account). The settings page issues
+// a 配对码 (pairing code); the 本地执行器 exchanges it once for a long-lived token. "The extension" below is the
+// paired client, as it was when this was written; the 浏览器扩展 itself is gone.
 //
 // The token is held the way a session token is: the extension keeps the random string, the database keeps only its
 // sha256, so a copy of the database never hands anyone a working extension. The 配对码 is stored the same way, and
@@ -39,19 +40,12 @@ const normalise = (code: string) => code.replace(/[^0-9a-zA-Z]/g, '').toUpperCas
 // telling it apart would confirm a guessed code to whoever guessed it.
 const refuseCode = () => new AuthRefusal(401, 'pairing_code_invalid', PAIRING_ERRORS.codeInvalid);
 
-// Whether this 应用账号 has a redeemed pairing (a 配对码 issued but not yet used is none). Takes the handle to read
-// through, so the 去报销 refusal (`app.ts`) can ask inside the transaction it is already in.
+// Whether this 应用账号 has a redeemed pairing (a 配对码 issued but not yet used is none): since ADR-0037 every pairing
+// is a 本地执行器's. Takes the handle to read through, so the 去报销 refusal (the task policy's `executorPaired`, read
+// by `tasks.ts`) and the 凭据 can ask inside the transaction they are already in.
 export async function hasPairing(db: Db, accountId: string): Promise<boolean> {
-  const row = await db.selectFrom('extension_pairing').select('token_sha256').where('account_id', '=', accountId).executeTakeFirst();
+  const row = await db.selectFrom('pairing').select('token_sha256').where('account_id', '=', accountId).executeTakeFirst();
   return !!row?.token_sha256;
-}
-
-// What this account's redeemed pairing is, or null when there is none. Anything that did not say (every extension
-// paired before the column existed) is an extension: only a baox 本地执行器 that said so is given the ERP 凭据.
-export async function holderOf(db: Db, accountId: string): Promise<PairingHolderKind | null> {
-  const row = await db.selectFrom('extension_pairing').select(['token_sha256', 'holder']).where('account_id', '=', accountId).executeTakeFirst();
-  if (!row?.token_sha256) return null;
-  return row.holder === 'local_executor' ? 'local_executor' : 'extension';
 }
 
 // What the pairing service needs of the live channel (`channel.ts`): whether an account's extension is connected, and
@@ -79,11 +73,11 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
   // `code` is the string just issued, carried through this once; every other caller passes nothing and the employee
   // sees no code, because there is none to show.
   async function view(accountId: string, code: string | null = null): Promise<PairingState> {
-    const row = await db.selectFrom('extension_pairing').selectAll().where('account_id', '=', accountId).executeTakeFirst();
+    const row = await db.selectFrom('pairing').selectAll().where('account_id', '=', accountId).executeTakeFirst();
     if (!row) return NOT_PAIRED;
     if (!row.token_sha256 && (row.code_expires_at === null || Date.parse(row.code_expires_at) <= clock().getTime())) {
       // Nobody used it in time; drop it rather than leave the page saying an extension is expected.
-      await optionalWrite(() => db.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute());
+      await optionalWrite(() => db.deleteFrom('pairing').where('account_id', '=', accountId).execute());
       return NOT_PAIRED;
     }
     return {
@@ -94,7 +88,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       codeExpiresAt: row.code_expires_at,
       connected: row.token_sha256 ? live.connected(accountId) : false,
       version: row.version,
-      holder: row.token_sha256 ? (row.holder === 'local_executor' ? 'local_executor' : 'extension') : null,
+      holder: row.token_sha256 ? 'local_executor' : null,
       code,
     };
   }
@@ -109,9 +103,9 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       const code = generatePairingCode();
       const now = clock();
       await db.transaction().execute(async (tx) => {
-        await tx.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute();
+        await tx.deleteFrom('pairing').where('account_id', '=', accountId).execute();
         await tx
-          .insertInto('extension_pairing')
+          .insertInto('pairing')
           .values({
             account_id: accountId,
             code_sha256: sha256(code),
@@ -119,7 +113,6 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
             token_sha256: null,
             browser: null,
             version: null,
-            holder: null,
             install_system: system,
             install_code_sha256: system ? sha256(code) : null,
             created_at: iso(now),
@@ -136,7 +129,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     // minutes, whether it has paired yet or not. Null for any other code. Reading it spends nothing.
     async installCode(code: string): Promise<{ accountId: string; system: InstallSystem } | null> {
       const row = await db
-        .selectFrom('extension_pairing')
+        .selectFrom('pairing')
         .select(['account_id', 'install_system', 'created_at'])
         .where('install_code_sha256', '=', sha256(normalise(code)))
         .executeTakeFirst();
@@ -148,7 +141,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     // 撤销配对 (revoke the pairing): the extension's token stops resolving and its socket closes, at once. The
     // account's web session is untouched.
     async revoke(accountId: string): Promise<PairingState> {
-      await db.deleteFrom('extension_pairing').where('account_id', '=', accountId).execute();
+      await db.deleteFrom('pairing').where('account_id', '=', accountId).execute();
       live.disconnect(accountId);
       return NOT_PAIRED;
     },
@@ -158,25 +151,25 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     // when the token names no pairing (already revoked or replaced).
     async revokeToken(token: string | undefined): Promise<boolean> {
       if (!token) return false;
-      const row = await db.selectFrom('extension_pairing').select('account_id').where('token_sha256', '=', sha256(token)).executeTakeFirst();
+      const row = await db.selectFrom('pairing').select('account_id').where('token_sha256', '=', sha256(token)).executeTakeFirst();
       if (!row) return false;
-      await db.deleteFrom('extension_pairing').where('account_id', '=', row.account_id).where('token_sha256', '=', sha256(token)).execute();
+      await db.deleteFrom('pairing').where('account_id', '=', row.account_id).where('token_sha256', '=', sha256(token)).execute();
       live.disconnect(row.account_id);
       return true;
     },
 
     // Single use: the update matches only while the code is still on the row and clears it in the same statement, so
     // two extensions racing the same 配对码 cannot both walk away with a token.
-    async redeem(code: string, browser: string | null, version: string | null, holder: PairingHolderKind | null = null): Promise<{ token: string; accountId: string }> {
+    async redeem(code: string, browser: string | null, version: string | null): Promise<{ token: string; accountId: string }> {
       const now = clock();
       const codeSha = sha256(normalise(code));
-      const row = await db.selectFrom('extension_pairing').selectAll().where('code_sha256', '=', codeSha).executeTakeFirst();
+      const row = await db.selectFrom('pairing').selectAll().where('code_sha256', '=', codeSha).executeTakeFirst();
       if (!row || row.code_expires_at === null || Date.parse(row.code_expires_at) <= now.getTime()) throw refuseCode();
       const token = randomBytes(32).toString('base64url');
       const at = iso(now);
       const updated = await db
-        .updateTable('extension_pairing')
-        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, version, holder: holder ?? 'extension', paired_at: at, last_connected_at: at })
+        .updateTable('pairing')
+        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, version, paired_at: at, last_connected_at: at })
         .where('account_id', '=', row.account_id)
         .where('code_sha256', '=', codeSha)
         .executeTakeFirst();
@@ -192,20 +185,20 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       if (!token) return null;
       const tokenSha = sha256(token);
       const row = await db
-        .selectFrom('extension_pairing')
-        .innerJoin('account', 'account.account_id', 'extension_pairing.account_id')
-        .select(['extension_pairing.account_id', 'account.username', 'account.active', 'account.approved'])
-        .where('extension_pairing.token_sha256', '=', tokenSha)
+        .selectFrom('pairing')
+        .innerJoin('account', 'account.account_id', 'pairing.account_id')
+        .select(['pairing.account_id', 'account.username', 'account.active', 'account.approved'])
+        .where('pairing.token_sha256', '=', tokenSha)
         .executeTakeFirst();
       if (!row || row.active !== 1 || row.approved !== 1) return null;
-      await optionalWrite(() => db.updateTable('extension_pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute());
+      await optionalWrite(() => db.updateTable('pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute());
       return { accountId: row.account_id, username: row.username ?? row.account_id };
     },
 
     // The version an extension reports when it opens its channel (ADR-0021). An extension is replaced by unpacking a
     // new directory over the old one, so the version on the row is only ever as fresh as the last connect.
     async noteConnection(accountId: string, version: string | null): Promise<void> {
-      await optionalWrite(() => db.updateTable('extension_pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute());
+      await optionalWrite(() => db.updateTable('pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute());
     },
   };
 }

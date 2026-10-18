@@ -130,8 +130,6 @@ export const realTimer: Schedule = (run, ms) => {
 
 // Why `request` rejected: nothing of that account was connected, or its socket went with the request in flight.
 export const EXTENSION_OFFLINE_CODE = 'extension_offline';
-// Why a 去报销 was refused before it started: this account has no extension paired at all.
-export const EXTENSION_NOT_PAIRED_CODE = 'extension_not_paired';
 export const EXTENSION_CONNECTION_LOST_CODE = 'extension_connection_lost';
 
 export function createExtensionChannel({ pairings, now, minimumVersion = MINIMUM_CLIENT_VERSION, onRequest, onEvent, onLost, silenceMs = CHANNEL_HEARTBEAT_MS * 3, helloDeadlineMs = CHANNEL_HEARTBEAT_MS, schedule = realTimer }: ExtensionChannelOptions): ExtensionChannel {
@@ -158,7 +156,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = MINIMUM
       byAccount.delete(connection.accountId);
       onLost?.(connection.accountId);
     }
-    const lost = new ExtensionChannelError(EXTENSION_CONNECTION_LOST_CODE, '浏览器扩展的连接断开了。');
+    const lost = new ExtensionChannelError(EXTENSION_CONNECTION_LOST_CODE, '本地执行器的连接断开了。');
     for (const pending of connection.pending.values()) pending.reject(lost);
     connection.pending.clear();
   }
@@ -210,7 +208,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = MINIMUM
           if (previous) {
             previous.gone = true;
             onLost?.(found.accountId);
-            for (const pending of previous.pending.values()) pending.reject(new ExtensionChannelError(EXTENSION_CONNECTION_LOST_CODE, '浏览器扩展的连接断开了。'));
+            for (const pending of previous.pending.values()) pending.reject(new ExtensionChannelError(EXTENSION_CONNECTION_LOST_CODE, '本地执行器的连接断开了。'));
             previous.pending.clear();
             previous.socket.close(GOING_AWAY, 'replaced');
           }
@@ -279,7 +277,7 @@ export function createExtensionChannel({ pairings, now, minimumVersion = MINIMUM
 
     request(accountId, method, payload) {
       const connection = byAccount.get(accountId);
-      if (!connection) return Promise.reject(new ExtensionChannelError(EXTENSION_OFFLINE_CODE, '这个账号的浏览器扩展现在没有连接。'));
+      if (!connection) return Promise.reject(new ExtensionChannelError(EXTENSION_OFFLINE_CODE, '这个账号的本地执行器现在没有连接。'));
       nextId += 1;
       const id = `s${nextId}`;
       return new Promise<unknown>((resolve, reject) => {

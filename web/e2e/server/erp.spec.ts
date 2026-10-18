@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_DIR, SAMPLE_MATERIALS } from '@baox/fixtures';
-import { ERP_ACTION_ERRORS, TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
+import { TaskListSchema, TaskSnapshotSchema, type TaskSnapshot } from '@baox/contract';
 import type { Page } from '@playwright/test';
 import { answerStayGaps, expect, signIn, test } from './fixture';
 
@@ -52,7 +52,7 @@ test('浏览器扩展不可用时，设置页返回原报销任务并保留选�
   let starts = 0;
   await page.route(`**/api/tasks/${taskId}/actions/start-erp-write`, async (route) => {
     starts += 1;
-    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'extension_not_paired', message: ERP_ACTION_ERRORS.extensionNotPaired } }) });
+    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'extension_not_paired', message: '还没有配对浏览器扩展，所以现在去报销不了。' } }) });
   });
 
   await page.goto(`/#/task/${taskId}/review`);

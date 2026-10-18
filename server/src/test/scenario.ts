@@ -1,4 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { ProjectBookSchema, type Line, type TaskSnapshot, type TaskStage } from '@baox/contract';
+import { createCredentialVault } from '../erp/credential-vault';
 import { handedOver, scripted, type Script, type ScriptedExecutor } from '../erp/testing/fake-executor';
 import { api, sample, type Upload } from './api';
 import { BACKSTOP_MS } from './deadlines';
@@ -37,23 +39,38 @@ export type ScenarioServer = TestServer & {
   erp: ScriptedExecutor | null;
   // The preset parser, or null when the test brought its own `parser` (real parsing is opt-in: `inlineExecutor()`).
   presets: PresetParser | null;
+  // ERP 凭据 that passed their 试登录, stored for the account as the 设置页 leaves them, without running one: a
+  // 去报销 in the paired 本地执行器 (`erpExecutor: 'extension'`) needs them before anything starts (ADR-0037). Needs
+  // the server's key, which such a server has unless the test passed `erpCredentialKey: null`.
+  authoriseErpCredentials(accountId: string, credentials?: { account: string; password: string }): Promise<void>;
 };
 
 // `createTestServer` with the scenario defaults: preset parsing and a scripted
 // fill executor that hands the form over. Any option overrides its default; `erpExecutor: 'extension'` keeps the
-// production wiring, where 去报销 runs in the account's paired browser extension (a `fakeExtension` in tests).
+// production wiring, where 去报销 runs in the account's paired 本地执行器 (a `fakeExtension` in tests), and gives the
+// server a key for the ERP 凭据 unless the test chose one.
 export type ScenarioServerOptions = Omit<TestServerOptions, 'erpExecutor'> & { erpExecutor?: TestServerOptions['erpExecutor'] | 'extension' };
 
 export async function scenarioServer(options: ScenarioServerOptions = {}): Promise<ScenarioServer> {
   const presets = options.parser ? null : presetParser();
   const erp = options.erpExecutor ? null : scripted(handedOver());
   const { erpExecutor, ...rest } = options;
+  const key = 'erpCredentialKey' in rest ? (rest.erpCredentialKey ?? null) : erpExecutor === 'extension' ? randomBytes(32) : null;
   const server = await createTestServer({
     ...rest,
+    erpCredentialKey: key,
     parser: options.parser ?? presets!,
     ...(erpExecutor === 'extension' ? {} : { erpExecutor: erpExecutor ?? erp! }),
   });
-  return { ...server, erp, presets };
+  const authoriseErpCredentials = async (accountId: string, { account, password } = { account: 'zhangsan', password: 'erp-Pa55' }) => {
+    if (!key) throw new Error('scenario: authorised ERP 凭据 need the server\'s erpCredentialKey');
+    const at = server.clock.now().toISOString();
+    await server.db.deleteFrom('erp_credential').where('account_id', '=', accountId).execute();
+    await server.db.insertInto('erp_credential')
+      .values({ account_id: accountId, erp_account: account, password_sealed: createCredentialVault(key).seal(accountId, password), status: 'authorised', message: null, saved_at: at, checked_at: at })
+      .execute();
+  };
+  return { ...server, erp, presets, authoriseErpCredentials };
 }
 
 export type ScenarioOptions = {

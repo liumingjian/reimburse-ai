@@ -551,14 +551,14 @@
     "steps": [
       {
         "key": "chromium",
-        "title": "打开报销系统标签页",
-        "description": "通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。",
+        "title": "启动后台浏览器",
+        "description": "在你的电脑上启动一个看不见的浏览器，专门用于这次报销。",
         "status": "done"
       },
       {
         "key": "login",
         "title": "登录",
-        "description": "在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。",
+        "description": "用你在设置页保存的报销系统账号登录。",
         "status": "waiting"
       },
       {
@@ -593,15 +593,15 @@
       },
       {
         "key": "handover",
-        "title": "交接单据",
-        "description": "不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。",
+        "title": "暂存到报销系统",
+        "description": "你检查后自己提交",
         "status": "todo"
       }
     ],
     "currentStage": "login",
     "progress": {
       "label": "登录",
-      "percent": 12
+      "percent": 11
     },
     "externalWait": "employee_login",
     "outcome": "none",

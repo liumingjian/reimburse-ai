@@ -53,7 +53,7 @@ const expiredScript = (body: string) => {
 describe('generating a 配对码 for an install', () => {
   it('stores the system chosen with the pending code', async () => {
     await issue({ system: 'windows' });
-    const row = await server.db.selectFrom('extension_pairing').selectAll().where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow();
+    const row = await server.db.selectFrom('pairing').selectAll().where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow();
     expect(row.install_system).toBe('windows');
   });
 

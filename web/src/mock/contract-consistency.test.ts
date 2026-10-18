@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   ALLOCATION_ERRORS,
   ERP_EXTENSION_STEPS,
-  ERP_LOCAL_EXECUTOR_STEPS,
+  ERP_STEPS,
   ErpStepSchema,
   PENDING_ANSWER_ERRORS,
   PendingAnswerSchema,
@@ -41,7 +41,7 @@ describe('契约 schema', () => {
 
   test('mock 的写入步骤清单与契约同源', () => {
     expect(ERP_STEP_DEFS).toEqual(ERP_EXTENSION_STEPS);
-    expect(ERP_LOCAL_STEP_DEFS).toEqual(ERP_LOCAL_EXECUTOR_STEPS);
+    expect(ERP_LOCAL_STEP_DEFS).toEqual(ERP_STEPS);
     // Both routes hold the same stage keys in the same order (the mock indexes either by ERP_STEP_INDEX).
     expect(ERP_LOCAL_STEP_DEFS.map((step) => step.key)).toEqual(ERP_STEP_DEFS.map((step) => step.key));
     expect(ERP_STEP_INDEX.handover).toBe(ERP_STEP_DEFS.length - 1);

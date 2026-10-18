@@ -21,7 +21,7 @@ const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('he
 let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
+  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, autoRerun: false });
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());
@@ -34,6 +34,8 @@ async function pair(owner: TestClient): Promise<string> {
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
     body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: CLIENT_VERSION }),
   });
+  // A 去报销 starts only with authorised ERP 凭据 (ADR-0037).
+  await server.authoriseErpCredentials(owner.account.accountId);
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 

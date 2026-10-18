@@ -218,7 +218,7 @@ describe('maintenance admission', () => {
     server.clock.advance(PAIRING_CODE_TTL_MS + 1);
     expect(await operator(control.path, 'admit')).toMatchObject({ state: 'admitted', barrier: true });
     expect((await (await alice.request('/api/extension/pairing')).json()) as { status: string }).toMatchObject({ status: 'none' });
-    expect(await server.db.selectFrom('extension_pairing').select('account_id').where('account_id', '=', alice.account.accountId).executeTakeFirst()).toEqual({ account_id: alice.account.accountId });
+    expect(await server.db.selectFrom('pairing').select('account_id').where('account_id', '=', alice.account.accountId).executeTakeFirst()).toEqual({ account_id: alice.account.accountId });
 
     // Reopen only to make a pairing, then close again before its real channel hello would update liveness/version.
     expect(await operator(control.path, 'reopen')).toMatchObject({ state: 'open', barrier: false });
@@ -230,7 +230,7 @@ describe('maintenance admission', () => {
     });
     expect(redeemed.status).toBe(200);
     const { token } = (await redeemed.json()) as { token: string };
-    const before = await server.db.selectFrom('extension_pairing').select(['last_connected_at', 'version']).where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow();
+    const before = await server.db.selectFrom('pairing').select(['last_connected_at', 'version']).where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow();
     server.clock.advance(60_000);
     expect(await operator(control.path, 'admit')).toMatchObject({ state: 'admitted', barrier: true, activeWrites: 0 });
 
@@ -241,7 +241,7 @@ describe('maintenance admission', () => {
     });
     await session.message(JSON.stringify({ type: 'hello', token, version: CLIENT_VERSION }));
     expect(heard).toContainEqual(expect.objectContaining({ type: 'ready', accountId: alice.account.accountId }));
-    expect(await server.db.selectFrom('extension_pairing').select(['last_connected_at', 'version']).where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow()).toEqual(before);
+    expect(await server.db.selectFrom('pairing').select(['last_connected_at', 'version']).where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow()).toEqual(before);
     expect(await operator(control.path, 'status')).toMatchObject({ state: 'admitted', activeWrites: 0 });
     session.closed();
   });

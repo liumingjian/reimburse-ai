@@ -6,8 +6,8 @@
 //   so ERP 自动化授权 holds only once ERP has accepted the password on that PC.
 // - A login ERP refuses — at the 试登录 or in a job — deletes the password at once. baox never tries a refused
 //   password again, so it cannot lock the ERP account; the employee saves a new one.
-// - A job is given the 凭据 only when they are authorised and the account's pairing is a 本地执行器. A 浏览器扩展 is
-//   never sent them: it works in the employee's own ERP login.
+// - A job is given the 凭据 only when they are authorised. Every pairing is a 本地执行器's (ADR-0037), and every job
+//   signs in with them.
 
 import {
   ERP_CREDENTIAL_ERRORS, type ErpCredentialsView, type SaveErpCredentialsInput,
@@ -18,7 +18,7 @@ import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
 import { EXTENSION_OFFLINE_CODE, ExtensionChannelError } from '../extension/channel';
-import { holderOf } from '../extension/pairing';
+import { hasPairing } from '../extension/pairing';
 import type { CredentialVault } from './credential-vault';
 
 // A cold 本地执行器 has measured up to about a minute to sign in (erp-headless-v1.md); five leaves room for a slow link.
@@ -89,9 +89,7 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
     const row = await db.selectFrom('erp_credential').selectAll().where('account_id', '=', accountId).executeTakeFirst();
     if (!row || !row.password_sealed) throw new AuthRefusal(400, 'erp_credentials_none', ERP_CREDENTIAL_ERRORS.nothingSaved);
     const untested = async (message: string) => { await settle(accountId, row.saved_at, { status: 'untested', message, checked: false }); return view(accountId); };
-    const holder = await holderOf(db, accountId);
-    if (holder === null) return untested(ERP_CREDENTIAL_ERRORS.notPaired);
-    if (holder !== 'local_executor') return untested(ERP_CREDENTIAL_ERRORS.notLocalExecutor);
+    if (!(await hasPairing(db, accountId))) return untested(ERP_CREDENTIAL_ERRORS.notPaired);
     if (erpBusy(accountId)) return untested(ERP_CREDENTIAL_ERRORS.erpInUse);
     const password = vault?.open(accountId, row.password_sealed) ?? null;
     if (password === null) throw new AuthRefusal(503, 'erp_credentials_unavailable', ERP_CREDENTIAL_ERRORS.unavailable);
@@ -132,12 +130,9 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
       return view(accountId);
     },
 
-    /** Whether this account's 去报销 runs in a 本地执行器, which needs the 凭据. */
-    needed: async (accountId: string) => (await holderOf(db, accountId)) === 'local_executor',
-
-    /** The 凭据 a job of this account signs in with: only authorised ones, only for a 本地执行器. */
+    /** The 凭据 a job of this account signs in with: only authorised ones. */
     async forJob(accountId: string): Promise<ErpCredentials | null> {
-      if (!vault || (await holderOf(db, accountId)) !== 'local_executor') return null;
+      if (!vault) return null;
       const row = await db.selectFrom('erp_credential').selectAll().where('account_id', '=', accountId).executeTakeFirst();
       if (!row || row.status !== 'authorised' || !row.password_sealed || refused.get(accountId) === row.saved_at) return null;
       const password = vault.open(accountId, row.password_sealed);
@@ -161,9 +156,8 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
 }
 
 // 去报销's check before any job exists (`app.ts`, inside the accepted change, so it reads through that transaction):
-// an account whose pairing is a 本地执行器 needs authorised 凭据 and a key to open them. Any other pairing needs none.
+// the 本地执行器 signs in itself, so it needs authorised 凭据 and a key to open them.
 export async function erpCredentialsReady(tx: Db, accountId: string, keyed: boolean): Promise<boolean> {
-  if ((await holderOf(tx, accountId)) !== 'local_executor') return true;
   if (!keyed) return false;
   const row = await tx.selectFrom('erp_credential').select(['status', 'password_sealed']).where('account_id', '=', accountId).executeTakeFirst();
   return row?.status === 'authorised' && !!row.password_sealed;

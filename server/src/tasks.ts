@@ -53,7 +53,7 @@ import { draftMarkOf, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from
 import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
 import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
-import { jobRouteOf, loadErp, type ErpRecord } from './erp/fill-state';
+import { loadErp, type ErpRecord } from './erp/fill-state';
 import { printFileShas } from './print/facts';
 import * as printActions from './print/service';
 import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
@@ -110,11 +110,14 @@ function admitted<T>(value: T | null | undefined, what: string): T {
 export type ParseWork = { runId: string; input: ParseInput; preset: ParseOutcome | null };
 
 // What the 去报销 actions need from the app: the account's ERP lease, the ERP to write to, and the background job runners
-// (the fill job, and the read-only reconcile job of #192). `executorReady` is asked inside the accepted change, before
-// the lease and before any job exists: a refusal means the executor could not be reached (story 13 — no 浏览器扩展
-// paired, or none connected), so the employee is told which and where to fix it instead of watching a job abort.
+// (the fill job, and the read-only reconcile job of #192). `executorPaired` answers the task policy's fact of that name
+// (ADR-0037: no 本地执行器 paired, no 去报销). `executorReady` is asked inside the accepted change, before the lease and
+// before any job exists: a refusal means the paired 本地执行器 could not be reached or has no 凭据 to sign in with
+// (story 13), so the employee is told which and where to fix it instead of watching a job abort. Both are absent when
+// jobs run in an executor of the server's own (development, e2e, tests).
 export type ErpServiceOptions = {
   lease: ErpLease; config: ErpConfig; run: (job: FillRun) => void; reconcile: (job: ReconcileRun) => void;
+  executorPaired?: (tx: Db, accountId: string) => Promise<boolean>;
   executorReady?: (tx: Db, accountId: string) => Promise<Refusal | null>;
   // Acquired beside the durable job row, before the runner can start. This closes the admission race with a new job.
   acquireErp?: () => MaintenanceLease | null;
@@ -229,7 +232,8 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const task = await taskRow(tx, taskId);
       const loaded = await loadFacts(tx, task);
       const { facts, view } = loaded;
-      const policy = taskPolicy({ ...facts, erpLease: leaseOf(taskId), erpConfigured: !!erp }, loaded.erp);
+      const executorPaired = erp?.executorPaired ? await erp.executorPaired(tx, accountId) : true;
+      const policy = taskPolicy({ ...facts, erpLease: leaseOf(taskId), erpConfigured: !!erp, executorPaired }, loaded.erp);
       const admission = policy.admit(action, token, request);
       if (admission === 'stale') return { kind: 'stale' };
       if (admission !== 'ok') return { kind: 'refused', ...admission };
@@ -242,7 +246,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     });
     const fresh = await snapshot(taskId);
     if (outcome.kind === 'stale') throw new StaleStepError(fresh);
-    if (outcome.kind === 'refused') throw new ActionRefusedError({ code: outcome.code, message: outcome.message }, fresh);
+    if (outcome.kind === 'refused') throw new ActionRefusedError({ code: outcome.code, message: outcome.message, ...(outcome.link ? { link: outcome.link } : {}) }, fresh);
     onChange(fresh);
     return fresh;
   }
@@ -305,7 +309,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             return ERP_IN_USE;
           }
           started.run = { jobId, accountId, taskId, trigger, frozen: job, maintenance };
-          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at, route: await jobRouteOf(tx, accountId) }).execute();
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger, confirmation_digest: digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
         },
       );
       if (started.run) erp?.run(started.run);
@@ -691,7 +695,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
             return ERP_IN_USE;
           }
           started.run = { jobId, accountId, taskId, trigger: 'rerun', frozen: job, maintenance };
-          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger: 'rerun', confirmation_digest: ended.confirmation_digest, plan: JSON.stringify(job), revision, started_at: at, route: await jobRouteOf(tx, accountId) }).execute();
+          await tx.insertInto('erp_job').values({ job_id: jobId, task_id: taskId, account_id: accountId, kind: 'fill', trigger: 'rerun', confirmation_digest: ended.confirmation_digest, plan: JSON.stringify(job), revision, started_at: at }).execute();
         });
       } catch (error) {
         if (started.run) {

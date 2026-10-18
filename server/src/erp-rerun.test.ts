@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type PairingHolderKind, type TaskSnapshot } from '@baox/contract';
+import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type TaskSnapshot } from '@baox/contract';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
@@ -13,7 +13,7 @@ import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // 自动重新去报销 (ADR-0034, erp-headless-v1.md line 2 item 4): a 去报销 on a baox 本地执行器 that stops after its import
 // or fill, before 暂存, starts over by itself on a fresh 新增单, at most twice in a row, each time asking ERP first
-// whether the bill already landed. Nothing else starts over: not after 暂存, not on the 浏览器扩展.
+// whether the bill already landed. Nothing else starts over: not after 暂存.
 
 let server: ScenarioServer;
 let alice: TestClient;
@@ -23,12 +23,12 @@ beforeEach(async () => {
 });
 afterEach(() => server.close());
 
-async function executor(scripts: FillRunner[], holder: PairingHolderKind = 'local_executor'): Promise<FakeExtension> {
+async function executor(scripts: FillRunner[]): Promise<FakeExtension> {
   const issued = PairingViewSchema.parse(await (await alice.post('/api/extension/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, holder }),
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, holder: 'local_executor' }),
   });
   let run = 0;
   const extension = fakeExtension(server.app.extensionChannel, PairingTokenSchema.parse(await redeemed.json()).token, {
@@ -138,16 +138,6 @@ describe('自动重新去报销', () => {
 
     expect(jobs.map((job) => job.trigger)).toEqual(['start']);
     expect(snapshot).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['wait', 'hand_off'] } });
-  });
-
-  it('never starts over on the 浏览器扩展: the employee\'s own tab is theirs', async () => {
-    await executor([readbackMismatch, drafted], 'extension');
-    const scene = await scenario(server, alice).at('actions');
-    await scene.accept('start-erp-write');
-
-    const { jobs } = await after(scene, 2, 500);
-
-    expect(jobs.map((job) => job.trigger)).toEqual(['start']);
   });
 
   it('stays off when the app is told so', async () => {

@@ -21,6 +21,7 @@ import { createMockAdapter, type MockAdapter, type MockOptions } from './mock-ad
 // A failure here means the mock drifted from the server. Fix the mock flow (or its fixture) to do what the server does;
 // never edit a golden by hand (re-record it on the server when the server's projection changed on purpose).
 
+const ONE_LIST = "the server's one 本地执行器 step list against the mock's default 浏览器扩展 route; remove with #436 / #437";
 const RECOGNITION = "the mock's recognition profile of a sample file (fixtures/inventory.ts, shared with T1), not the server's parser";
 // Fields the mock cannot reproduce, by path (`*` = any array index), and why. Everything else must match.
 const UNMATCHED: Readonly<Record<string, string>> = {
@@ -46,6 +47,15 @@ const UNMATCHED: Readonly<Record<string, string>> = {
   'erp.erpAccount.account': 'as erp.erpAccount.displayName',
   'erp.erpAccount.tenant': 'as erp.erpAccount.displayName',
   'reconcile.capture.screenshotUrl': 'the mock has no ERP screenshot to serve',
+  // Until #436 / #437: the server words every job with the one 本地执行器 list (ADR-0037, #435), the mock still plays
+  // the 浏览器扩展 route by default. The middle steps match; the first two and the last, and the bar over them, do not.
+  'erp.steps.0.title': ONE_LIST,
+  'erp.steps.0.description': ONE_LIST,
+  'erp.steps.1.description': ONE_LIST,
+  'erp.steps.7.title': ONE_LIST,
+  'erp.steps.7.description': ONE_LIST,
+  'erp.progress.label': ONE_LIST,
+  'erp.progress.percent': ONE_LIST,
 };
 
 // Differences that come from the server's scripted ERP job (server/src/erp/testing/fake-executor.ts), not from its

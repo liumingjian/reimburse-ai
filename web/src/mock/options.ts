@@ -1,4 +1,5 @@
-import { PAIRING_HOLDER_KINDS, TASK_STAGES, type ErpRoute, type TaskStage } from '@baox/contract';
+import { PAIRING_HOLDER_KINDS, TASK_STAGES, type TaskStage } from '@baox/contract';
+import type { ErpRoute } from './fixtures/erp';
 
 // Stages a task can be seeded at. The server never projects `catalog` or `preparation` (it checks the catalog inside
 // the ERP job), so the mock has no snapshot for them either.

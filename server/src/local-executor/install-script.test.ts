@@ -108,7 +108,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     return existsSync(file) ? readFileSync(file, 'utf8').slice(-3000) : 'no install log';
   };
   const pairingFile = () => join(executorHome(), 'pairing.json');
-  const serverHolder = async () => (await server.db.selectFrom('extension_pairing').select(['holder', 'token_sha256']).where('account_id', '=', alice.account.accountId).executeTakeFirst()) ?? null;
+  const serverPairing = async () => (await server.db.selectFrom('pairing').select(['token_sha256']).where('account_id', '=', alice.account.accountId).executeTakeFirst()) ?? null;
   const DONE = [SAY.checking, SAY.pairing, SAY.installed];
   const DOWNLOAD = /^下载运行环境 (\d+)%$/;
 
@@ -129,7 +129,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     expect(launcher).toContain('unset NODE_OPTIONS');
     expect(launchctl()).toEqual([expect.stringMatching(/^bootout gui\/\d+\/com\.baox\.local-executor$/), expect.stringMatching(/^bootout /), expect.stringMatching(new RegExp(`^bootstrap gui/\\d+ ${agentPlist()}$`))]);
     expect(JSON.parse(readFileSync(pairingFile(), 'utf8'))).toMatchObject({ origin, accountId: alice.account.accountId });
-    expect(await serverHolder()).toMatchObject({ holder: 'local_executor', token_sha256: expect.any(String) });
+    expect(await serverPairing()).toMatchObject({ token_sha256: expect.any(String) });
   }, 60_000);
 
   it.each([
@@ -235,7 +235,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     expect(existsSync(agentPlist())).toBe(false);
     expect(existsSync(executorHome())).toBe(false);
     expect(readFileSync(join(stubs, 'node'), 'utf8')).toBe(stubNode('24.9.0'));
-    expect(await serverHolder()).toMatchObject({ holder: 'local_executor', token_sha256: expect.any(String) });
+    expect(await serverPairing()).toMatchObject({ token_sha256: expect.any(String) });
   }, 60_000);
 
   it('gives up a download that stalls instead of hanging the install', async () => {

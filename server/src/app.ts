@@ -22,7 +22,7 @@ import { hasUnfinishedErpJobs, recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
-import { createExtensionChannel, EXTENSION_NOT_PAIRED_CODE, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
+import { createExtensionChannel, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
 import { mountExtensionDownloadRoute } from './extension/download';
 import { mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
 import type { LocalExecutorDist } from './local-executor/release';
@@ -51,7 +51,7 @@ export type AppOptions = {
   // The ERP control lease, one partition per 应用账号 (ADR-0016, ADR-0019): the fill job holds its account's while
   // it runs. Tests pass theirs to observe it.
   erpLease?: ErpLease;
-  // Where 去报销 jobs run. Without one (production), in the task owner's paired 浏览器扩展 over its channel
+  // Where 去报销 jobs run. Without one (production), in the task owner's paired 本地执行器 over its channel
   // (`erp/remote-executor.ts`); `cdpFillExecutor` on the dedicated Chromium only from the development and e2e entries
   // and `pnpm test:erp-live`; a fake in tests.
   erpExecutor?: FillExecutor;
@@ -127,15 +127,14 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // A settled 去报销 may start an 自动重新去报销 (ADR-0034); the owner's task service decides.
   const fillJobs = createFillJobs({ db, lease: erpLease, execute: erpExecutor ?? remote.fill, record, schedule, onSettled: (run, outcome) => serviceFor(run.accountId).autoRerun(run.taskId, run.jobId, outcome) });
   const reconcileJobs = createReconcileJobs({ db, lease: erpLease, execute: reconcileExecutor ?? remote.reconcile, record, schedule });
-  // Story 13: a 去报销 bound for the owner's 浏览器扩展 is refused before any job exists when there is no extension to
-  // run it, saying which is missing. An injected executor (development, e2e, tests) needs no extension. The in-job
+  // Story 13 and ADR-0037: a 去报销 runs only in the owner's paired 本地执行器, and is refused before any job exists when
+  // it cannot run there, saying which is missing. No pairing at all is the task policy's refusal (`executorPaired`,
+  // with the 设置页 as its link); a pairing whose 本地执行器 is not connected, or that has no authorised 凭据 to sign in
+  // with, is `executorReady`'s. An injected executor (development, e2e, tests) needs neither. The in-job
   // `extension_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
-  // A baox 本地执行器 signs in itself, so it also needs authorised ERP 凭据 before anything starts.
-  const extensionReady = async (tx: Db, accountId: string) => {
-    if (extensionChannel.connected(accountId)) return (await erpCredentialsReady(tx, accountId, !!erpCredentialKey)) ? null : { code: ERP_CREDENTIALS_MISSING_CODE, message: ERP_CREDENTIAL_ERRORS.missing };
-    return (await hasPairing(tx, accountId))
-      ? { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.extensionOffline }
-      : { code: EXTENSION_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.extensionNotPaired };
+  const executorReady = async (tx: Db, accountId: string) => {
+    if (!extensionChannel.connected(accountId)) return { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.executorOffline };
+    return (await erpCredentialsReady(tx, accountId, !!erpCredentialKey)) ? null : { code: ERP_CREDENTIALS_MISSING_CODE, message: ERP_CREDENTIAL_ERRORS.missing };
   };
   const erpService: ErpServiceOptions = {
     lease: erpLease,
@@ -144,7 +143,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     reconcile: (job) => reconcileJobs.run(job),
     acquireErp: () => maintenance.enter('erp'),
     acquireBackground: () => maintenance.enter('background'),
-    ...(erpExecutor ? {} : { executorReady: extensionReady }),
+    ...(erpExecutor ? {} : { executorPaired: hasPairing, executorReady }),
     // The same test that decides whether a job is sent 凭据 (and 暂存s): only then is the executor a 本地执行器.
     unattended: async (accountId) => autoRerun && (await erpCredentials.forJob(accountId)) !== null,
   };

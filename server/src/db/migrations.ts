@@ -765,6 +765,25 @@ const installCode412: Migration = {
   },
 };
 
+// Spec #432 (ADR-0037): the 本地执行器 is the only way to 去报销, and baox is in its test stage, so nothing is carried
+// forward. Every pairing that is not a 本地执行器's goes without notice (an extension's, and one from before 0021
+// recorded a holder, which was an extension); the table is renamed `pairing` and loses `holder`. `erp_job.route` (0023)
+// goes too: every job is worded with the one 本地执行器 step list. DROP COLUMN keeps erp_job's append-only triggers,
+// which name no column, and the route's own CHECK goes with it.
+const onePairing432: Migration = {
+  async up(db: Kysely<unknown>) {
+    await sql`DELETE FROM extension_pairing WHERE holder IS NULL OR holder <> 'local_executor'`.execute(db);
+    await db.schema.alterTable('extension_pairing').dropColumn('holder').execute();
+    await db.schema.alterTable('extension_pairing').renameTo('pairing').execute();
+    // SQLite cannot rename an index; the two of 0015 are made again under the table's name.
+    await db.schema.dropIndex('extension_pairing_token').execute();
+    await db.schema.dropIndex('extension_pairing_code').execute();
+    await db.schema.createIndex('pairing_token').unique().on('pairing').column('token_sha256').execute();
+    await db.schema.createIndex('pairing_code').on('pairing').column('code_sha256').execute();
+    await db.schema.alterTable('erp_job').dropColumn('route').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -798,4 +817,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0022_line2_rerun_trigger': rerunTrigger,
   '0023_412_erp_job_route': erpJobRoute423,
   '0024_412_install_code': installCode412,
+  '0025_432_one_pairing': onePairing432,
 };

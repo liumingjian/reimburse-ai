@@ -1,4 +1,4 @@
-import { ERP_ACTION_ERRORS, PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type ChannelMessage } from '@baox/contract';
+import { ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type ChannelMessage } from '@baox/contract';
 import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
@@ -22,9 +22,10 @@ import { fakeErpFor, SCENE_RECEIPT_NUMBER } from './test/scene-erp';
 import { attemptedActions } from './test/erp-records';
 import { manualTimers } from './test/timers';
 
-// #254: the server drives an executor in the 应用账号's paired 浏览器扩展 over its channel (spec #246 seam 2). No
-// executor is passed to the app, so every job goes to the extension, as in production; a fake extension client runs the
-// executor on its side of the wire. The judgement, the attempt discipline and the lease stay the server's.
+// #254: the server drives an executor in the 应用账号's paired client over its channel (spec #246 seam 2). No executor
+// is passed to the app, so every job goes to the paired 本地执行器, as in production (ADR-0037): with the account's
+// authorised 凭据, and every fill 暂存s. A fake client runs the executor on its side of the wire. The judgement, the
+// attempt discipline and the lease stay the server's.
 // The job's event journal (erp_job_event), its action attempts (动作尝试, erp_attempt) and erp_job rows are read from the database: the
 // snapshot shows the job's outcome, not the record these tests are about.
 
@@ -40,7 +41,7 @@ let timers: ReturnType<typeof manualTimers>;
 beforeEach(async () => {
   fake = null;
   timers = manualTimers();
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
+  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule, autoRerun: false });
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());
@@ -52,6 +53,7 @@ async function pair(owner: TestClient): Promise<string> {
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
     body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: CLIENT_VERSION }),
   });
+  await server.authoriseErpCredentials(owner.account.accountId);
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
@@ -102,7 +104,7 @@ const attemptStarted = (plan: FillPlan): Extract<ExecutorEvent, { type: 'attempt
 });
 
 describe('去报销 in the paired 浏览器扩展', () => {
-  it('hands the plan down, takes every event back in order, and hands the filled form over', async () => {
+  it('hands the plan down with the 凭据, takes every event back in order, and ends at the 暂存 draft', async () => {
     // At each ack, what the extension can observe: is the attempt already durable, and has ERP been touched yet?
     const acks: Array<{ action: string; durable: boolean; mutationsBefore: string[] }> = [];
     const watched = (channel: ExecutorChannel): ExecutorChannel => ({
@@ -122,16 +124,24 @@ describe('去报销 in the paired 浏览器扩展', () => {
     const done = await scene.run('start-erp-write');
 
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
-    expect(extension.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: { trigger: 'start', plan: expect.objectContaining({ kind: 'fill', taskId: scene.task.taskId }) } }]);
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
+    expect(extension.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: {
+      trigger: 'start',
+      plan: expect.objectContaining({ kind: 'fill', taskId: scene.task.taskId, draft: { mark: expect.stringMatching(/^baox-/) } }),
+      credentials: { account: 'zhangsan', password: 'erp-Pa55' },
+    } }]);
     // Every event the extension sent is on the job's record, in the order sent; the verdicts it acted on were the server's.
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(extension.sent().map((event) => event.type));
     expect(new Set(extension.sent().map((event) => event.type))).toEqual(new Set(['step', 'attempt_started', 'readback', 'result']));
     // `attempt_started` was durable before its ack reached the extension, and the ack came before that action's write.
-    expect(acks).toEqual([
-      { action: 'import', durable: true, mutationsBefore: [] },
-      { action: 'fill', durable: true, mutationsBefore: ['import'] },
+    expect(acks.map(({ action, durable }) => ({ action, durable }))).toEqual([
+      { action: 'import', durable: true },
+      { action: 'fill', durable: true },
+      { action: 'save', durable: true },
     ]);
+    expect(acks[0]!.mutationsBefore).toEqual([]);
+    expect(acks[1]!.mutationsBefore).toEqual(['import']);
+    expect(acks[2]!.mutationsBefore).not.toContain('draft');
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
@@ -161,19 +171,20 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知' } });
   });
 
-  // Story 13: said before starting, with no job created, and the two causes told apart.
+  // Story 13 and ADR-0037: said before starting, with no job created, and the two causes told apart. With nothing
+  // paired the refusal also carries the 设置页 as its link target.
   it.each([
-    ['no extension is paired', false, 'extension_not_paired', ERP_ACTION_ERRORS.extensionNotPaired],
-    ['the paired extension is not connected', true, 'extension_offline', ERP_ACTION_ERRORS.extensionOffline],
-  ])('refuses 去报销 before any job exists when %s, and points at the settings page', async (_case, paired, code, message) => {
+    ['no 本地执行器 is paired', false, { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' }],
+    ['the paired 本地执行器 is not connected', true, { code: 'extension_offline', message: ERP_ACTION_ERRORS.executorOffline }],
+  ])('refuses 去报销 before any job exists when %s, and points at the settings page', async (_case, paired, error) => {
     if (paired) await pair(alice);
     const scene = await actionsOnFakeErp();
 
     const refused = await scene.act('start-erp-write');
 
     expect(refused.status).toBe(400);
-    expect(await refused.json()).toMatchObject({ error: { code, message } });
-    expect(message).toContain('设置页');
+    expect(((await refused.json()) as { error: unknown }).error).toEqual(error);
+    expect(error.message).toContain('设置页');
     expect(await server.db.selectFrom('erp_job').select('job_id').where('task_id', '=', scene.task.taskId).execute()).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     expect((await scene.snapshot()).erp.status).toBe('idle');
@@ -187,8 +198,8 @@ describe('去报销 in the paired 浏览器扩展', () => {
 
     const stopped = await scene.run('start-erp-write');
 
-    expect(stopped.erp.abortReason).toContain('浏览器扩展');
-    expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'extension_connection', outcome: 'none', allowedActions: ['refresh'] });
+    expect(stopped.erp.abortReason).toContain('本地执行器');
+    expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'executor_connection', outcome: 'none', allowedActions: ['refresh'] });
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_offline' }]);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
@@ -340,7 +351,7 @@ describe('an interrupted 去报销', () => {
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(stopped.erp.status).toBe('idle');
-    expect(stopped.erp.abortReason).toBe('上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：浏览器扩展和报销系统页面之间的连接中断了，两分钟内没有恢复。');
+    expect(stopped.erp.abortReason).toBe('上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：本地执行器和报销系统页面之间的连接中断了，两分钟内没有恢复。');
     expect(server.erpLease.acquire(other)).toBe(true);
     server.erpLease.release(other.jobId);
     // Too late to resume: the job reads like no job at all.
@@ -666,7 +677,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
     return new Set(logged).size === logged.length;
   };
 
-  it('resumes after the socket drops under the import attempt’s answer, and hands the form over with nothing replayed', async () => {
+  it('resumes after the socket drops under the import attempt’s answer, and 暂存s with nothing replayed', async () => {
     const token = await pair(alice);
     const scene = await actionsOnFakeErp();
     let cutOnce = false;
@@ -686,8 +697,8 @@ describe('the real 浏览器扩展 across an interruption', () => {
     expect(extension.asked()).not.toContain(EXECUTOR_METHODS.detached);
     expect(extension.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
     // One attempt per action went out, the one whose answer was lost included; nothing is on record twice.
-    expect(extension.asked().filter((type) => type === 'attempt_started')).toHaveLength(2);
-    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import', 'fill']);
+    expect(extension.asked().filter((type) => type === 'attempt_started')).toHaveLength(3);
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import', 'fill', 'save']);
     expect(await onceEach(scene.task.taskId)).toBe(true);
     expect(fake!.mutations.filter((mutation) => mutation.kind === 'import')).toHaveLength(1);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);

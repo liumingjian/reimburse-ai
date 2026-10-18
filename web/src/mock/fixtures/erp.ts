@@ -1,12 +1,12 @@
 import {
   ERP_DRAFT_CHECK_PROGRESS_LABEL,
-  ERP_ROUTE_STEPS,
+  ERP_EXTENSION_STEPS,
+  ERP_STEPS,
   HUMAN_REVIEW_NOTICE,
   READBACK_FIELD_LABELS,
   RECONCILE_ACTION_LABELS,
   RECONCILE_UNJUDGED_BANNER,
   type Erp,
-  type ErpRoute,
   type ErpStep,
   type Line,
   type Readback,
@@ -21,8 +21,11 @@ import {
 // Mock execution reuses the contract's factual stage lists, one per 去报销 route (#423). Its timers only advance the
 // simulated server; no duration is presented as ERP progress, and the percentage counts steps the way the server does.
 // The mock plays the 浏览器扩展 route unless `?route=local_executor` asks for the 本地执行器.
+// The server words every job with ERP_STEPS (ADR-0037); the mock's extension route goes with the 设置页 choice (#437).
+export type ErpRoute = 'extension' | 'local_executor';
 type StepDef = Pick<ErpStep, 'key' | 'title' | 'description'>;
-export const erpStepDefs = (route: ErpRoute = 'extension'): ReadonlyArray<StepDef> => ERP_ROUTE_STEPS[route];
+const ROUTE_STEPS: Readonly<Record<ErpRoute, ReadonlyArray<StepDef>>> = { extension: ERP_EXTENSION_STEPS, local_executor: ERP_STEPS };
+export const erpStepDefs = (route: ErpRoute = 'extension'): ReadonlyArray<StepDef> => ROUTE_STEPS[route];
 export const ERP_STEP_DEFS = erpStepDefs('extension');
 export const ERP_LOCAL_STEP_DEFS = erpStepDefs('local_executor');
 

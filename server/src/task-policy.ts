@@ -2,10 +2,12 @@ import {
   CONFIRM_REVIEW_ERRORS,
   ERP_ACTION_ERRORS,
   ERP_IN_USE_CODE,
+  EXECUTOR_NOT_PAIRED_CODE,
   HOME_CITY_ERRORS,
   PROJECT_ASSIGNMENT_ERRORS,
   REOPEN_UPLOAD_ERRORS,
   TASK_ACTIONS,
+  type ActionLink,
   type Blocker,
   type Erp,
   type Reconcile,
@@ -59,6 +61,11 @@ export type TaskFacts = {
   // it guards and the snapshot leaves it unset (read as configured): the actions that take the lease refuse
   // `not_ready` without one, before anything else about the ERP.
   erpConfigured?: boolean;
+  // Whether the account has a paired 本地执行器, the only executor 去报销 runs on (ADR-0037). Like `erpConfigured`, the
+  // task service sets it for the writes it guards, and only where jobs go to the paired 本地执行器 (an executor injected
+  // in development and tests needs none); the snapshot leaves it unset (read as paired), so 去报销 stays on offer and
+  // the employee clicking it is told what is missing.
+  executorPaired?: boolean;
 };
 
 // The phase of a task's latest fill job, derived from its result (none yet = running) and a cancel of its login pause.
@@ -94,7 +101,8 @@ export const ACTION_COPY = {
   itemNotFound: '这次盘点没有这个待确认项。',
 } as const;
 
-export type Refusal = { code: string; message: string };
+// `link`: where the employee fixes what the refusal names (the contract's ACTION_LINKS), for a refusal that has one.
+export type Refusal = { code: string; message: string; link?: ActionLink };
 
 // What the policy reads from the task's ERP record beyond the phase: the ADR-0014 freeze flag (`attempted`), the 对账
 // (reconcile) verdict and the fill's result, which carry the bill number (单据编号) read so far. The phase and the
@@ -157,6 +165,8 @@ const NOT_WAITING_LOGIN: Refusal = { code: 'not_waiting_login', message: ERP_ACT
 const NOT_RECONCILING: Refusal = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling };
 const NOT_ALLOWED: Refusal = { code: 'action_not_allowed', message: ERP_ACTION_ERRORS.notAllowed };
 export const ERP_IN_USE: Refusal = { code: ERP_IN_USE_CODE, message: ERP_ACTION_ERRORS.inUse };
+// No 本地执行器 paired to the account: nothing can run an ERP job, and the 设置页 is where one is installed.
+const EXECUTOR_NOT_PAIRED: Refusal = { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' };
 // A refusal the parser job expects when the run moved on under it; never shown to anyone.
 export const STALE_JOB: Refusal = { code: 'stale_job', message: 'the inventory run changed under the parser job' };
 // The server's own refusal of an 自动重新去报销 whose moment passed (a later job, a 对账, a hand-off); never shown.
@@ -351,6 +361,8 @@ function admit(facts: TaskFacts, erp: ErpVerdict | null, step: Step['kind'], act
   }
   const refusal = request ?? ready?.(facts, step, erp) ?? null;
   if (refusal) return refusal;
+  // The action would start an ERP job now, and there is no 本地执行器 to run it (ADR-0037).
+  if (!job && takesLease && facts.executorPaired === false) return EXECUTOR_NOT_PAIRED;
   if (!job && takesLease === 'after_ready' && facts.erpLease === 'other') return ERP_IN_USE;
   return 'ok';
 }

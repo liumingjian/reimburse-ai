@@ -1,7 +1,7 @@
 // The snapshot's `erp`, `readback`, `reconcile` and `catalog` sections, worded from the task's ERP record
 // (`erp/fill-state.ts`). Which actions are on offer is the task policy's (`task-policy.ts`); these views only word them.
 
-import { ERP_DRAFT_CHECK_PROGRESS_LABEL, ERP_ROUTE_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgress, type ErpProgressStage, type ErpReview, type ErpRoute, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { ERP_DRAFT_CHECK_PROGRESS_LABEL, ERP_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgress, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
@@ -23,15 +23,13 @@ const DISPLAY_EVENT_STEPS: Readonly<Record<ErpProgressStage, DisplayEvents>> = {
   fill: { from: ['fill'] },
   handover: { from: ['save', 'handover'] },
 };
-// On the 本地执行器 the last step, 暂存到报销系统, covers the strict read-back before 暂存, the 暂存 and 核对暂存单.
+// The last step, 暂存到报销系统, covers the strict read-back before 暂存, the 暂存 and 核对暂存单.
 const LOCAL_DRAFT_EVENTS: DisplayEvents = { from: ['handover', 'save', 'draft_check'], doneOn: 'draft_check' };
 // The bar counts that step as two: 暂存 (with the read-back before it), then 核对暂存单.
 const LOCAL_SAVE_EVENTS: DisplayEvents = { from: ['handover', 'save'], doneOn: 'save' };
 const LOCAL_CHECK_EVENTS: DisplayEvents = { from: ['draft_check'] };
-const HANDOVER_EVENTS: DisplayEvents = { from: ['handover'] };
 
-const displayEventsOf = (route: ErpRoute, key: ErpProgressStage): DisplayEvents =>
-  (route === 'local_executor' && key === 'handover' ? LOCAL_DRAFT_EVENTS : DISPLAY_EVENT_STEPS[key]);
+const displayEventsOf = (key: ErpProgressStage): DisplayEvents => (key === 'handover' ? LOCAL_DRAFT_EVENTS : DISPLAY_EVENT_STEPS[key]);
 
 type StepStatus = 'running' | 'done' | 'failed';
 const FINISHED_PHASES: ReadonlySet<ErpPhase> = new Set(['handed_over', 'drafted', 'saved']);
@@ -56,12 +54,12 @@ function statusOver(latest: ReadonlyMap<string, StepStatus>, { from, doneOn }: D
   return status;
 }
 
-/** The job's route list (#423), each step's status from the events it covers. */
+/** The one step list (ADR-0037), each step's status from the events it covers. */
 function stepsOf(record: ErpRecord): ErpStep[] {
   const phase = record.facts?.phase;
   const latest = latestSteps(record);
-  const steps = ERP_ROUTE_STEPS[record.route].map(({ key, title, description }): ErpStep => {
-    let status = statusOver(latest, displayEventsOf(record.route, key));
+  const steps = ERP_STEPS.map(({ key, title, description }): ErpStep => {
+    let status = statusOver(latest, displayEventsOf(key));
     if (phase && FINISHED_PHASES.has(phase)) status = 'done';
     if (phase === 'waiting_login' && key === 'login') status = 'waiting';
     return { key, title, description, status };
@@ -70,10 +68,9 @@ function stepsOf(record: ErpRecord): ErpStep[] {
   return steps;
 }
 
-// 去报销进度 (#420): what the bar counts, over the job's own route list (#423). Each unit is one shown step, except
-// 填写明细, which weighs one per 明细 row when the executor reports rows, and the 本地执行器's 暂存到报销系统, which
-// counts as 暂存 and 核对暂存单. Without row progress (an executor or 浏览器扩展 from before it) each shown step is one
-// unit, whatever ran under it.
+// 去报销进度 (#420): what the bar counts, over the step list. Each unit is one shown step, except 填写明细, which weighs
+// one per 明细 row when the executor reports rows, and 暂存到报销系统, which counts as 暂存 and 核对暂存单. Without row
+// progress (an executor from before it) each shown step is one unit, whatever ran under it.
 type ProgressUnit = { label: string; weight: number; done: number; status: ErpStep['status'] };
 
 function progressUnits(record: ErpRecord, steps: readonly ErpStep[]): ProgressUnit[] {
@@ -89,10 +86,9 @@ function progressUnits(record: ErpRecord, steps: readonly ErpStep[]): ProgressUn
   const raw = (events: DisplayEvents): ErpStep['status'] => (finished ? 'done' : statusOver(latest, events));
   const rowsTotal = Math.max(1, rowProgress?.total ?? record.preview?.lines.length ?? record.frozen?.judge.lines.length ?? 1);
   return steps.flatMap((step): ProgressUnit[] => {
-    if (step.key === 'handover' && record.route === 'local_executor') {
+    if (step.key === 'handover') {
       return [whole({ title: step.title, status: raw(LOCAL_SAVE_EVENTS) }), whole({ title: ERP_DRAFT_CHECK_PROGRESS_LABEL, status: raw(LOCAL_CHECK_EVENTS) })];
     }
-    if (step.key === 'handover') return [whole({ title: step.title, status: raw(HANDOVER_EVENTS) })];
     if (step.key !== 'fill') return [whole(step)];
     const rowsDone = step.status === 'done' ? rowsTotal : Math.min(rowsTotal, rowProgress?.done ?? 0);
     return [{ label: step.status === 'todo' ? step.title : `${step.title} ${rowsDone}/${rowsTotal}`, weight: rowsTotal, done: rowsDone, status: step.status }];
@@ -120,12 +116,12 @@ function currentStageOf(steps: readonly ErpStep[]): Erp['currentStage'] {
   return complete ? complete.key as ErpProgressStage : null;
 }
 
-const EXTENSION_WAIT_CODES = new Set([EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE, 'extension_reconnect_expired']);
+const CONNECTION_WAIT_CODES = new Set([EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE, 'extension_reconnect_expired']);
 
 function externalWaitOf(record: ErpRecord): Erp['externalWait'] {
   if (record.facts?.phase === 'waiting_login') return 'employee_login';
   if (record.facts?.phase === 'running') return 'erp_response';
-  return record.result?.code && EXTENSION_WAIT_CODES.has(record.result.code) ? 'extension_connection' : 'none';
+  return record.result?.code && CONNECTION_WAIT_CODES.has(record.result.code) ? 'executor_connection' : 'none';
 }
 
 // The executor's code for "报销信息核对 could not read the catalog" (`erp-executor/src/job.ts`). Nothing was written and

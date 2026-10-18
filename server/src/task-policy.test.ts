@@ -1,4 +1,4 @@
-import { CONFIRM_REVIEW_ERRORS, ERP_ACTION_ERRORS, HOME_CITY_ERRORS, PROJECT_ASSIGNMENT_ERRORS, REOPEN_UPLOAD_ERRORS, TASK_ACTIONS, type Blocker, type ReconcileBucket, type TaskAction } from '@baox/contract';
+import { CONFIRM_REVIEW_ERRORS, ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, HOME_CITY_ERRORS, PROJECT_ASSIGNMENT_ERRORS, REOPEN_UPLOAD_ERRORS, TASK_ACTIONS, type Blocker, type ReconcileBucket, type TaskAction } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { NO_ERP, type ErpRecord, type ReconcileJudgement } from './erp/fill-state';
 import { ACTION_COPY, STALE_JOB, taskPolicy, type ActionName, type Admission, type ErpFacts, type TaskFacts } from './task-policy';
@@ -80,6 +80,8 @@ const inUse = { code: 'erp_in_use', message: ERP_ACTION_ERRORS.inUse };
 const record = (extra: Partial<ErpRecord> = {}): ErpRecord => ({ ...NO_ERP, ...extra });
 const notReady = { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
 const notReconciling = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling };
+// The refusal names the 设置页 in words and as a link target, so the page can offer the way there.
+const notPaired = { code: EXECUTOR_NOT_PAIRED_CODE, message: '先在设置页安装本地执行器。', link: 'settings' } as const;
 
 describe('taskPolicy: admit', () => {
   it.each<[string, Partial<TaskFacts>, boolean, ActionName, string | null, Admission]>([
@@ -226,6 +228,14 @@ describe('taskPolicy: ERP actions refused by phase and verdict', () => {
     ['我已登录，继续 without an ERP', { ...confirmed, erp: job('waiting_login'), erpConfigured: false }, {}, 'confirm_login', notReady],
     ['重新去报销 without an ERP, not on offer', { ...unknown, erpConfigured: false }, { attempted: true, ...judged('不自洽', '转人工') }, 'refill', notReady],
     ['对账 without an ERP, on a known write result', { ...confirmed, erp: job('aborted'), erpConfigured: false }, {}, 'reconcile', notReady],
+    // ADR-0037: the 本地执行器 is the only way to 去报销. With none paired to the account, every action that starts an
+    // ERP job is refused with the way out (the 设置页), once the action's own step would admit it.
+    ['去报销 with no 本地执行器 paired', { ...confirmed, executorPaired: false }, {}, 'start_erp_write', notPaired],
+    ['去报销 with the 本地执行器 paired', { ...confirmed, executorPaired: true }, {}, 'start_erp_write', 'ok'],
+    ['去报销 before the confirmation, nothing paired: not ready first', { ...submitted, executorPaired: false }, {}, 'start_erp_write', notReady],
+    ['重新去报销 on offer, nothing paired', { ...unknown, executorPaired: false }, { attempted: true, ...judged('未保存·已导入未写明细', '转人工') }, 'refill', notPaired],
+    ['对账 with nothing paired', { ...unknown, executorPaired: false }, { attempted: true }, 'reconcile', notPaired],
+    ['转人工 needs no 本地执行器', { ...unknown, executorPaired: false }, { attempted: true }, 'hand_off', 'ok'],
     ['转人工 needs no ERP', { ...unknown, erpConfigured: false }, { attempted: true }, 'hand_off', 'ok'],
     ['cancelling the login pause needs no ERP', { ...confirmed, erp: job('waiting_login'), erpConfigured: false }, {}, 'cancel_erp_write', 'ok'],
     ['转人工 takes no lease', { ...unknown, erpLease: 'other' }, { attempted: true }, 'hand_off', 'ok'],

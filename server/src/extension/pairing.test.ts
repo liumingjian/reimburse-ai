@@ -67,7 +67,7 @@ describe('扩展配对 (extension pairing)', () => {
     expect(await errorOf(again)).toBe('pairing_code_invalid');
 
     // Stored the way a session is: the code and the token themselves are nowhere in the row, only their sha256.
-    const rows = JSON.stringify(await server.db.selectFrom('extension_pairing').selectAll().execute());
+    const rows = JSON.stringify(await server.db.selectFrom('pairing').selectAll().execute());
     expect(rows).not.toContain(paired.token);
     expect(rows).not.toContain(codeOf(issued));
   });
@@ -124,8 +124,8 @@ describe('扩展配对 (extension pairing)', () => {
     expect(Date.parse(later.lastConnectedAt ?? '')).toBeGreaterThan(Date.parse(paired.pairedAt ?? ''));
   });
 
-  // 去报销的方式 on the 设置页 (#428) is derived from this: the page reads which method holds the pairing.
-  it('names the pairing\'s holder: the 本地执行器 when it said so, otherwise the 浏览器扩展, and none before pairing', async () => {
+  // ADR-0037: every pairing is a 本地执行器's, whatever the client said it was, and none before pairing.
+  it('names the 本地执行器 as the holder of every pairing, and none before pairing', async () => {
     expect((await view(alice)).holder).toBeNull();
     const issued = await issue(alice);
     expect(issued.holder).toBeNull();
@@ -134,7 +134,7 @@ describe('扩展配对 (extension pairing)', () => {
     expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'local_executor' });
 
     await pair(alice);
-    expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'extension' });
+    expect(await view(alice)).toMatchObject({ status: 'paired', holder: 'local_executor' });
     expect((await revoke(alice)).holder).toBeNull();
   });
 

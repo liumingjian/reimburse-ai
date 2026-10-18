@@ -1,11 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, PAIRING_PATH, CLIENT_VERSION, ErpCredentialsViewSchema, PairingViewSchema, PairingTokenSchema, type PairingHolderKind } from '@baox/contract';
+import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, PAIRING_PATH, CLIENT_VERSION, ErpCredentialsViewSchema, PairingViewSchema, PairingTokenSchema } from '@baox/contract';
 import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
-import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { drafted, handedOver, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
+import { drafted, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
 import { draftMarkOf } from './erp/remote-executor';
 import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
 import type { TestClient } from './test/harness';
@@ -13,7 +12,7 @@ import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // ERP 凭据 hosted for the baox 本地执行器 (ADR-0033, erp-headless-v1.md line 2 item 1): saved write-only, sealed with
 // the server's key, tried on the employee's PC through the paired 本地执行器, deleted the moment ERP refuses them, and
-// sent down with each job to a 本地执行器 only.
+// sent down with each job.
 
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const PASSWORD = 'erp-Pa55-秘密';
@@ -28,20 +27,20 @@ async function start(key: Buffer | null = randomBytes(32)) {
 beforeEach(() => start());
 afterEach(() => server.close());
 
-async function pair(owner: TestClient, holder?: PairingHolderKind): Promise<string> {
+async function pair(owner: TestClient): Promise<string> {
   const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, ...(holder ? { holder } : {}) }),
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION, holder: 'local_executor' }),
   });
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
 const trials: TrySignInRequest[] = [];
 beforeEach(() => { trials.length = 0; });
-async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner, holder: PairingHolderKind = 'local_executor'): Promise<FakeExtension> {
-  const extension = fakeExtension(server.app.extensionChannel, await pair(alice, holder), {
+async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner): Promise<FakeExtension> {
+  const extension = fakeExtension(server.app.extensionChannel, await pair(alice), {
     trySignIn: async (request) => { trials.push(request); return answer; },
     ...(fill ? { fill } : {}),
   });
@@ -84,8 +83,7 @@ describe('ERP 凭据 on the settings page', () => {
 
   it.each<[string, () => Promise<void>, string]>([
     ['nothing is paired', async () => undefined, ERP_CREDENTIAL_ERRORS.notPaired],
-    ['no 本地执行器 is connected', async () => { await pair(alice, 'local_executor'); }, ERP_CREDENTIAL_ERRORS.noExecutor],
-    ['the pairing is a 浏览器扩展', async () => { await executor({ ok: true }, undefined, 'extension'); }, ERP_CREDENTIAL_ERRORS.notLocalExecutor],
+    ['no 本地执行器 is connected', async () => { await pair(alice); }, ERP_CREDENTIAL_ERRORS.noExecutor],
   ])('saves them untested, and asks nothing, when %s', async (_case, setUp, message) => {
     await setUp();
     expect(await view(await save())).toMatchObject({ status: 'untested', erpAccount: 'zhangsan', message });
@@ -130,17 +128,6 @@ describe('去报销 through a baox 本地执行器', () => {
     expect(fill.payload).toMatchObject({ credentials: { account: 'zhangsan', password: PASSWORD } });
     const stored = await server.db.selectFrom('erp_job').select('plan').where('task_id', '=', scene.task.taskId).executeTakeFirstOrThrow();
     expect(stored.plan).not.toContain(PASSWORD);
-  });
-
-  it('never sends them to a 浏览器扩展', async () => {
-    const extension = await executor({ ok: true }, (plan, channel) => uncertainSave(plan, channel), 'extension');
-    await server.db.insertInto('erp_credential').values({ account_id: alice.account.accountId, erp_account: 'zhangsan', password_sealed: 'v1.x.y.z', status: 'authorised', message: null, saved_at: new Date().toISOString(), checked_at: null }).execute();
-    const scene = await sceneOnFakeErp();
-
-    await scene.run('start-erp-write');
-
-    expect(extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!.payload).not.toHaveProperty('credentials');
-    expect(extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!.payload).not.toHaveProperty(['plan', 'draft']);
   });
 
   // ADR-0029: the 本地执行器 runs unattended, so it 暂存s the bill under the job's ownership marker.
@@ -193,52 +180,20 @@ describe('去报销 through a baox 本地执行器', () => {
   });
 });
 
-// 按路线的步骤文案 (#423, spec #412 part B): a job records the route it ran on, the pairing holder when it started, and
-// its step list follows that route for good. Switching methods later rewrites no past job.
-describe('the 去报销 step list follows the route the job ran on', () => {
+// ADR-0037: one step list, the 本地执行器's, for every job.
+describe('the 去报销 step list', () => {
   const titles = (snapshot: { erp: { steps: Array<{ title: string }> } }) => snapshot.erp.steps.map((step) => step.title);
   const LOCAL = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
-  const EXTENSION = ['打开报销系统标签页', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '交接单据'];
 
-  it('keeps a 本地执行器 job on the 本地执行器 list after the account switches to the 浏览器扩展', async () => {
+  it('words a job with the 本地执行器 list, ending in 暂存到报销系统', async () => {
     await executor({ ok: true }, drafted);
     await save();
     const scene = await scenario(server, alice).at('actions');
 
     const done = await scene.run('start-erp-write');
+
     expect(titles(done)).toEqual(LOCAL);
     expect(done.erp.steps.at(-1)).toMatchObject({ description: '你检查后自己提交', status: 'done' });
     expect(done.erp.progress).toEqual({ label: '核对暂存单', percent: 100 });
-    expect(await server.db.selectFrom('erp_job').select('route').where('task_id', '=', scene.task.taskId).execute()).toEqual([{ route: 'local_executor' }]);
-
-    await executor({ ok: true }, undefined, 'extension');
-    expect(titles(await scene.snapshot())).toEqual(LOCAL);
-  });
-
-  // A job from before routes were recorded (migration 0023, route null) that 暂存'd can only have run on a 本地执行器:
-  // only it gets the draft mark and the 凭据. Its list does not follow the holder the account has now.
-  it('keeps a 暂存 job from before routes were recorded on the 本地执行器 list after the switch', async () => {
-    await executor({ ok: true }, drafted);
-    await save();
-    const scene = await scenario(server, alice).at('actions');
-    await scene.run('start-erp-write');
-    // erp_job is append-only; lift the guard just long enough to make the row look pre-0023.
-    await sql`DROP TRIGGER erp_job_no_update`.execute(server.db);
-    await server.db.updateTable('erp_job').set({ route: null }).where('task_id', '=', scene.task.taskId).execute();
-
-    await executor({ ok: true }, undefined, 'extension');
-
-    expect(titles(await scene.snapshot())).toEqual(LOCAL);
-  });
-
-  it('gives a 浏览器扩展 job the list it always had, ending in 交接单据', async () => {
-    await executor({ ok: true }, handedOver(), 'extension');
-    const scene = await scenario(server, alice).at('actions');
-
-    const done = await scene.run('start-erp-write');
-
-    expect(titles(done)).toEqual(EXTENSION);
-    expect(done.erp.progress).toEqual({ label: '交接单据', percent: 100 });
-    expect(await server.db.selectFrom('erp_job').select('route').where('task_id', '=', scene.task.taskId).execute()).toEqual([{ route: 'extension' }]);
   });
 });

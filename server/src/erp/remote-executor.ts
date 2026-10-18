@@ -21,10 +21,10 @@
 //   server's own guard (`afterAttempts`) turns it into `unknown` — 对账, never a replay — when an attempt is durable.
 //   Nothing is re-sent in either direction: the plan is never asked for again, and the resumed extension is told how
 //   many of its events are on record so it sends none of them twice.
-// - ERP 凭据 (ADR-0033). A job bound for a baox 本地执行器 carries the account's authorised 凭据 next to the plan (never
-//   in it: the plan is stored). A login ERP refuses in that job deletes them (`hosted-sign-in.ts`). Its fill plan also
-//   carries `draft` (ADR-0029): the 本地执行器 ends unattended, so it 暂存s the bill under baox's ownership marker, which
-//   is derived from the job id and lands on record with the `save` attempt before 暂存 is pressed.
+// - ERP 凭据 (ADR-0033, ADR-0037). Every job carries the account's authorised 凭据 next to the plan (never in it: the
+//   plan is stored). A login ERP refuses in that job deletes them (`hosted-sign-in.ts`). Every fill plan also carries
+//   `draft` (ADR-0029): the 本地执行器 ends unattended, so it 暂存s the bill under baox's ownership marker, which is
+//   derived from the job id and lands on record with the `save` attempt before 暂存 is pressed.
 
 import { createHash } from 'node:crypto';
 import type { Db } from '../db/database';
@@ -40,7 +40,7 @@ import {
 
 // Past the window, whether it was the socket or the debugger that went: one event, one outcome.
 export const RECONNECT_EXPIRED_CODE = 'extension_reconnect_expired';
-const RECONNECT_EXPIRED_MESSAGE = '浏览器扩展和报销系统页面之间的连接中断了，两分钟内没有恢复。';
+const RECONNECT_EXPIRED_MESSAGE = '本地执行器和报销系统页面之间的连接中断了，两分钟内没有恢复。';
 // Back within the window, but the page is not the one the job left.
 export const REOBSERVATION_MISMATCH_CODE = 'reobservation_mismatch';
 
@@ -119,12 +119,16 @@ export type JobCredentials = {
 /** baox's ownership marker for a job (ADR-0029): one per job, the same on every send, unguessable as its job id is. */
 export const draftMarkOf = (jobId: string) => `baox-${createHash('sha256').update(`baox-draft:${jobId}`).digest('hex').slice(0, 10)}`;
 
-/** What goes to the executor: a job bound for a 本地执行器 (it is sent 凭据) also 暂存s its bill under the job's marker. */
+/**
+ * What goes to the 本地执行器 (ADR-0037): every fill 暂存s its bill under the job's marker, and every job carries the
+ * account's 凭据. `app.ts` refuses a 去报销 without authorised ones before any job exists; should they be refused or
+ * cleared between that check and the dispatch, the job goes without them and ends at its sign-in.
+ */
 function payloadFor(method: string, payload: FillRequest | ReconcileRequest, credentials: ErpCredentials | null) {
-  if (!credentials) return payload;
-  if (method !== EXECUTOR_METHODS.fill) return { ...payload, credentials };
+  const signIn = credentials ? { credentials } : {};
+  if (method !== EXECUTOR_METHODS.fill) return { ...payload, ...signIn };
   const fill = payload as FillRequest;
-  return { ...fill, plan: { ...fill.plan, draft: { mark: draftMarkOf(fill.plan.jobId) } }, credentials };
+  return { ...fill, plan: { ...fill.plan, draft: { mark: draftMarkOf(fill.plan.jobId) } }, ...signIn };
 }
 
 const NO_CREDENTIALS: JobCredentials = { forJob: async () => null, refusedInJob: async () => undefined };
@@ -227,7 +231,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer, cred
         .where('job_id', '=', request.jobId).orderBy('started_at', 'desc').orderBy('attempt_id', 'desc').executeTakeFirst();
       const problems = reobservationProblems(request, attempt ? { preconditions: JSON.parse(attempt.preconditions) as Preconditions, account: attempt.erp_account, tenant: attempt.erp_tenant } : null);
       if (problems.length > 0) {
-        await conclude(job, REOBSERVATION_MISMATCH_CODE, `浏览器扩展重新连上之后，页面已经不是中断前的样子：${problems.join('；')}。`);
+        await conclude(job, REOBSERVATION_MISMATCH_CODE, `本地执行器重新连上之后，页面已经不是中断前的样子：${problems.join('；')}。`);
         return { ok: false, reasons: problems };
       }
       const { recorded } = await db.selectFrom('erp_job_event').select((eb) => eb.fn.countAll<number>().as('recorded')).where('job_id', '=', request.jobId).executeTakeFirstOrThrow();

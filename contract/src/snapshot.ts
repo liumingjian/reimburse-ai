@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
 import { TaskActionSchema, TaskStageSchema } from './stage';
 import { TaskPeriodSchema } from './task-list';
-import type { PairingHolderKind } from './channel';
 
 // 接口二：单任务完整快照。前端只渲染这里的值，不保存第二份业务状态，不计算、不判定。
 // 本文件在 #100 定下所有分节的名字与最小形状；后续票只加深分节，不重排结构。
@@ -824,15 +823,13 @@ export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 // ---- ERP 填报、回读、对账 ----
 
 // The ERP progress copy is part of the API: the server derives each state from recorded executor facts and the mock
-// reuses the same lists. Each 去报销 route has its own list (spec #412 part B): the paired browser extension opens one
-// ERP tab for this reimbursement, the employee logs in there, and the app fills and strictly reads the form back before
-// handing it over; the 本地执行器 starts a background browser, signs in with the saved 报销系统 account and ends by
-// 暂存-ing the bill.
+// reuses the same list. There is one list (ADR-0037): the 本地执行器 starts a background browser, signs in with the
+// saved 报销系统 account and ends by 暂存-ing the bill.
 export const ERP_PROGRESS_STAGE_KEYS = ['chromium', 'login', 'catalog', 'navigate', 'import', 'receipt', 'fill', 'handover'] as const;
 export const ErpProgressStageSchema = z.enum(ERP_PROGRESS_STAGE_KEYS);
 export type ErpProgressStage = z.infer<typeof ErpProgressStageSchema>;
 
-export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'extension_connection', 'erp_response'] as const;
+export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'executor_connection', 'erp_response'] as const;
 export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
 export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
 
@@ -855,14 +852,14 @@ export const ERP_HANDOVER_STEP_COPY = {
 
 // The 本地执行器's last step: the strict read-back, 暂存 (the `save` event, ADR-0029) and 核对暂存单. The bill waits in
 // the 报销系统 as a 暂存单 and submitting it is the employee's job. It holds the `handover` slot, the step that closes
-// 去报销 on either route.
+// 去报销.
 export const ERP_DRAFT_STEP_COPY = {
   key: 'handover',
   title: '暂存到报销系统',
   description: '你检查后自己提交',
 } as const;
 
-// The steps both routes share, word for word.
+// The middle steps, from 报销信息核对 to 填写明细.
 const ERP_SHARED_STEPS = [
   { key: 'catalog', title: '报销信息核对', description: '只读核对项目与费用项目：在报销系统里存在、名称一致、已审核且未禁用。' },
   { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，核对报销系统版本，确认是唯一一张空白单据。' },
@@ -871,6 +868,8 @@ const ERP_SHARED_STEPS = [
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。' },
 ] as const;
 
+// The 浏览器扩展's list, ending in 交接单据. No job is worded with it (ADR-0037): it stays only for the web mock's
+// extension route and goes with it (#437).
 export const ERP_EXTENSION_STEPS = [
   { key: 'chromium', title: '打开报销系统标签页', description: '通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。' },
   { key: 'login', title: '登录', description: '在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。' },
@@ -878,25 +877,19 @@ export const ERP_EXTENSION_STEPS = [
   ERP_HANDOVER_STEP_COPY,
 ] as const;
 
-export const ERP_LOCAL_EXECUTOR_STEPS = [
+// The one 去报销 step list (ADR-0037), every job's.
+export const ERP_STEPS = [
   { key: 'chromium', title: '启动后台浏览器', description: '在你的电脑上启动一个看不见的浏览器，专门用于这次报销。' },
   { key: 'login', title: '登录', description: '用你在设置页保存的报销系统账号登录。' },
   ...ERP_SHARED_STEPS,
   ERP_DRAFT_STEP_COPY,
 ] as const;
 
-// 去报销的方式 a job ran on: the pairing holder when it started (ADR-0033). The server records it with the job, so
-// switching methods later rewrites no past job's steps.
-export type ErpRoute = PairingHolderKind;
 export type ErpStepCopy = { readonly key: ErpProgressStage; readonly title: string; readonly description: string };
-export const ERP_ROUTE_STEPS: Readonly<Record<ErpRoute, readonly ErpStepCopy[]>> = {
-  extension: ERP_EXTENSION_STEPS,
-  local_executor: ERP_LOCAL_EXECUTOR_STEPS,
-};
 
 export const ERP_EXTERNAL_WAIT_COPY: Readonly<Record<Exclude<ErpExternalWait, 'none'>, string>> = {
   employee_login: '等待你在报销系统标签页登录。',
-  extension_connection: '浏览器扩展没有连接。连接恢复后，刷新状态只会读取已经记录的进度。',
+  executor_connection: '本地执行器没有连接。连接恢复后，刷新状态只会读取已经记录的进度。',
   erp_response: '正在等待报销系统返回结果。',
 };
 
