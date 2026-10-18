@@ -100,7 +100,11 @@ function readBody(request: IncomingMessage): Promise<unknown> {
   });
 }
 
-export function pairingListener({ appOrigin, holder }: { appOrigin: string; holder: Pick<PairingHolder, 'current' | 'pair'> }): RequestListener {
+/**
+ * The 47319 listener. `log` takes an unexpected error (the executor's own log, by default its stderr): the page only
+ * ever gets the fixed sentence for it, never the error's own text.
+ */
+export function pairingListener({ appOrigin, holder, log = (error) => console.error('pairing on 47319 failed:', error) }: { appOrigin: string; holder: Pick<PairingHolder, 'current' | 'pair'>; log?: (error: unknown) => void }): RequestListener {
   const allowed = new URL(appOrigin).origin;
   return (request: IncomingMessage, response: ServerResponse) => {
     const send = (status: number, body?: unknown) => {
@@ -129,7 +133,10 @@ export function pairingListener({ appOrigin, holder }: { appOrigin: string; hold
     void (async () => {
       const parsed = LocalExecutorPairRequestSchema.safeParse(await readBody(request));
       if (!parsed.success) return send(400, { ok: false, code: 'bad_request', message: LOCAL_EXECUTOR_PAIRING_ERRORS.request });
-      const { status, ...answer } = await holder.pair(parsed.data.code).catch((error: unknown) => ({ ok: false as const, code: 'local_executor_error', message: String((error as Error)?.message ?? error), status: 500 }));
+      const { status, ...answer } = await holder.pair(parsed.data.code).catch((error: unknown) => {
+        log(error);
+        return { ok: false as const, code: 'local_executor_error', message: LOCAL_EXECUTOR_PAIRING_ERRORS.failed, status: 500 };
+      });
       send(status ?? 200, answer);
     })();
   };

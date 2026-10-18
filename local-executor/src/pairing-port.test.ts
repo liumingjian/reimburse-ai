@@ -3,7 +3,7 @@
 // Each test claims its own free port (0): the maintainer's installed executor may hold the real 47319.
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { LOCAL_EXECUTOR_PAIRING_PATH } from '@baox/contract';
+import { LOCAL_EXECUTOR_PAIRING_ERRORS, LOCAL_EXECUTOR_PAIRING_PATH } from '@baox/contract';
 import type { PairingOutcome } from '@baox/extension/pairing';
 import { claimInstance } from './instance';
 import { createPairingHolder, pairingListener } from './pairing-port';
@@ -165,6 +165,20 @@ describe('the pairing endpoint on 47319', () => {
       expect(local.loops.map((loop) => loop.stopped)).toEqual([false]);
     } finally {
       instance.release();
+    }
+  });
+
+  it('answers an unexpected failure with its fixed sentence, and keeps the error for its own log', async () => {
+    const local = executor({ redeem: async () => { throw new Error('EACCES: permission denied, open pairing.json'); } });
+    const logged: unknown[] = [];
+    const instance = await claimInstance(0, pairingListener({ appOrigin: APP, holder: local.holder, log: (error) => logged.push(error) }));
+    try {
+      const answer = await post(`http://127.0.0.1:${(instance!.address() as AddressInfo).port}${LOCAL_EXECUTOR_PAIRING_PATH}`, { code: 'GOODCODE' }, APP);
+      expect(answer.status).toBe(500);
+      expect(await answer.json()).toEqual({ ok: false, code: 'local_executor_error', message: LOCAL_EXECUTOR_PAIRING_ERRORS.failed });
+      expect(String(logged[0])).toContain('EACCES');
+    } finally {
+      instance!.release();
     }
   });
 

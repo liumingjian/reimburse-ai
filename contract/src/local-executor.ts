@@ -64,6 +64,8 @@ export const LOCAL_EXECUTOR_PAIRING_ERRORS = {
   busy: '这台电脑上的 baox 本地执行器正在去报销，请等它做完再连接。',
   pairing: '这台电脑上的 baox 本地执行器正在配对，请稍后再试。',
   request: '请求里没有配对码。',
+  // Anything else that went wrong on the executor (it keeps the error in its own log).
+  failed: '这台电脑上的 baox 本地执行器没能完成配对，请再点一次。',
 } as const;
 export const LOCAL_EXECUTOR_RUNTIME_ERRORS = {
   unavailable: '这台服务器上还没有这个系统的运行环境，请联系管理员。',
