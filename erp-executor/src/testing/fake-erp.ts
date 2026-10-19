@@ -289,6 +289,13 @@ export type FakeErpOptions = {
    */
   newRowAppearsAfterTicks?: number;
   /**
+   * The first N 新增行 clicks go to ERP's loading overlay and are gone: no row ever comes of them. Live 2026-10-19 the
+   * overlay came back ~0.3 s after each 新增行 or cell commit, between the hit test and the mouse-down, and took 1 of 13
+   * 新增行 clicks (and all 3 clicks made into it on purpose); the next click added the row in 0.5 s.
+   * @unverified: the loading overlay takes a 新增行 click and ERP never adds that row [transient]
+   */
+  newRowClicksLost?: number;
+  /**
    * How many ERP-page evaluations a committed row keeps its `k-grid-edit-row` class — the grid still reporting
    * the row as being edited for a render or two after the value has been taken. `leaveEdit` reads that state
    * once, and `draft-flow.ts` turns `stillEditing: true` into `leave_edit_failed`.
@@ -1141,6 +1148,7 @@ const kendoDate = (raw: string) => {
   }
 
   let deadNewFormClicks = 0;
+  let lostNewRowClicks = 0;
   let deadOpenListClicks = 0;
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
@@ -1208,6 +1216,7 @@ const kendoDate = (raw: string) => {
         return openAssistant();
       }
       case 'new-row': {
+        if (lostNewRowClicks < (options.newRowClicksLost ?? 0)) { lostNewRowClicks += 1; swallowedClicks += 1; return undefined; }
         // ERP paints the new row in its own re-render, which is not the click's own turn of the event loop.
         const delay = options.newRowAppearsAfterTicks ?? 0;
         if (delay > 0) { pendingNewRow = mainTicks + delay; return undefined; }
@@ -1505,7 +1514,7 @@ const kendoDate = (raw: string) => {
     get recordedPage() { return recordedPage()?.name ?? null; },
     /** Which 选择发票 menu item the clicks actually landed on, null until one of them is clicked. */
     get importMode() { return importMode; },
-    /** Clicks the loading overlay took (`consoleBlockerTicks`). */
+    /** Clicks the loading overlay took (`consoleBlockerTicks`, `newRowClicksLost`). */
     get swallowedClicks() { return swallowedClicks; },
     /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */
     get assistantDocument() { return child?.doc.document ?? null; },

@@ -27,7 +27,8 @@ const WHY_NO_RECORDING = {
 // Raised 52 → 54 for the main menu (QA 2026-10-19): its 员工服务 accordion and the selected node's right panel, and the
 // loading overlay that takes clicks after sign-in. Both measured live that day; the recordings start on a console
 // whose shortcut skips the menu, and the overlay is a moment no recording holds.
-const UNVERIFIED_CEILING = 54;
+// Raised 54 → 55 for the same overlay taking a 新增行 click (QA 2026-10-19, 1 of 13 live): a moment no recording holds.
+const UNVERIFIED_CEILING = 55;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

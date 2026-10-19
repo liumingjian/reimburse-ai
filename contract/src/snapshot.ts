@@ -926,7 +926,8 @@ export const ErpSchema = z.object({
   allowedActions: z.array(ErpAllowedActionSchema),
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
-  // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row.
+  // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row. Also
+  // a later run that stopped before writing: why it stopped, while `abortReason` stays the reason of the run that wrote.
   rerunNotice: z.string().nullable(),
   erpAccount: ErpAccountViewSchema.nullable(),
   review: ErpReviewSchema.nullable(),

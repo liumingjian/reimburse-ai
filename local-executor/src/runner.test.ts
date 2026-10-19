@@ -28,7 +28,7 @@ const plan: FillPlan = {
 };
 
 /** The app: records each `erp.event`, acknowledges attempts and refuses read-backs, so a fill ends right after import. */
-function app() {
+function app(onResult: () => void = () => {}) {
   const connection = channelWatch();
   connection.status({ state: 'ready', accountId: 'account-1' });
   const log: ExecutorEvent[] = [];
@@ -38,15 +38,27 @@ function app() {
     log.push(event);
     if (event.type === 'attempt_started') return { persisted: true };
     if (event.type === 'readback') return { ok: false, reasons: ['测试里的应用不判定回读'] };
+    if (event.type === 'result') onResult();
     return null;
   };
   return { connection, request, log };
 }
 
-async function localOver({ erp, credentials = { account: 'tester', password: 'secret' } }: { erp?: Partial<FakeErpOptions>; credentials?: { account: string; password: string } | null } = {}) {
+type LocalOptions = {
+  erp?: Partial<FakeErpOptions>;
+  credentials?: { account: string; password: string } | null;
+  /** What the app does on a job's result, the way the server starts an 自动重新去报销 on it. */
+  onResult?: () => void;
+  /** How long closing a browser takes; a sign-out and close is never instant. */
+  closeMs?: number;
+  closingWaitMs?: number;
+};
+
+async function localOver({ erp, credentials = { account: 'tester', password: 'secret' }, onResult, closeMs = 0, closingWaitMs }: LocalOptions = {}) {
   const fake = await createFakeErp({ origin: ERP_ORIGIN, invoices: [INVOICE], projects: PROJECTS, expenseItems: EXPENSE_ITEMS, ...erp });
-  const the = app();
+  const the = app(onResult);
   const browsers = { launched: 0, closed: 0 };
+  const order: string[] = [];
   const lines: string[] = [];
   const run = createLocalRunner({
     request: the.request,
@@ -54,15 +66,24 @@ async function localOver({ erp, credentials = { account: 'tester', password: 'se
     blobs: { read: async () => INVOICE.bytes },
     launch: async () => {
       browsers.launched += 1;
-      return { port: 0, browser: fake.browser, close: async () => { browsers.closed += 1; } };
+      order.push('launched');
+      return {
+        port: 0, browser: fake.browser,
+        close: async () => {
+          await new Promise((resolve) => setTimeout(resolve, closeMs));
+          browsers.closed += 1;
+          order.push('closed');
+        },
+      };
     },
+    ...(closingWaitMs === undefined ? {} : { closingWaitMs }),
     pace: FAST_PACE,
     signInTiming: FAST_SIGN_IN,
     log: (line) => lines.push(line),
   });
   const sent = credentials ? { credentials } : {};
   return {
-    fake, events: the.log, browsers, lines, run,
+    fake, events: the.log, browsers, order, lines, run,
     fill: () => run(EXECUTOR_METHODS.fill, { plan, trigger: 'start', ...sent }),
     reconcile: () => run(EXECUTOR_METHODS.reconcile, { plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN }, ...sent }),
     trySignIn: () => run(EXECUTOR_METHODS.trySignIn, { erpOrigin: ERP_ORIGIN, credentials: credentials ?? { account: 'tester', password: 'secret' } }),
@@ -111,6 +132,25 @@ describe('the local executor runs a 去报销 in a headless browser of its own',
     const [first, second] = await Promise.all([local.fill(), local.fill()]);
     expect(first).not.toMatchObject({ code: BUSY.code });
     expect(second).toMatchObject({ status: 'aborted', code: BUSY.code });
+    expect(local.browsers).toEqual({ launched: 1, closed: 1 });
+  });
+
+  // QA 2026-10-19: a fill ended 写入结果未知, the app started its 自动重新去报销 67 ms later, and the runner -- still
+  // signing out and closing the first browser -- turned it away as busy.
+  it('takes a job that arrives while the last one is only signing out, once its browser has closed', async () => {
+    let next: Promise<unknown> | null = null;
+    const local: Awaited<ReturnType<typeof localOver>> = await localOver({ closeMs: 50, onResult: () => { next ??= local.fill(); } });
+    await local.fill();
+    const rerun = await next!;
+    expect(rerun).not.toMatchObject({ code: BUSY.code });
+    expect(local.order).toEqual(['launched', 'closed', 'launched', 'closed']);
+  });
+
+  it('is still busy for a job that arrives while the last one\'s browser takes too long to close', async () => {
+    let next: Promise<unknown> | null = null;
+    const local: Awaited<ReturnType<typeof localOver>> = await localOver({ closeMs: 200, closingWaitMs: 20, onResult: () => { next ??= local.fill(); } });
+    await local.fill();
+    expect(await next!).toMatchObject({ status: 'aborted', code: BUSY.code });
     expect(local.browsers).toEqual({ launched: 1, closed: 1 });
   });
 

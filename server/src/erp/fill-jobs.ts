@@ -123,11 +123,14 @@ export async function withinDeadline(
   }
 }
 
+export const isRefusal = (answer: ResultEvent | null): answer is ResultEvent => answer?.type === 'result' && answer.status === 'aborted';
+
 // The result a job gets when it ended without sending one of its own.
 export const NO_RESULT_CODE = 'job_ended_without_result';
 const NO_RESULT_COPY = {
   attempted: '已经开始写入报销系统之后，这次去报销没有给出结果（应用出错）。写入结果不确定，应用不会重放任何写入，请对账。',
-  fill: '这次去报销没有给出结果就结束了（应用出错）。报销系统没有被改动，可以再去报销。',
+  // No 「报销系统没有被改动」: that is the task's to say (an earlier run may have written), and the page says it when true.
+  fill: '这次去报销没有给出结果就结束了（应用出错）。',
   reconcile: '这次对账没有给出结果就结束了（应用出错）。对账只读，不会改动报销系统，可以再对账一次。',
 } as const;
 
@@ -202,12 +205,20 @@ export function createFillJobs({ db, lease, execute, record, schedule = realTime
       }
     };
     const channel = { emit: emit as ExecutorChannel['emit'] };
+    // Typed through `as`: it is set inside the callback, where control flow would not see it.
+    let answered = null as ResultEvent | null;
     try {
-      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, (gated, signal) =>
-        withCredentials(credentials, accountId, (used) => execute(frozen.plan, gated, { trigger, signal, credentials: used })));
+      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, async (gated, signal) => {
+        answered = await withCredentials(credentials, accountId, (used) => execute(frozen.plan, gated, { trigger, signal, credentials: used }));
+      });
       if (overdue && !finished) {
         serverEnded = true;
         await channel.emit({ type: 'result', status: 'aborted', code: JOB_DEADLINE_CODE, message: JOB_DEADLINE_COPY.fill, billNo: null, capture: null });
+      } else if (!finished && isRefusal(answered)) {
+        // Answered, never emitted: the 本地执行器 turns a job away (busy, no 凭据) in its answer alone. A refusal
+        // claims nothing about ERP, so it is recorded with its own reason; `afterAttempts` still makes it 写入结果未知
+        // once an attempt is durable. A claimed success that was never recorded stays worth nothing (ADR-0014).
+        await channel.emit(answered);
       }
     } catch (error) {
       if (!finished) {

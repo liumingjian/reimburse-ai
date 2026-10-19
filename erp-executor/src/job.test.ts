@@ -619,6 +619,18 @@ describe('adding a 费用明细行', () => {
     expect(detailRowCount(fake)).toBe(before);
   });
 
+  // QA 2026-10-19: the loading overlay took the 新增行 click for row 2, and the job stopped 15 s later on a grid of 1 row.
+  it('clicks 新增行 again when ERP\'s loading overlay took the click', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowClicksLost: 1 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const before = detailRowCount(fake);
+    const added = await addDetailRow(page, { timeoutMs: 2000 });
+    expect(fake.swallowedClicks).toBe(1);
+    expect(detailRowCount(fake)).toBe(before + 1);
+    expect(added).toMatchObject({ ok: true, rowCount: before + 1 });
+  });
+
   it('carries a whole fill through an ERP that paints the row late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
     // The whole fill goes through: the late row is waited for rather than turned into a failure.

@@ -15,12 +15,12 @@ import { runFillJob, type BrowserPort } from '@baox/erp-executor/job';
 import { waitFor, type Pace } from '@baox/erp-executor/pace';
 import type { ChromiumPage } from '@baox/erp-executor/page';
 import { sameOrigin } from '@baox/erp-executor/probe';
-import { abortedResult, type BlobSource, type ResultEvent } from '@baox/erp-executor/protocol';
+import { abortedResult, type BlobSource, type ExecutorChannel, type ExecutorEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { navigationScene } from '@baox/erp-executor/scene';
 import { signIn, signOut, type ErpCredentials, type SignInTiming } from '@baox/erp-executor/sign-in';
 import { EXECUTOR_METHODS, FillRequestSchema, ReconcileRequestSchema, TrySignInRequestSchema, type TrySignInAnswer, type WireRequest } from '@baox/erp-executor/wire';
-import { createJobLink, type AttachedPage, type ChannelWatch, type JobLink } from '@baox/channel/job-link';
+import { createJobLink, type AttachedPage, type ChannelWatch } from '@baox/channel/job-link';
 import { CHANNEL_CLOSED } from '@baox/channel/messages';
 import type { Headless } from './headless';
 
@@ -34,6 +34,8 @@ export type LocalRunnerPorts = {
   stagingRoot?: string;
   pace?: Pace;
   signInTiming?: SignInTiming;
+  /** How long a request waits for the last job, its result already given, to sign out and close its browser. */
+  closingWaitMs?: number;
   log?: (line: string) => void;
 };
 
@@ -47,16 +49,23 @@ export const NO_CREDENTIALS = {
 const NAVIGATION_STOPS = new Set(['CHROMIUM_TARGET_NOT_FOUND', 'CHROMIUM_TARGET_NOT_UNIQUE', 'CHROMIUM_TARGET_OBSTRUCTED', 'ERP_NEW_FORM_NOT_OPENED', 'erp_login_unknown']);
 
 export const BUSY = { code: 'local_executor_busy', message: '这台电脑上的 baox 本地执行器正在运行另一次去报销。' } as const;
+// The app starts an 自动重新去报销 the moment a fill's result lands, while that job is still signing out and closing its
+// browser (QA 2026-10-19: 67 ms later). A sign-out and close takes seconds, so the next job waits that long for it.
+const CLOSING_WAIT_MS = 30_000;
 
 /** One request at a time; `busy` says whether one is running, so the program is never replaced under a job. */
 export type LocalRunner = ((method: string, payload: unknown) => Promise<ResultEvent | TrySignInAnswer>) & { busy(): boolean };
 
 export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
   const log = ports.log ?? (() => {});
+  const closingWaitMs = ports.closingWaitMs ?? CLOSING_WAIT_MS;
   let busy = false;
+  // Set once the running job has given its result and is only leaving ERP; `idle` settles when `busy` clears.
+  let closing = false;
+  let idle: Promise<void> = Promise.resolve();
 
   // One job: its browser, its link, and the end that always signs out and closes.
-  async function inBrowser(jobId: string, erpOrigin: string, credentials: ErpCredentials | undefined, run: (job: { link: JobLink; headless: Headless; credentials: ErpCredentials; browser: BrowserPort }) => Promise<ResultEvent>): Promise<ResultEvent> {
+  async function inBrowser(jobId: string, erpOrigin: string, credentials: ErpCredentials | undefined, run: (job: { channel: ExecutorChannel; headless: Headless; credentials: ErpCredentials; browser: BrowserPort }) => Promise<ResultEvent>): Promise<ResultEvent> {
     if (!credentials) return abortedResult(NO_CREDENTIALS.code, NO_CREDENTIALS.message);
     const headless = await ports.launch(erpOrigin);
     let current: AttachedPage | null = null;
@@ -84,7 +93,14 @@ export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
           return { ...attached, session: link.adopt(current) };
         },
       };
-      const result = await run({ link, headless, credentials, browser });
+      // A result sent is the job's end as the app sees it: from here on it is only leaving ERP.
+      const channel = {
+        emit: ((event: ExecutorEvent) => {
+          if (event.type === 'result') closing = true;
+          return (link.channel.emit as (event: ExecutorEvent) => Promise<unknown>)(event);
+        }) as ExecutorChannel['emit'],
+      };
+      const result = await run({ channel, headless, credentials, browser });
       if (result.status === 'aborted' && NAVIGATION_STOPS.has(result.code ?? '')) await describe(headless, erpOrigin, jobId);
       return result;
     } catch (error) {
@@ -157,8 +173,16 @@ export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
 
   const handle = async (method: string, payload: unknown): Promise<ResultEvent | TrySignInAnswer> => {
     if (method !== EXECUTOR_METHODS.fill && method !== EXECUTOR_METHODS.reconcile && method !== EXECUTOR_METHODS.trySignIn) throw new Error(`baox 本地执行器不认识 ${method}。`);
+    if (busy && closing) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([idle, new Promise((resolve) => { timer = setTimeout(resolve, closingWaitMs); })]);
+      clearTimeout(timer);
+    }
     if (busy) return method === EXECUTOR_METHODS.trySignIn ? { ok: false, code: BUSY.code, message: BUSY.message } : abortedResult(BUSY.code, BUSY.message);
     busy = true;
+    closing = false;
+    let settle = () => {};
+    idle = new Promise((resolve) => { settle = resolve; });
     try {
       if (method === EXECUTOR_METHODS.trySignIn) {
         const { erpOrigin, credentials } = TrySignInRequestSchema.parse(payload);
@@ -168,9 +192,9 @@ export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
       if (method === EXECUTOR_METHODS.fill) {
         const { plan, credentials } = FillRequestSchema.parse(payload);
         log(`fill ${plan.jobId} for task ${plan.taskId}`);
-        return await inBrowser(plan.jobId, plan.erpOrigin, credentials, ({ link, credentials, browser }) =>
+        return await inBrowser(plan.jobId, plan.erpOrigin, credentials, ({ channel, credentials, browser }) =>
           runFillJob(plan, {
-            browser, blobs: ports.blobs, channel: link.channel, probeWaitMs: 30_000,
+            browser, blobs: ports.blobs, channel, probeWaitMs: 30_000,
             signIn: signInPort(plan.erpOrigin, credentials),
             ...(ports.stagingRoot ? { stagingRoot: ports.stagingRoot } : {}),
             ...(ports.pace ? { pace: ports.pace } : {}),
@@ -179,13 +203,15 @@ export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
       const { plan, credentials } = ReconcileRequestSchema.parse(payload);
       log(`reconcile ${plan.jobId} for task ${plan.taskId}`);
       // The form a fill left behind closed with its browser: what is read now is a fresh console after sign-in.
-      return await inBrowser(plan.jobId, plan.erpOrigin, credentials, ({ link, credentials, browser }) =>
+      return await inBrowser(plan.jobId, plan.erpOrigin, credentials, ({ channel, credentials, browser }) =>
         runReconcileJob(plan, {
-          browser, channel: link.channel, signIn: signInPort(plan.erpOrigin, credentials),
+          browser, channel, signIn: signInPort(plan.erpOrigin, credentials),
           ...(ports.pace ? { pace: ports.pace } : {}),
         }));
     } finally {
       busy = false;
+      closing = false;
+      settle();
     }
   };
   return Object.assign(handle, { busy: () => busy });

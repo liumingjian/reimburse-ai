@@ -42,6 +42,9 @@ export type ErpRecord = {
   frozen: FrozenJob | null;
   events: ExecutorEvent[];
   result: ResultEvent | null;
+  // When the latest job wrote nothing but an earlier one of the task did: that earlier job's result, whose reason is
+  // why the write result is unknown (the latest job's own reason only says why it wrote nothing).
+  writerResult: ResultEvent | null;
   // The ERP account and 账套 of the task's latest attempt: recorded, shown, never compared (ADR-0016).
   erpAccount: ErpAccount | null;
   // The preview the judge approved after import, if the job got that far.
@@ -55,7 +58,7 @@ export type ErpRecord = {
   handOff: ErpHandOffTable | null;
 };
 
-export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
+export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, writerResult: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
 
 const eventsOf = async (tx: Db, jobId: string): Promise<ExecutorEvent[]> =>
   (await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', jobId).orderBy('seq').execute()).map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
@@ -147,7 +150,12 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
   // 重新去报销 that stops before its first attempt (no Chromium, say) would report 「报销系统没有被改动，可以再去
   // 报销」 while every exit is refused — 去报销 and 作废 by the ADR-0014 freeze, 重新去报销 and 对账 and 转人工 by
   // the phase — leaving the task with no way out at all.
-  if (phase === 'aborted' && attempt !== undefined) phase = 'unknown';
+  let writerResult: ResultEvent | null = null;
+  if (phase === 'aborted' && attempt !== undefined) {
+    phase = 'unknown';
+    const writer = await tx.selectFrom('erp_attempt').select('job_id').where('task_id', '=', taskId).orderBy('started_at', 'desc').orderBy(sql`rowid`, 'desc').executeTakeFirst();
+    if (writer && writer.job_id !== job.job_id) writerResult = lastResult(await eventsOf(tx, writer.job_id));
+  }
   const approved = await tx.selectFrom('erp_approved_preview').select('preview').where('job_id', '=', job.job_id).executeTakeFirst();
   const preview = approved ? (JSON.parse(approved.preview) as ApprovedPreview) : null;
   const lastAttempt = await tx.selectFrom('erp_attempt').select(['preconditions', 'action', 'expected_postconditions']).where('job_id', '=', job.job_id).orderBy(sql`rowid`, 'desc').executeTakeFirst();
@@ -191,6 +199,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
     frozen: JSON.parse(job.plan) as FrozenJob,
     events,
     result,
+    writerResult,
     erpAccount,
     preview,
     attempt: attemptPre,

@@ -254,8 +254,10 @@ describe('fault injection at each ERP mutation point', () => {
     // This job wrote nothing, but the import the first one made is still unsettled: the task stays in 对账, which is
     // the only thing that can settle it. The copy must not offer 去报销, which the ADR-0014 freeze refuses.
     expect(stopped).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' } });
-    expect(stopped.erp.abortReason).toContain('报销专用 Chromium 浏览器不可用');
-    expect(stopped.erp.abortReason).not.toContain('可以再去报销');
+    // The reason is the first run's, the one that wrote; this run's own reason is a line of its own (QA 2026-10-19).
+    expect(stopped.erp.abortReason).toBe('写入报销系统的结果不确定，应用已停止写入，不会重放。原因：injected fault at fill');
+    expect(stopped.erp.rerunNotice).toContain('报销专用 Chromium 浏览器不可用');
+    expect(`${stopped.erp.abortReason}${stopped.erp.rerunNotice}`).not.toContain('可以再去报销');
     expect(stopped.reconcile.allowedActions).toEqual(['wait', 'hand_off']);
     expect(await scene.refused('start-erp-write')).toEqual({ status: 400, code: 'erp_started' });
 

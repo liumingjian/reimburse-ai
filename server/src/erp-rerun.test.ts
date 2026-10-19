@@ -129,6 +129,23 @@ describe('自动重新去报销', () => {
     expect(snapshot.erp.rerunNotice).toBeNull();
   });
 
+  // QA 2026-10-19: the run that filled stopped on 新增行, its re-run was turned away before it wrote anything, and
+  // 对账 showed the re-run's reason — 「报销系统没有被改动，可以再去报销」 under 「写入结果不确定」.
+  it('tells 对账 why the run that wrote stopped, and the re-run that wrote nothing on a line of its own', async () => {
+    const busy = '这台电脑上的 baox 本地执行器正在运行另一次去报销。';
+    // Answered, never emitted, as the 本地执行器 turns a job away.
+    const turnedAway: FillRunner = async () => ({ type: 'result', status: 'aborted', code: 'local_executor_busy', message: busy, billNo: null, capture: null });
+    await executor([readbackMismatch, turnedAway]);
+    const scene = await scenario(server, alice).at('actions');
+    await scene.accept('start-erp-write');
+
+    const { snapshot } = await after(scene, 2);
+
+    expect(snapshot).toMatchObject({ stage: 'reconcile', erp: { status: 'aborted' } });
+    expect(snapshot.erp.abortReason).toBe('写入报销系统的结果不确定，应用已停止写入，不会重放。原因：ERP 明细「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
+    expect(snapshot.erp.rerunNotice).toBe(`应用自动重新去报销了 1 次，但在写入之前就停下了：${busy}`);
+  });
+
   it('never starts over after 暂存 was pressed', async () => {
     await executor([uncertainDraft, drafted]);
     const scene = await scenario(server, alice).at('actions');

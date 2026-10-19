@@ -141,6 +141,8 @@ const SERVICES_EXPANDED = `(() => {
 // The menu opens in under 4 s once its click lands (live 2026-10-19), so a lost click is retried after this, not 15 s.
 const MENU_CONFIRM_MS = 5_000;
 const BLOCKER_WAIT_MS = 15_000;
+// A 新增行 that lands shows its row in under 2 s (live 2026-10-19), so a lost one is clicked again after this.
+const ROW_CONFIRM_MS = 4_000;
 
 /**
  * Wait until ERP's loading overlay has stayed away for `quietMs`. Live 2026-10-19 it flashed over the console in
@@ -747,8 +749,21 @@ export async function addDetailRow(page: WritePage, { timeoutMs = 15_000 } = {})
   };
   const before = await count();
   if (before === null) throw new ExecutorError('ERP_DETAIL_GRID_UNREADABLE', '点「新增行」之前读不出费用明细网格，不往读不出的网格上加行');
-  await clickCss(page, page.session, 'a[id$="tbNewList"]', '新增明细行');
-  const after = await waitFor(count, (rows) => rows !== null && rows > before, cap(page, timeoutMs), paceOf(page).pollMs);
+  // Clicked again when no row comes of a click. Live 2026-10-19 ERP's loading overlay came back ~0.3 s after each
+  // 新增行 or cell commit, between the hit test and the mouse-down, and a click it took never became a row (a new row
+  // shows 0.5-1.7 s after a click that lands; 1 of 13 was taken). Only the click again outwaits the overlay: waiting
+  // before every click would cost each row a second. A second row from a slow first click is caught by the caller,
+  // which asserts exactly one more row.
+  const budget = cap(page, timeoutMs);
+  const deadline = Date.now() + budget;
+  let after: number | null = null;
+  let clicks = 0;
+  do {
+    if (clicks++ > 0) await outwaitBlocker(page, page.session);
+    await clickCss(page, page.session, 'a[id$="tbNewList"]', '新增明细行');
+    const windowMs = Math.min(ROW_CONFIRM_MS, budget / 3, Math.max(0, deadline - Date.now()));
+    after = await waitFor(count, (rows) => rows !== null && rows > before, windowMs, paceOf(page).pollMs);
+  } while ((after === null || after <= before) && Date.now() < deadline);
   if (after === null || after <= before) {
     throw new ExecutorError('ERP_DETAIL_ROW_NOT_ADDED',
       `点过「新增行」之后 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内费用明细网格还是 ${before} 行：新的费用明细行没有出现`);

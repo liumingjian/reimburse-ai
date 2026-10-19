@@ -143,6 +143,11 @@ const FORM_OBSTRUCTED_BEFORE_FILL = 'form_obstructed_before_fill';
 const rerunRunning = (no: number) => `上一次没有填完，应用已自动换一张新单重新填报（第 ${no} 次）。`;
 const rerunSpent = (no: number) => `应用已自动换新单重新填报 ${no} 次，仍然没有完成，需要你来决定下一步。`;
 const RERUN_STOPPED = /^rerun_/;
+// A later run that was stopped before it wrote anything (turned away, no Chromium): the write result is still the
+// earlier run's, so 对账 gives that run's reason, and this run's on a line of its own.
+const stoppedBeforeWriting = (rerunNo: number | null, reason: string) =>
+  rerunNo ? `应用自动重新去报销了 ${rerunNo} 次，但在写入之前就停下了：${reason}` : `后来的这次去报销在写入之前就停下了：${reason}`;
+const UNKNOWN_REASON = '写入报销系统的结果不确定，应用已停止写入，不会重放。原因：';
 
 // 去报销系统查看 (spec #406): the one rule for when the page offers the 报销系统 and the 暂存单's 内码. The phases in
 // which a 暂存单 the employee should check may exist: `drafted`, and `unknown` when its 内码 is known (暂存 landed but
@@ -216,13 +221,21 @@ export function erpView(record: ErpRecord): Erp {
       return { ...idle, ...readState, status: 'done', outcome: 'drafted', draftNo: null };
     case 'saved':
       return { ...idle, ...readState, status: 'done', outcome: 'saved', draftNo: record.result?.billNo ?? null };
-    case 'unknown':
+    case 'unknown': {
+      const writer = record.writerResult;
+      if (writer && !RERUN_STOPPED.test(record.result?.code ?? '')) {
+        const writerReason = writer.message ?? writer.code ?? '';
+        return { ...idle, ...readState, status: 'aborted', draftNo: writer.billNo ?? null,
+          rerunNotice: stoppedBeforeWriting(rerunNo, reason),
+          abortReason: writer.code === FORM_OBSTRUCTED_BEFORE_FILL ? writerReason : `${UNKNOWN_REASON}${writerReason}` };
+      }
       return { ...idle, ...readState, status: 'aborted', draftNo: record.result?.billNo ?? null,
         // A re-run that stopped before uploading filled nothing: its own reason says so, and «仍然没有完成» would not.
         rerunNotice: rerunNo && !RERUN_STOPPED.test(record.result?.code ?? '') ? rerunSpent(rerunNo) : null,
         abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL || RERUN_STOPPED.test(record.result?.code ?? '')
           ? reason
-          : `写入报销系统的结果不确定，应用已停止写入，不会重放。原因：${reason}` };
+          : `${UNKNOWN_REASON}${reason}` };
+    }
     default:
       // A catalog mismatch (its problems are in the catalog section): nothing was written.
       return idle;
