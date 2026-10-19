@@ -116,7 +116,10 @@ up() {
     pnpm --filter @baox/server dev >>"$0/server.log" 2>&1 &
     pnpm --filter @baox/web exec vite --host 127.0.0.1 --port "$1" --strictPort >>"$0/web.log" 2>&1 &
     wait' "$STATE" "$WEB_PORT" </dev/null >/dev/null 2>&1 &
-  echo $! > "$STATE/pgid"
+  local pg=$!
+  echo "$pg" > "$STATE/pgid"
+  # perl joins its own group only after the fork, so wait for the group before running_pgid may call it gone.
+  for _ in $(seq 1 20); do kill -0 -"$pg" 2>/dev/null && break; sleep 0.25; done
   echo "$CHECKOUT" > "$STATE/checkout"
   echo "$BAOX_DATA_DIR" > "$STATE/data"
 
