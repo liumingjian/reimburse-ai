@@ -114,7 +114,7 @@ describe('the 本地执行器 channel', () => {
     const refusal = extension.heard[0];
     expect(refusal).toMatchObject({ type: 'refused', code: 'version_too_old' });
     expect(refusal && 'message' in refusal ? refusal.message : '').toContain(MINIMUM_CLIENT_VERSION);
-    expect(refusal && 'message' in refusal ? refusal.message : '').toContain('重新下载');
+    expect(refusal && 'message' in refusal ? refusal.message : '').toContain('安装命令');
     expect(extension.closedWith()).toEqual({ code: CHANNEL_CLOSE.versionTooOld, reason: 'version_too_old' });
     expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(false);
   });
@@ -198,7 +198,7 @@ describe('版本协商 at the HTTP seam', () => {
     const body = (await refused.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe('version_too_old');
     expect(body.error.message).toContain(MINIMUM_CLIENT_VERSION);
-    expect(body.error.message).toContain('重新下载');
+    expect(body.error.message).toContain('安装命令');
     expect(await view(alice)).toMatchObject({ status: 'waiting' });
 
     // The employee updates and types the same 配对码 again; nothing was burnt by the refusal.
