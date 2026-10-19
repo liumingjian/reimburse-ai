@@ -67,3 +67,8 @@ only reconciles against the lockfile. Install first, as above.
 
 `deploy/operator`'s `src/source.test.ts` archives the committed repository, so it needs a real git checkout: it fails
 in a rexec workspace synced from a worktree.
+
+The 本地执行器 installed on the Mac holds port 47319 while it runs, which breaks `local-executor` tests that bind it;
+check with `rexec --no-sync 'lsof -nP -iTCP:47319 -sTCP:LISTEN'` before blaming the change. rexec jobs cannot read
+`~/Documents` (macOS TCC): a listing there hangs until the deadline, so the ERP live sample (`BAOX_ERP_LIVE_SAMPLE`)
+has to sit elsewhere, copied out by the maintainer.
