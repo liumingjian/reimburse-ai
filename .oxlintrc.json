@@ -8,7 +8,7 @@
         "no-restricted-imports": ["error", {
           "patterns": [{
             "group": ["@baox/server", "@baox/server/**", "../**"],
-            "message": "ADR-0016: @baox/erp-executor must stay usable without the server, because the browser extension is its second consumer. It may import only its own src and its declared dependencies."
+            "message": "ADR-0016: @baox/erp-executor must stay usable without the server, because the 本地执行器 is its second consumer. It may import only its own src and its declared dependencies."
           }]
         }]
       }
@@ -19,7 +19,7 @@
         "no-restricted-imports": ["error", {
           "patterns": [{
             "group": ["@baox/server", "@baox/server/**", "../../**"],
-            "message": "ADR-0016: @baox/erp-executor must stay usable without the server, because the browser extension is its second consumer. It may import only its own src and its declared dependencies."
+            "message": "ADR-0016: @baox/erp-executor must stay usable without the server, because the 本地执行器 is its second consumer. It may import only its own src and its declared dependencies."
           }]
         }]
       }

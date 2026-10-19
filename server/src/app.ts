@@ -23,7 +23,6 @@ import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
 import { createExtensionChannel, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
-import { mountExtensionDownloadRoute } from './extension/download';
 import { mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
 import type { LocalExecutorDist } from './local-executor/release';
 import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
@@ -67,9 +66,6 @@ export type AppOptions = {
   legacyHome?: string | null;
   // The address colleagues reach the app at (`public-origin.ts`). null (default) admits only 127.0.0.1.
   publicOrigin?: PublicOrigin | null;
-  // The built extension template (`extension/dist`) the settings page's download is assembled from
-  // (`extension/download.ts`). null (default) answers every download with 503.
-  extensionTemplate?: string | null;
   // The built 本地执行器 program and the Node runtimes fetched at deploy (`local-executor/release.ts`, ADR-0035). null
   // (default) answers its install script, runtime downloads and its executors' update checks as unavailable.
   localExecutor?: LocalExecutorDist | null;
@@ -93,7 +89,7 @@ type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
 const failure = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, code: string, message: string) => c.json({ error: { code, message } }, status);
 
-export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, legacyHome = null, publicOrigin = null, extensionTemplate = null, localExecutor = null, schedule = realTimer, erpCredentialKey = null, autoRerun = RECEIPT_INVOICE_NO !== null }: AppOptions): App {
+export function createApp({ db, dataDir, webDist = null, now = () => new Date(), erpLease = createInMemoryErpLease(), erpExecutor, reconcileExecutor, erpConfig = DEFAULT_ERP_CONFIG, parser, legacyHome = null, publicOrigin = null, localExecutor = null, schedule = realTimer, erpCredentialKey = null, autoRerun = RECEIPT_INVOICE_NO !== null }: AppOptions): App {
   const maintenance = createMaintenanceGate(db);
   // Session lookups usually write a sliding expiry or remove an expired row. Give those narrow housekeeping writes
   // their own admission so a read route cannot cross an admitted maintenance boundary.
@@ -330,7 +326,6 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   });
   mountPairingRoutes(app, pairings, publicOrigin);
   mountErpCredentialRoutes(app, erpCredentials);
-  mountExtensionDownloadRoute(app, extensionTemplate, publicOrigin);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));

@@ -3,9 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The 本地执行器 (local executor): runs 去报销 on the employee's PC in its own headless Chromium, paired with one 应用账号 like the browser extension (ADR-0033)",
+  "description": "The 本地执行器 (local executor): runs 去报销 on the employee's PC in its own headless Chromium, paired with one 应用账号 (ADR-0033)",
   "engines": {
     "node": ">=24 <25"
+  },
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",

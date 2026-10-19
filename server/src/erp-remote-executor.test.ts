@@ -1,15 +1,11 @@
 import { ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type ChannelMessage } from '@baox/contract';
-import { stageInPage } from '@baox/erp-executor/invoice-files';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
 import { EXECUTOR_METHODS, RECONNECT_WINDOW_MS, type PageObservation } from '@baox/erp-executor/wire';
 import { serverBlobs } from '@baox/channel/blobs';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/channel/connection';
-import type { DebuggerApi } from '@baox/extension/debugger-session';
-import { createErpRunner } from '@baox/extension/erp-runner';
-import { dedicatedErpTab } from '@baox/extension/erp-tab';
-import { fakeChrome } from '@baox/extension/testing/fake-chrome';
+import { createLocalRunner } from '@baox/local-executor/runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogMismatch, noFormOpen, notSignedIn, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { FILL_JOB_DEADLINE_MS, JOB_DEADLINE_CODE } from './erp/fill-jobs';
@@ -63,12 +59,12 @@ async function connected(token: string, runners: { fill?: FillRunner; reconcile?
   return extension;
 }
 
-// The executor on the fake ERP, run inside the extension as the extension runs it: the invoices fetched from the app's
-// blob route with the extension's token, and put into the assistant as bytes built in the page (#256).
+// The executor on the fake ERP, run on the client's side of the wire: the invoices fetched from the app's blob route
+// with the pairing token (#256), and staged on disk as the 本地执行器 stages them.
 const realExecutor = (token: string): FillRunner => async (plan, channel) => {
   fake = await createFakeErp(fakeOptions);
   const blobs = serverBlobs({ origin: 'http://localhost', token: async () => token, fetch: async (url, init) => server.app.request(url, init) });
-  return runFillJob(plan, { browser: fake.browser, blobs, staging: stageInPage, channel, pace: FAST_PACE, probeWaitMs: 0 });
+  return runFillJob(plan, { browser: fake.browser, blobs, channel, pace: FAST_PACE, probeWaitMs: 0 });
 };
 
 // The default scene at 去报销 (hotel e-invoice + folio on P-2307, confirmed), on a fake ERP that knows its invoice.
@@ -604,21 +600,22 @@ describe('a job that outlives its deadline', () => {
   });
 });
 
-// #257's extension side against this server: the real channel client, runner, job link and `chrome.debugger` adapter
-// on the app's real channel, over `chrome.*` faked on the fake ERP. Only the socket is a stand-in. `cut` sees every
-// frame the app sends; answering true drops the socket instead of delivering it, as a Wi-Fi blip would, and the client
-// redials on its own. `delivered` sees every frame the extension sends, once the app has it.
+// #257's client side against this server: the real 本地执行器 runner (`@baox/local-executor/runner`), channel client
+// and job link on the app's real channel, with the fake ERP standing in for its headless Chromium. Only the socket is a
+// stand-in. `cut` sees every frame the app sends; answering true drops the socket instead of delivering it, as a Wi-Fi
+// blip would, and the client redials on its own. `delivered` sees every frame the 本地执行器 sends, once the app has it,
+// and may drop the socket right after it.
 type Hooks = {
   cut?: (message: ChannelMessage, sent: ChannelMessage[]) => boolean;
-  delivered?: (message: ChannelMessage, detach: () => void) => void;
-  debuggerApi?: (api: DebuggerApi, detach: () => void, asked: () => string[]) => DebuggerApi;
+  delivered?: (message: ChannelMessage, drop: () => void) => void;
 };
 
-describe('the real 浏览器扩展 across an interruption', () => {
-  async function realExtension(token: string, { cut, delivered, debuggerApi }: Hooks = {}) {
+describe('the real 本地执行器 across an interruption', () => {
+  async function realLocalExecutor(token: string, { cut, delivered }: Hooks = {}) {
     fake = await createFakeErp(fakeOptions);
-    const chrome = fakeChrome(fake.session);
+    const erp = fake;
     const sent: ChannelMessage[] = [];
+    const browsers = { launched: 0, closed: 0 };
     const connection = channelWatch();
     const open = (): ClientSocket => {
       let gone = false;
@@ -642,28 +639,35 @@ describe('the real 浏览器扩展 across an interruption', () => {
         const message = JSON.parse(data) as ChannelMessage;
         sent.push(message);
         void session.message(data);
-        delivered?.(message, detach);
+        delivered?.(message, drop);
       };
       socket.close = drop;
       queueMicrotask(() => socket.onopen?.());
       return socket;
     };
-    const detach = () => chrome.detach('canceled_by_user');
-    // What the extension asked of the app, by method; an event by its type.
+    // What the 本地执行器 asked of the app, by method; an event by its type.
     const asked = () => sent.flatMap((message) => (message.type === 'request' && message.method !== 'ping'
       ? [message.method === EXECUTOR_METHODS.event ? (message.payload as { event: ExecutorEvent }).event.type : message.method] : []));
-    const api = debuggerApi ? debuggerApi(chrome.debugger, detach, asked) : chrome.debugger;
-    const run = createErpRunner({
-      browser: (erpOrigin, choice) => dedicatedErpTab({ erpOrigin, choice, tabs: chrome.tabs, windows: chrome.windows, debugger: api, pollMs: 1 }),
-      request: (method, payload) => extension.request(method, payload),
+    const run = createLocalRunner({
+      request: (method, payload) => client.request(method, payload),
       connection,
-      // As the real extension fetches them: from the app's owner-checked blob route, with the pairing token (#256).
+      // As the real 本地执行器 fetches them: from the app's owner-checked blob route, with the pairing token (#256).
       blobs: serverBlobs({ origin: 'http://localhost', token: async () => token, fetch: async (url, init) => server.app.request(url, init) }),
+      launch: async () => {
+        browsers.launched += 1;
+        return { port: 0, browser: erp.browser, close: async () => { browsers.closed += 1; } };
+      },
       pace: FAST_PACE,
     });
-    const extension = createChannelClient({ origin: 'http://127.0.0.1:4319', token, open, onRequest: run, onStatus: connection.status });
+    const client = createChannelClient({ origin: 'http://127.0.0.1:4319', token, open, onRequest: run, onStatus: connection.status });
     await connection.ready();
-    return { chrome, asked, stop: () => extension.stop() };
+    // The job is over for the app at its result; the runner then signs out and closes its browser.
+    const closedOnce = async () => {
+      const deadline = Date.now() + BACKSTOP_MS;
+      while (browsers.closed === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+      return { ...browsers };
+    };
+    return { asked, closedOnce, stop: () => client.stop() };
   }
 
   // The request id of the first `erp.event` carrying `type`: the frame whose answer a test loses.
@@ -679,7 +683,7 @@ describe('the real 浏览器扩展 across an interruption', () => {
     const token = await pair(alice);
     const scene = await actionsOnFakeErp();
     let cutOnce = false;
-    const extension = await realExtension(token, {
+    const local = await realLocalExecutor(token, {
       cut: (message, sent) => {
         if (cutOnce || message.type !== 'response' || message.id !== idOf(sent, 'attempt_started')) return false;
         cutOnce = true;
@@ -691,66 +695,43 @@ describe('the real 浏览器扩展 across an interruption', () => {
 
     expect(cutOnce).toBe(true);
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done' }, readback: { status: 'matched' } });
-    expect(extension.asked()).not.toContain(EXECUTOR_METHODS.detached);
-    expect(extension.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted' }, readback: { status: 'matched' } });
+    expect(local.asked()).not.toContain(EXECUTOR_METHODS.detached);
+    expect(local.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
     // One attempt per action went out, the one whose answer was lost included; nothing is on record twice.
-    expect(extension.asked().filter((type) => type === 'attempt_started')).toHaveLength(3);
+    expect(local.asked().filter((type) => type === 'attempt_started')).toHaveLength(3);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import', 'fill', 'save']);
     expect(await onceEach(scene.task.taskId)).toBe(true);
     expect(fake!.mutations.filter((mutation) => mutation.kind === 'import')).toHaveLength(1);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
-    extension.stop();
+    // One browser for the job, closed at its end (ADR-0033): the resume went back to the same page, not a new browser.
+    expect(await local.closedOnce()).toEqual({ launched: 1, closed: 1 });
+    local.stop();
   });
 
-  it('resumes after the debugger banner is cancelled between commands, in the same tab', async () => {
+  it('resumes after the socket drops between commands, on the same page, and 暂存s', async () => {
     const token = await pair(alice);
     const scene = await actionsOnFakeErp();
-    const extension = await realExtension(token, {
-      // Cancelled while the executor waits for the app to take `step navigate running`: no command is under way.
-      delivered: (message, detach) => {
+    let droppedOnce = false;
+    const local = await realLocalExecutor(token, {
+      // Dropped while the executor waits for the app to take `step navigate running`: no command is under way.
+      delivered: (message, drop) => {
         const event = message.type === 'request' && message.method === EXECUTOR_METHODS.event ? (message.payload as { event: ExecutorEvent }).event : null;
-        if (event?.type === 'step' && event.step === 'navigate' && event.status === 'running') detach();
+        if (droppedOnce || event?.type !== 'step' || event.step !== 'navigate' || event.status !== 'running') return;
+        droppedOnce = true;
+        drop();
       },
     });
 
     const done = await scene.run('start-erp-write');
 
+    expect(droppedOnce).toBe(true);
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done' } });
-    const asked = extension.asked();
-    expect(asked.indexOf(EXECUTOR_METHODS.detached)).toBeLessThan(asked.indexOf(EXECUTOR_METHODS.resume));
+    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted' } });
+    expect(local.asked().filter((method) => method === EXECUTOR_METHODS.resume)).toHaveLength(1);
     expect(await onceEach(scene.task.taskId)).toBe(true);
-    const tab = extension.chrome.jobTab()!.id;
-    expect(extension.chrome.attached).toEqual([{ tabId: tab }, { tabId: tab }]);
-    extension.stop();
-  });
-
-  it('goes to 对账 when the banner is cancelled under the import click, having resumed without carrying on', async () => {
-    const token = await pair(alice);
-    const scene = await actionsOnFakeErp();
-    const extension = await realExtension(token, {
-      debuggerApi: (api, detach, asked) => {
-        let armed = true;
-        return {
-          ...api,
-          async sendCommand(target, method, params) {
-            if (!armed || method !== 'Input.dispatchMouseEvent' || !asked().includes('attempt_started')) return api.sendCommand(target, method, params);
-            armed = false;
-            detach();
-            throw new Error('Detached while handling command.');
-          },
-        };
-      },
-    });
-
-    const stopped = await scene.run('start-erp-write');
-
-    expect(extension.asked().slice(-3)).toEqual([EXECUTOR_METHODS.detached, EXECUTOR_METHODS.resume, 'result']);
-    expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
-    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'debugger_detached_mid_command' }]);
-    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
-    expect(fake!.mutations).toEqual([]);
-    extension.stop();
+    expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import', 'fill', 'save']);
+    expect(await local.closedOnce()).toEqual({ launched: 1, closed: 1 });
+    local.stop();
   });
 });

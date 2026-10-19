@@ -27,8 +27,8 @@ then use the matching feature file as the recipe. Terms are the ones in `GLOSSAR
   snapshot's `stage`, `step.kind`, `erp`, `reconcile`.
 - The transcript's first line names the ERP double. A PASS against a double proves the app's handling of that ERP
   behaviour, never the real ERP (`pnpm test:erp-live` does that).
-- Production 去报销 runs in the paired browser extension. This harness drives the CDP executor's seam instead. Say so
-  when a change touches the extension transport, and point at `server/src/erp-remote-executor.test.ts`.
+- Production 去报销 runs in the paired 本地执行器. This harness drives the CDP executor's seam instead. Say so
+  when a change touches the 本地执行器 transport, and point at `server/src/erp-remote-executor.test.ts`.
 - Report an entry point you did not drive as not verified. Don't count it as covered by another path.
 
 ## Feature entry contract

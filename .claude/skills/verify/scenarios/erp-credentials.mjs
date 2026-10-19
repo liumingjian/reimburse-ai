@@ -35,12 +35,12 @@ export default async function erpCredentials(v) {
     expect(await page.content()).not.toContain(PASSWORD);
   });
   const taskId = await v.confirmedTask();
-  // Saved but untested (nothing paired) says nothing about a 本地执行器: the card keeps the 浏览器扩展 copy. The authorised
-  // case (本地执行器 copy and the 挤下线 warning) needs a 试登录 and is covered by web/src/pages/ReviewPage.test.tsx.
-  await v.step('untested 凭据: the 去报销 card on the review page does not claim a 本地执行器 signs in', async () => {
+  // The 本地执行器 is the only way to 去报销 (ADR-0037), so the card says it signs in whatever the 凭据's status. The
+  // authorised case (the 挤下线 warning) needs a 试登录 and is covered by web/src/pages/ReviewPage.test.tsx.
+  await v.step('untested 凭据: the 去报销 card on the review page names the 本地执行器 and no 挤下线 warning', async () => {
     await page.goto(`/#/task/${taskId}/review`);
     await expect(page.getByRole('button', { name: '去报销', exact: true })).toBeVisible();
-    await expect(page.getByText('已配对的浏览器扩展会为这次报销打开报销系统标签页', { exact: false })).toBeVisible();
+    await expect(page.getByText('baox 本地执行器会在你的电脑上用你在设置页保存的报销系统账号登录', { exact: false })).toBeVisible();
     await expect(page.getByText('挤下线')).toHaveCount(0);
     await v.shot('review-untested');
   });

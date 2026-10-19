@@ -3,7 +3,6 @@ packages:
   - server
   - erp-executor
   - channel
-  - extension
   - local-executor
   - contract
   - fixtures

@@ -24,7 +24,6 @@
     "@baox/channel": "workspace:*",
     "@baox/contract": "workspace:*",
     "@baox/erp-executor": "workspace:*",
-    "@baox/extension": "workspace:*",
     "@cantoo/pdf-lib": "2.9.2",
     "@gutenye/ocr-models": "1.4.2",
     "@hono/node-server": "2.1.1",
@@ -43,6 +42,7 @@
   },
   "devDependencies": {
     "@baox/fixtures": "workspace:*",
+    "@baox/local-executor": "workspace:*",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.3",
     "@types/ws": "8.18.1",

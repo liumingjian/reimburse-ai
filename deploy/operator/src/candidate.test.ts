@@ -473,7 +473,7 @@ function writeWorkspaceSource(repository: string): void {
   writeCandidateSource(repository, 'workspace');
   writeFileSync(join(repository, 'package.json'), JSON.stringify({ name: 'candidate-workspace', packageManager: 'pnpm@10.17.1', scripts: { build: 'pnpm -r build' } }) + '\n');
   writeFileSync(join(repository, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
-  writeFileSync(join(repository, 'pnpm-workspace.yaml'), 'packages:\n  - server\n  - web\n  - extension\n  - contract\n\nonlyBuiltDependencies:\n  - better-sqlite3\n');
+  writeFileSync(join(repository, 'pnpm-workspace.yaml'), 'packages:\n  - server\n  - web\n  - contract\n\nonlyBuiltDependencies:\n  - better-sqlite3\n');
   const workspace = (directory: string, build: boolean) => {
     mkdirSync(join(repository, directory, 'src'), { recursive: true });
     writeFileSync(join(repository, directory, 'package.json'), JSON.stringify({
@@ -483,7 +483,7 @@ function writeWorkspaceSource(repository: string): void {
     writeFileSync(join(repository, directory, 'src', 'index.ts'), `export const name = '${directory}';\n`);
   };
   workspace('contract', false);
-  for (const directory of ['server', 'web', 'extension']) workspace(directory, true);
+  for (const directory of ['server', 'web']) workspace(directory, true);
 }
 
 function commitAll(repository: string, message: string): string {
@@ -532,7 +532,7 @@ it('reuses the running release\'s node_modules, native module and unchanged pack
   const running = await prepareCandidate(repository, target, first);
   expect(running.manifest.buildInputs).toMatchObject({
     schema: 1,
-    packages: { '@baox/server': { directory: 'server' }, '@baox/web': { directory: 'web' }, '@baox/extension': { directory: 'extension' } },
+    packages: { '@baox/server': { directory: 'server' }, '@baox/web': { directory: 'web' } },
   });
   expect(reuseMarkers(running.manifest.phaseTimings)).toMatchObject({ install: { reused: undefined }, build: { rebuilt: undefined }, native: { reused: undefined } });
   const release = promote(target, running.manifest.candidateId);
@@ -551,7 +551,6 @@ it('reuses the running release\'s node_modules, native module and unchanged pack
   expect(statSync(join(webOnly.source, 'node_modules', '.installed-in')).ino).toBe(statSync(join(release, 'node_modules', '.installed-in')).ino);
   expect(readlinkSync(join(webOnly.source, 'server', 'node_modules'))).toBe(readlinkSync(join(release, 'server', 'node_modules')));
   expect(readFileSync(join(webOnly.source, 'server', 'dist', 'main.mjs'), 'utf8')).toBe('main');
-  expect(readFileSync(join(webOnly.source, 'extension', 'dist', 'manifest.json'), 'utf8')).toBe('{"manifest_version":3}');
   expect(readFileSync(join(webOnly.source, 'web', 'dist', 'index.html'), 'utf8')).toBe('<html>rebuilt</html>');
   expect(snapshotDirectory(release)).toEqual(releaseBefore);
 

@@ -709,7 +709,6 @@ if [ "$1" = --filter ]; then
     case "$package" in
       server) printf 'main rebuilt' > server/dist/main.mjs; printf 'cli rebuilt' > server/dist/baox.mjs ;;
       web) printf '<html>rebuilt</html>' > web/dist/index.html ;;
-      extension) printf '{"manifest_version":3,"rebuilt":true}' > extension/dist/manifest.json ;;
       local-executor) printf 'program rebuilt' > local-executor/dist/baox-local-executor.mjs ;;
     esac
     shift 2
@@ -720,22 +719,20 @@ fi
 if [ "$1" = build ]; then
   printf 'build:all\\n' >> '${join(barrier, 'builds')}'
   if [ -f .baox-test-use-real-server ]; then
-    rm -rf server/dist web/dist extension/dist server/node_modules
-    mkdir -p server web/dist extension/dist
+    rm -rf server/dist web/dist server/node_modules
+    mkdir -p server web/dist
     cp -R ${shellQuote(join(candidateRuntimeSource, 'server', 'dist'))} server/dist
     ln -s ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
     native_fixture
     printf '<html>candidate</html>' > web/dist/index.html
-    printf '{"manifest_version":3}' > extension/dist/manifest.json
     exit 0
   fi
-  mkdir -p server/dist web/dist extension/dist
+  mkdir -p server/dist web/dist
   ln -sfn ${shellQuote(join(candidateRuntimeSource, 'server', 'node_modules'))} server/node_modules
   native_fixture
   printf 'main' > server/dist/main.mjs
   printf 'cli' > server/dist/baox.mjs
   printf '<html></html>' > web/dist/index.html
-  printf '{"manifest_version":3}' > extension/dist/manifest.json
   if [ -d local-executor ]; then mkdir -p local-executor/dist; printf 'program' > local-executor/dist/baox-local-executor.mjs; fi
   exit 0
 fi

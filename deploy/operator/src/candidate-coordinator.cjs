@@ -3044,7 +3044,6 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
     path.join(paths.source, 'server', 'dist', 'main.mjs'),
     path.join(paths.source, 'server', 'dist', 'baox.mjs'),
     path.join(paths.source, 'web', 'dist', 'index.html'),
-    path.join(paths.source, 'extension', 'dist', 'manifest.json'),
   ];
   // The 本地执行器 program the settings page's zips carry (ADR-0035): without it every download answers 503.
   if (await isRegularFile(path.join(paths.source, 'local-executor', 'package.json'))) {
@@ -3059,7 +3058,7 @@ async function buildCandidate(request, paths, source, explicitEnvironment, lease
     const renderer = path.join(paths.source, 'deploy', 'intranet', 'render-config.mjs');
     if (await isRegularFile(renderer)) {
       // Routine releases retain the installed origin. A new template default must
-      // not invalidate employee extension packages and pairings during an upgrade.
+      // not invalidate the 本地执行器 installs and pairings made against it during an upgrade.
       const active = parseServiceEnvironment(await fs.readFile(path.join(request.systemdDir, 'baox.service'), 'utf8'));
       const origin = parseOrigin(active.BAOX_PUBLIC_ORIGIN);
       if (!origin) throw new CandidateFailure('active-public-origin-invalid');
