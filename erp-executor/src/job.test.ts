@@ -565,6 +565,33 @@ describe('opening a new 费用报销单', () => {
     const fake = await createFakeErp(fakeErpOptions({ openListDeadClicks: 1 }));
     await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
   });
+
+  // QA 2026-10-19, measured live the same day: ERP reopens the main menu on the second-level node this user last
+  // chose, and on 定制开发 › 日志管理 a click on 员工服务 only expands its row. The executor clicked it three times
+  // (the second collapsed it), then looked 45 s for a 我的费用报销 that was never shown: 匹配 0, about 100 s in.
+  it('goes through 人人报销 when the menu reopens on another node', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' } }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
+
+  it('takes the menu straight to 我的费用报销 when it reopens on 人人报销', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'ERX' } }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
+
+  // Live 2026-10-19: for 2-4 s after sign-in the loading overlay took the click on the menu, and each lost click
+  // cost a whole wait before the next try.
+  it('waits out the loading overlay before it clicks', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' }, consoleBlockerTicks: 30 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+    expect(fake.swallowedClicks).toBe(0);
+  });
+
+  it('stops at the step that achieved nothing, naming it', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'ERX' }, openListDeadClicks: 1_000 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))
+      .rejects.toMatchObject({ code: 'ERP_NEW_FORM_NOT_OPENED', message: expect.stringContaining('「我的费用报销」') });
+  });
 });
 
 // Live 2026-09-20: a 去报销 wrote 费用明细 row 1 in full — 项目, 费用项目, 发票类型, both dates, both amounts — read

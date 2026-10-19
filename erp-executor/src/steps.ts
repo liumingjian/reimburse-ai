@@ -63,11 +63,12 @@ const pointOf = `(n) => {
   return { ok: true, ...hitOf(n) };
 }`;
 
-const textPoint = (text: string, { exact = true } = {}) => `(() => {
+// `scope` keeps a search inside one part of the page: the main menu's 我的费用报销 is not the 常用功能 card's.
+const textPoint = (text: string, { exact = true, scope = 'body' } = {}) => `(() => {
   const wanted = ${JSON.stringify(String(text))};
   const vis = ${visible};
   const at = ${pointOf};
-  const nodes = [...document.querySelectorAll('body *')].filter((n) => {
+  const nodes = [...document.querySelectorAll(${JSON.stringify(`${scope} *`)})].filter((n) => {
     if (!vis(n) || n.children.length !== 0) return false;
     const value = String(n.textContent || '').replace(/\\s+/g, ' ').trim();
     return ${exact ? 'value === wanted' : 'value.includes(wanted)'};
@@ -112,8 +113,8 @@ const clickCss = (page: WritePage, session: CdpSession, selector: string, label:
   clickWhere(page, session, cssPoint(selector), label,
     (count) => new ExecutorError('CHROMIUM_TARGET_NOT_UNIQUE', `${label}不可唯一定位（匹配 ${count} 个）`), options);
 
-const clickText = (page: WritePage, session: CdpSession, text: string, { exact = true, ...options }: { timeoutMs?: number; exact?: boolean } = {}) =>
-  clickWhere(page, session, textPoint(text, { exact }), `「${text}」`,
+const clickText = (page: WritePage, session: CdpSession, text: string, { exact = true, scope, ...options }: { timeoutMs?: number; exact?: boolean; scope?: string } = {}) =>
+  clickWhere(page, session, textPoint(text, { exact, ...(scope ? { scope } : {}) }), `「${text}」`,
     (count) => new ExecutorError('CHROMIUM_TARGET_NOT_FOUND', `找不到唯一的「${text}」按钮或菜单项（匹配 ${count} 个）`), options);
 
 const clickPoint = (page: WritePage, session: CdpSession, snippet: string, label: string, options: { timeoutMs?: number } = {}) =>
@@ -124,8 +125,39 @@ const containsText = (needle: string) => `(document.body?.innerText || '').inclu
 // On screen and reachable by a scroll — the question a postcondition asks. NOT hit-tested: this is a read, and a
 // caption that something is momentarily painted over is still on screen. Only clicks demand `onTarget`.
 const onScreen = (point: Point | null | undefined) => point?.ok === true && point.inView === true;
-const waitVisibleText = async (page: WritePage, session: CdpSession, text: string, timeoutMs = 15_000) =>
-  onScreen(await waitFor(() => evalIn<Point>(session, textPoint(text)), onScreen, cap(page, timeoutMs), paceOf(page).pollMs));
+const waitVisibleText = async (page: WritePage, session: CdpSession, text: string, timeoutMs = 15_000, scope?: string) =>
+  onScreen(await waitFor(() => evalIn<Point>(session, textPoint(text, scope ? { scope } : {})), onScreen, cap(page, timeoutMs), paceOf(page).pollMs));
+
+// The main menu card and ERP's loading overlay, as measured live 2026-10-19 (QA of the 本地执行器's 去报销).
+const MAIN_MENU = '[data-kdformid="BOS_MainSystemMenuCard"]';
+const BLOCKER_SHOWN = `[...document.querySelectorAll('.kd-ui-blockingExtention-item')].some(${visible})`;
+// Is the menu's 员工服务 row expanded? A click on the row toggles it, so it is clicked only while it is shut.
+const SERVICES_EXPANDED = `(() => {
+  const caption = [...document.querySelectorAll(${JSON.stringify(`${MAIN_MENU} .kd-tabnewstyle-content`)})]
+    .find((n) => String(n.textContent || '').trim() === '员工服务');
+  const row = caption && caption.closest('li');
+  return !!row && row.classList.contains('kd-nav-menutreenewstyle-expand');
+})()`;
+// The menu opens in under 4 s once its click lands (live 2026-10-19), so a lost click is retried after this, not 15 s.
+const MENU_CONFIRM_MS = 5_000;
+const BLOCKER_WAIT_MS = 15_000;
+
+/**
+ * Wait until ERP's loading overlay has stayed away for `quietMs`. Live 2026-10-19 it flashed over the console in
+ * 0.1-1.4 s bursts for 2-4 s after sign-in, and again while a list loaded; it came up between the hit test and the
+ * mouse-down, so a click that had passed the hit test still landed on the overlay and did nothing. Past the wait the
+ * click goes ahead anyway: what it was for is still checked, and it is clicked again when that does not come.
+ */
+async function outwaitBlocker(page: WritePage, session: CdpSession) {
+  const { pollMs, quietMs } = paceOf(page);
+  const deadline = Date.now() + cap(page, BLOCKER_WAIT_MS);
+  let clearSince: number | null = null;
+  while (Date.now() < deadline) {
+    if (await evalIn<boolean>(session, BLOCKER_SHOWN)) clearSince = null;
+    else if ((clearSince ??= Date.now()) <= Date.now() - quietMs) return;
+    await sleep(pollMs);
+  }
+}
 
 /** The piaozone invoice assistant (发票无忧助手) lives in a cross-origin iframe: its own CDP target. */
 async function assistantSession(page: WritePage, timeoutMs = 45_000): Promise<CdpSession> {
@@ -153,35 +185,56 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
         + '请在报销专用浏览器窗口里关掉这个页签（问是否保存时选「否」），再点重新去报销。报销系统没有被改动。');
     }
   }
-  const has = (text: string) => waitVisibleText(page, session, text, paceOf(page).settleMs);
+  const has = (text: string, scope?: string) => waitVisibleText(page, session, text, paceOf(page).settleMs, scope);
   // Each click of the path is followed by what it is for, and clicked again when that does not come. Live 2026-10-12
-  // (S8, headless, right after login) a click landed and did nothing: the main menu stayed shut over a 员工服务 that
-  // was in the page but hidden, and on another run the 我的费用报销 list stood open with its one visible 新增 and no
-  // form came. Clicked once only, each waited out its whole 45 s for nothing. 新增 is clicked again only while no
-  // 费用报销单-新增 is on screen, and a second form opened by a slow first click is caught by the preflight's
-  // refusal of a 新增 tab that is not unique; opening a form writes nothing.
+  // (S8, headless, right after login) a click landed and did nothing, and live 2026-10-19 the click had gone to ERP's
+  // loading overlay (`outwaitBlocker`). 新增 is clicked again only while no 费用报销单-新增 is on screen, and a second
+  // form opened by a slow first click is caught by the preflight's refusal of a 新增 tab that is not unique; opening a
+  // form writes nothing.
   const budget = cap(page, timeoutMs);
-  const until = async (click: () => Promise<unknown>, effect: string, attempts = 3) => {
+  const seconds = Math.round(budget / 1000);
+  const until = async (click: () => Promise<unknown>, effect: string, { windowMs = budget / 3, scope }: { windowMs?: number; scope?: string } = {}) => {
     const deadline = Date.now() + budget;
-    for (let attempt = 1; ; attempt += 1) {
+    for (;;) {
+      await outwaitBlocker(page, session);
       await click();
-      const left = Math.max(0, deadline - Date.now());
-      if (await waitVisibleText(page, session, effect, attempt < attempts ? Math.min(left, budget / attempts) : left)) return true;
-      if (attempt >= attempts || Date.now() >= deadline) return false;
+      if (await waitVisibleText(page, session, effect, Math.min(windowMs, Math.max(0, deadline - Date.now())), scope)) return true;
+      if (Date.now() >= deadline) return false;
     }
   };
-  const openList = () => until(() => clickText(page, session, '我的费用报销', { timeoutMs }), '新增');
+  // A step that did not achieve what it is for ends the navigation there, saying which. Live 2026-10-19 a 员工服务
+  // that never showed 我的费用报销 was walked past into a 45 s search for it, and the run died 100 s in on 匹配 0.
+  const notOpened = (what: string) => new ExecutorError('ERP_NEW_FORM_NOT_OPENED', `${what}：新的费用报销单没有打开`);
+  const openList = async (scope?: string) => {
+    if (!(await until(() => clickText(page, session, '我的费用报销', { timeoutMs, ...(scope ? { scope } : {}) }), '新增'))) {
+      throw notOpened(`点过「我的费用报销」之后 ${seconds} 秒内没有出现「新增」`);
+    }
+  };
   let opened: boolean;
   if (await has('费用报销单-新增')) {
     await clickText(page, session, '费用报销单-新增', { timeoutMs });
     opened = await waitVisibleText(page, session, '费用报销单-新增', timeoutMs);
   } else {
+    await outwaitBlocker(page, session);
     if (await has('我的费用报销')) {
       await openList();
     } else {
-      await until(() => clickCss(page, session, '.kd_SystemMenu', 'ERP 主菜单'), '员工服务');
-      await until(() => clickText(page, session, '员工服务', { timeoutMs }), '我的费用报销');
-      await openList();
+      // The main menu reopens on the second-level node this ERP user last chose, kept by ERP (live 2026-10-19), and
+      // only 员工服务 › 人人报销 shows 我的费用报销: from anywhere else, a click on 员工服务 just expands its row.
+      if (!(await until(() => clickCss(page, session, '.kd_SystemMenu', 'ERP 主菜单'), '员工服务', { windowMs: MENU_CONFIRM_MS, scope: MAIN_MENU }))) {
+        throw notOpened(`点过 ERP 主菜单之后 ${seconds} 秒内菜单里没有出现「员工服务」`);
+      }
+      if (!(await has('我的费用报销', MAIN_MENU))) {
+        if (!(await evalIn<boolean>(session, SERVICES_EXPANDED))) {
+          await outwaitBlocker(page, session);
+          await clickText(page, session, '员工服务', { timeoutMs, scope: MAIN_MENU });
+        }
+        if (!(await waitVisibleText(page, session, '人人报销', MENU_CONFIRM_MS, MAIN_MENU))) throw notOpened('菜单的「员工服务」下面没有出现「人人报销」');
+        if (!(await until(() => clickText(page, session, '人人报销', { timeoutMs, scope: MAIN_MENU }), '我的费用报销', { windowMs: MENU_CONFIRM_MS, scope: MAIN_MENU }))) {
+          throw notOpened(`点过「人人报销」之后 ${seconds} 秒内菜单里没有出现「我的费用报销」`);
+        }
+      }
+      await openList(MAIN_MENU);
     }
     // The result of this wait used to be discarded and `{ok:true}` returned regardless, so a form that never opened
     // was reported as opened; the run then failed further on, with a message about something else entirely — live
@@ -190,7 +243,7 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
   }
   if (!opened) {
     throw new ExecutorError('ERP_NEW_FORM_NOT_OPENED',
-      `点过之后 ${Math.round(cap(page, timeoutMs) / 1000)} 秒内没有出现「费用报销单-新增」页签：新的费用报销单没有打开`);
+      `点过之后 ${seconds} 秒内没有出现「费用报销单-新增」页签：新的费用报销单没有打开`);
   }
   return { ok: true, form: '费用报销单-新增' };
 }

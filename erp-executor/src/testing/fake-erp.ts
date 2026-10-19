@@ -214,6 +214,17 @@ export type FakeErpOptions = {
    */
   newFormDeadClicks?: number;
   openListDeadClicks?: number;
+  /**
+   * The console has no 我的费用报销 shortcut, so the way in is 菜单 -> 员工服务 -> 人人报销 -> 我的费用报销 (live
+   * 2026-10-19). `selected` is the second-level node the menu reopens on, which ERP remembers per user: `LOG`
+   * (定制开发 › 日志管理) is the one the failing live runs met, where a click on 员工服务 only expands its row.
+   */
+  menuPath?: { selected: 'ERX' | 'LOG' };
+  /**
+   * ERP's loading overlay shows for the first N page ticks and takes every click made while it shows. Live
+   * 2026-10-19 it flashed for 2-4 s after sign-in, appearing between the hit test and the mouse-down.
+   */
+  consoleBlockerTicks?: number;
   /** 暂存 is pressed and nothing lands: the tab stays 新增. */
   draftCommandDead?: boolean;
   /** 暂存 lands the draft but the tab stays 新增, so the fill cannot tell it landed: what 对账 by the marker is for. */
@@ -665,6 +676,13 @@ export async function createFakeErp(options: FakeErpOptions) {
     }
     if (options.notFillEntryBelowFold) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-below-fold', '1240');
     if (options.notFillEntryHitsNeighbour) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-covered-by', 'a[id$="tbMergeFillEntry"]');
+    if (loggedIn && options.menuPath) {
+      (doc.document.querySelector('.kd-mainconsole-shortcuts') as any).style.display = 'none';
+      selectMenuNode(doc.document, options.menuPath.selected);
+      const parent: any = doc.document.querySelector(`[data-action="menu-child"][data-node="${options.menuPath.selected}"]`)?.closest('li[id^="parentli_"]');
+      if (parent) toggleMenuRow(parent);
+    }
+    if (loggedIn && options.consoleBlockerTicks) (doc.document.querySelector('#console-blocker') as any).style.display = '';
     return doc;
   }
 
@@ -680,6 +698,19 @@ export async function createFakeErp(options: FakeErpOptions) {
     if (inner) inner.textContent = text; else td.textContent = text;
   };
   const show = (el: any, on: boolean) => { if (el) el.style.display = on ? '' : 'none'; };
+  // The main menu (`menuPath`): a first-level row expands or collapses on a click; a second-level node becomes the
+  // selection, and the right panel shows its groups. Declarations, not `show`, because the first render calls them.
+  function showMenuPart(el: any, on: boolean) { if (el) el.style.display = on ? '' : 'none'; }
+  function toggleMenuRow(li: any) {
+    const open = !li.classList.contains('kd-nav-menutreenewstyle-expand');
+    li.classList.toggle('kd-nav-menutreenewstyle-expand', open);
+    showMenuPart(li.querySelector('ul.kd-tabsnewsyle-list'), open);
+  }
+  function selectMenuNode(doc: any, node: string) {
+    for (const panel of doc.querySelectorAll('#system-menu .menu-right')) showMenuPart(panel, panel.getAttribute('data-node') === node);
+  }
+  let swallowedClicks = 0;
+  const blockerShown = () => !!options.consoleBlockerTicks && mainTicks < options.consoleBlockerTicks;
   const visible = (el: any) => !!el && !main.hidden(el);
 
 /**
@@ -1114,6 +1145,8 @@ const kendoDate = (raw: string) => {
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
     if (visible(assistant) && !assistant.contains(el)) return; // the modal assistant swallows clicks
+    // The loading overlay is up by the mouse-down even when the hit test before it found the target.
+    if (blockerShown()) { swallowedClicks += 1; return; }
     if (dropdown) {
       const li = el.closest('ul.k-list li');
       if (li) return pickOption(String(li.textContent).trim());
@@ -1131,8 +1164,12 @@ const kendoDate = (raw: string) => {
     if (td && !td.parentElement.classList.contains('k-footer-template')) return editCell(td);
     commitEditor();
     switch (action) {
+      case 'system-menu': return show(q('#system-menu'), true);
+      case 'menu-parent': return toggleMenuRow(el.closest('li'));
+      case 'menu-child': return selectMenuNode(main.document, el.getAttribute('data-node'));
       case 'open-list':
         if (deadOpenListClicks < (options.openListDeadClicks ?? 0)) { deadOpenListClicks += 1; return undefined; }
+        show(q('#system-menu'), false);
         return show(q('#expense-list'), true);
       // @unverified: clicking 新增 reveals the form in the same document, where live adds a tab panel (recordings/new-form) [fake]
       case 'new-form':
@@ -1421,7 +1458,7 @@ const kendoDate = (raw: string) => {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
+      else { mainTicks += 1; if (!blockerShown()) show(q('#console-blocker'), false); syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':
@@ -1468,6 +1505,8 @@ const kendoDate = (raw: string) => {
     get recordedPage() { return recordedPage()?.name ?? null; },
     /** Which 选择发票 menu item the clicks actually landed on, null until one of them is clicked. */
     get importMode() { return importMode; },
+    /** Clicks the loading overlay took (`consoleBlockerTicks`). */
+    get swallowedClicks() { return swallowedClicks; },
     /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */
     get assistantDocument() { return child?.doc.document ?? null; },
     browser: {
