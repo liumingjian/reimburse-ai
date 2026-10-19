@@ -41,6 +41,22 @@ describe('ERP login probe (登录探测)', () => {
     expect(identityFromObservation({ ...loginPage, loginFormVisible: false })!.status).toBe('unknown');
   });
 
+  // QA 2026-10-19: the ERP answered the Mac with IIS's 403 page, and the hint sent the employee to look at a tab of
+  // the 本地执行器's headless Chromium, which nobody can see and which is closed when the job ends.
+  it('quotes what a page that is neither console nor login page says, and sends nobody to a tab', () => {
+    const r = identityFromObservation({ ...loginPage, title: '', loginFormVisible: false, pageText: '您无权查看此目录或页面。' }, { transport: 'chromium-cdp' })!;
+    expect(r.status).toBe('unknown');
+    const hint = 'hint' in r ? r.hint : '';
+    expect(hint).toContain('「您无权查看此目录或页面。」');
+    expect(hint).toContain('http://erp.antute.com.cn/k3cloud/html5/index.aspx');
+    expect(hint).not.toMatch(/标签页/);
+  });
+
+  it('says a page with no text at all is blank', () => {
+    const r = identityFromObservation({ ...loginPage, loginFormVisible: false, pageText: null }, { transport: 'chromium-cdp' })!;
+    expect('hint' in r && r.hint).toMatch(/空白/);
+  });
+
   it('reads the session fact on the main console: who is logged in, with account and 账套', () => {
     const r = identityFromObservation(console_)!;
     expect(r.status).toBe('matched');
@@ -121,7 +137,7 @@ describe('ERP login probe (登录探测)', () => {
       evaluate: async () => ({ ...loginPage, loginFormVisible: false }),
     });
     expect(result.status).toBe('unknown');
-    expect(result.hint).toMatch(/请人工看一眼/);
+    expect(result.hint).toMatch(/身份不能确定就不接管/);
   });
 
   it('does not turn a JS/automation permission error into "not logged in"', async () => {
