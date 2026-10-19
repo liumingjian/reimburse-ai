@@ -28,7 +28,7 @@ import {
   addDetailRow, captureErpError, closeErpDialogs, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
   importInvoices, uploadInvoices, type WritePage,
 } from './steps';
-import type { InvoiceStaging, StagedInvoices } from './invoice-files';
+import type { StagedInvoices } from './invoice-files';
 import { stageInvoices } from './staging';
 import { prepareErpWrite } from './write-context';
 
@@ -42,13 +42,7 @@ export type ExecutorPorts = {
   browser: BrowserPort;
   blobs: BlobSource;
   channel: ExecutorChannel;
-  /**
-   * How the invoices reach the assistant's file input (`invoice-files.ts`). Default by build: local paths in node,
-   * bytes built in the page in the extension's bundle. The extension passes `stageInPage` explicitly, so it takes the
-   * same route under node tests as in the browser.
-   */
-  staging?: InvoiceStaging;
-  /** Parent directory for the local-path route's per-job staging directory (default: the OS temp dir). */
+  /** Parent directory for each job's invoice staging directory (`invoice-files.ts`; default: the OS temp dir). */
   stagingRoot?: string;
   pace?: Pace;
   /** How long the login probe waits for a slow ERP first screen. */
@@ -156,7 +150,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('catalog', 'done');
 
     // Invoices by content, fetched and verified before any page action; a bad file stops here.
-    staged = await (ports.staging ?? stageInvoices)(plan.invoices, ports.blobs, ports.stagingRoot);
+    staged = await stageInvoices(plan.invoices, ports.blobs, ports.stagingRoot);
     invoiceUploadGroups(staged.names);
 
     // Preconditions of the next mutation, and the drift guard against the baseline taken after navigation.

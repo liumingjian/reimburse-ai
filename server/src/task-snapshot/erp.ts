@@ -1,12 +1,12 @@
 // The snapshot's `erp`, `readback`, `reconcile` and `catalog` sections, worded from the task's ERP record
 // (`erp/fill-state.ts`). Which actions are on offer is the task policy's (`task-policy.ts`); these views only word them.
 
-import { ERP_DRAFT_CHECK_PROGRESS_LABEL, ERP_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgress, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
+import { EXECUTOR_OFFLINE_CODE, ERP_DRAFT_CHECK_PROGRESS_LABEL, ERP_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgress, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
 import type { DraftOutcome, ErpRecord, ReconcileJudgement } from '../erp/fill-state';
-import { EXECUTOR_CONNECTION_LOST_CODE, EXECUTOR_OFFLINE_CODE } from '../channel/channel';
+import { EXECUTOR_CONNECTION_LOST_CODE } from '../channel/channel';
 import { erpActionsOf, reconcileActionsOf, reconcileReading, type ErpPhase } from '../task-policy';
 
 // Executor events are only interpreted here. The client receives the resulting stage and never infers progress from

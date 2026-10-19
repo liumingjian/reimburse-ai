@@ -767,9 +767,10 @@ const installCode412: Migration = {
 
 // Spec #432 (ADR-0037): the 本地执行器 is the only way to 去报销, and baox is in its test stage, so nothing is carried
 // forward. Every pairing that is not a 本地执行器's goes without notice (an extension's, and one from before 0021
-// recorded a holder, which was an extension); the table is renamed `pairing` and loses `holder`. `erp_job.route` (0023)
-// goes too: every job is worded with the one 本地执行器 step list. DROP COLUMN keeps erp_job's append-only triggers,
-// which name no column, and the route's own CHECK goes with it.
+// recorded a holder, which was an extension); the table is renamed `pairing` and loses `holder`. `erp_job` is rebuilt
+// (as #242 did, see there for the pragmas): `route` (0023) goes, since every job is worded with the one 本地执行器 step
+// list, and `trigger` loses `confirm_login`, the 「我已登录，继续」 ADR-0037 removed. A stored one is the 去报销 it
+// resumed, so it is kept as `start`.
 const onePairing432: Migration = {
   async up(db: Kysely<unknown>) {
     await sql`DELETE FROM extension_pairing WHERE holder IS NULL OR holder <> 'local_executor'`.execute(db);
@@ -780,7 +781,30 @@ const onePairing432: Migration = {
     await db.schema.dropIndex('extension_pairing_code').execute();
     await db.schema.createIndex('pairing_token').unique().on('pairing').column('token_sha256').execute();
     await db.schema.createIndex('pairing_code').on('pairing').column('code_sha256').execute();
-    await db.schema.alterTable('erp_job').dropColumn('route').execute();
+
+    await sql`PRAGMA foreign_keys = OFF`.execute(db);
+    await sql`PRAGMA defer_foreign_keys = ON`.execute(db);
+    await db.schema
+      .createTable('erp_job_rebuilt')
+      .addColumn('job_id', 'text', (c) => c.primaryKey())
+      .addColumn('task_id', 'text', (c) => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', (c) => c.notNull().references('account.account_id'))
+      .addColumn('kind', 'text', (c) => c.notNull().check(sql`kind IN ('fill')`))
+      .addColumn('trigger', 'text', (c) => c.notNull().check(sql`trigger IN ('start', 'refill', 'rerun')`))
+      .addColumn('confirmation_digest', 'text', (c) => c.notNull())
+      .addColumn('plan', 'text', (c) => c.notNull())
+      .addColumn('revision', 'integer', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .execute();
+    await sql`INSERT INTO erp_job_rebuilt (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+              SELECT job_id, task_id, account_id, kind, CASE trigger WHEN 'confirm_login' THEN 'start' ELSE trigger END,
+                     confirmation_digest, plan, revision, started_at FROM erp_job`.execute(db);
+    await sql`DROP TABLE erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = ON`.execute(db);
+    await sql`ALTER TABLE erp_job_rebuilt RENAME TO erp_job`.execute(db);
+    await sql`PRAGMA legacy_alter_table = OFF`.execute(db);
+    await appendOnly(db, 'erp_job');
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
   },
 };
 

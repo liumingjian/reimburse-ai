@@ -11,13 +11,14 @@
 
 import {
   ERP_CREDENTIAL_ERRORS, type ErpCredentialsView, type SaveErpCredentialsInput,
+  EXECUTOR_OFFLINE_CODE,
 } from '@baox/contract';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, TrySignInAnswerSchema, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
 import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
-import { EXECUTOR_OFFLINE_CODE, ChannelError } from '../channel/channel';
+import { ChannelError } from '../channel/channel';
 import { hasPairing } from '../channel/pairing';
 import type { CredentialVault } from './credential-vault';
 

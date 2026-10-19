@@ -5,9 +5,8 @@
 // (docs/research/erp-expense-flow): edit-on-click cells, select-all + typing + Enter/Tab commit, F7 code -> name,
 // the invoice-type dropdown, linked recalculation, the piaozone assistant as a child target, save -> 修改 mode.
 //
-// Invoices reach the assistant's file input by either route the executor has (`invoice-files.ts`): local paths
-// through `DOM.setFileInputFiles`, or `File` objects in a `DataTransfer` assigned inside the page. Both end in the
-// same recognition, keyed by the bytes' sha256.
+// Invoices reach the assistant's file input as local paths through `DOM.setFileInputFiles` (`invoice-files.ts`),
+// recognised by the bytes' sha256.
 //
 // Layout: jsdom has none, so every visible element gets a unique 8x8 box on a 10px grid in DOCUMENT coordinates, in
 // the order it is first measured. Hidden (display:none / visibility:hidden / [hidden]) elements measure 0x0.
@@ -367,13 +366,6 @@ const cents = (text: string | null | undefined) => {
 };
 const money = (value: number) => `¥${(value / 100).toFixed(2)}`;
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-/** A page-side `File`'s bytes. jsdom's `File` has no `arrayBuffer()`, so this goes through its `FileReader`. */
-const readInPage = (window: any, file: any) => new Promise<Uint8Array>((resolve, reject) => {
-  const reader = new window.FileReader();
-  reader.onload = () => resolve(new Uint8Array(reader.result));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsArrayBuffer(file);
-});
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 /**
@@ -503,9 +495,8 @@ export type FakeErp = Awaited<ReturnType<typeof createFakeErp>>;
 
 /**
  * The ERP page the fake renders, placeholders filled: the main console when logged in, the login page otherwise.
- * Shared with the extension's real-browser harness, which serves the same page over HTTP.
  */
-export function erpFixtureHtml(loggedIn: boolean, values: { uuid: string; displayName: string; erpBuild: string; formId: string; today: string }) {
+function erpFixtureHtml(loggedIn: boolean, values: { uuid: string; displayName: string; erpBuild: string; formId: string; today: string }) {
   return fixture(loggedIn ? 'erp-main.html' : 'erp-login.html')
     .replaceAll('{{UUID}}', values.uuid).replaceAll('{{DISPLAY_NAME}}', escapeHtml(values.displayName))
     .replaceAll('{{BUILD}}', values.erpBuild).replaceAll('{{FORM_ID}}', values.formId).replaceAll('{{TODAY}}', values.today);
@@ -984,7 +975,6 @@ const kendoDate = (raw: string) => {
     show(q('#assistant-window'), true);
     const doc = new FakeDocument(fixture('piaozone-assistant.html'), 'https://www.piaozone.com/pwy-assistant/index.html');
     await doc.ready();
-    acceptFilesInPage(doc);
     child = { doc, sessionId: 'piaozone-session-1', targetId: 'piaozone-1' };
     activePane = null;
     uploadBatches = 0;
@@ -1414,29 +1404,7 @@ const kendoDate = (raw: string) => {
     for (const box of doc.querySelectorAll('input.ant-checkbox-input')) box.setAttribute('data-covered-by', ASSISTANT_NOTICE);
   }
 
-  /**
-   * The in-page route. What Chrome supplies natively, jsdom lacks: it has no `DataTransfer`, and its `files` setter
-   * takes only a FileList of its own making. So the fake supplies both — a `DataTransfer` whose `files` is the list of
-   * files added, and a file input that holds whatever list it is given. The assistant's part is its own: on `change`
-   * it uploads what the input holds, which is where the bytes are read back and recognised.
-   */
-  function acceptFilesInPage(doc: FakeDocument) {
-    const { window } = doc;
-    window.DataTransfer = class {
-      private readonly added: any[] = [];
-      readonly items = { add: (file: any) => { this.added.push(file); } };
-      get files() { return Object.assign([...this.added], { item: (index: number) => this.added[index] ?? null }); }
-    };
-    const input = doc.document.querySelector('input[type=file]');
-    let held: any[] = [];
-    Object.defineProperty(input, 'files', { configurable: true, get: () => held, set: (files: any[]) => { held = files; } });
-    input.addEventListener('change', () => {
-      const batch = [...held];
-      void Promise.all(batch.map((file) => readInPage(window, file))).then((files) => { if (child?.doc === doc) setFiles(files); });
-    });
-  }
-
-  /** One upload batch reaching the assistant, by either route. */
+  /** One upload batch reaching the assistant. */
   function setFiles(files: Uint8Array[]) {
     if (!child) return;
     const delay = options.assistantRecognitionTicks ?? 0;

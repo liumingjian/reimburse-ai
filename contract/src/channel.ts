@@ -37,21 +37,21 @@ export const invoiceBlobPath = (sha256: string): string => `${INVOICE_BLOB_PATH}
 // The single source of truth for what the 本地执行器 is, and for what the server will still talk to (ADR-0035 keeps
 // ADR-0021's gate for it).
 //
-// `CLIENT_VERSION` is what the 本地执行器 built from this tree reports in its `hello` and its 配对 request.
-// `MINIMUM_CLIENT_VERSION` is what the server refuses to go below. Both live here, one above the other, because a
+// `EXECUTOR_VERSION` is what the 本地执行器 built from this tree reports in its `hello` and its 配对 request.
+// `MINIMUM_EXECUTOR_VERSION` is what the server refuses to go below. Both live here, one above the other, because a
 // build that ships a version the server then rejects is the one failure this arrangement has to make impossible.
 //
 // ADR-0021 chose refusal over best-effort compatibility: the fill protocol hands down one whole plan, and an old
 // executor running half of it leaves a write of undecidable outcome behind. Refusing costs a day.
 //
-// Raise MINIMUM_CLIENT_VERSION (and CLIENT_VERSION with it) when a change is one an older 本地执行器 must not be
+// Raise MINIMUM_EXECUTOR_VERSION (and EXECUTOR_VERSION with it) when a change is one an older 本地执行器 must not be
 // allowed to run; installed executors update themselves to the server's program (ADR-0035).
-export const CLIENT_VERSION = '1.1.0';
-export const MINIMUM_CLIENT_VERSION = '1.0.1';
+export const EXECUTOR_VERSION = '1.1.0';
+export const MINIMUM_EXECUTOR_VERSION = '1.0.1';
 
 // Dotted numbers only, the shape `manifest.json` allows. Returns <0, 0 or >0 like any comparator; a missing part
 // counts as 0, so `1.2` and `1.2.0` are the same version.
-export function compareClientVersions(left: string, right: string): number {
+export function compareExecutorVersions(left: string, right: string): number {
   const parts = (value: string) => value.split('.').map((piece) => Number.parseInt(piece, 10) || 0);
   const a = parts(left);
   const b = parts(right);
@@ -62,7 +62,7 @@ export function compareClientVersions(left: string, right: string): number {
   return 0;
 }
 
-export const ClientVersionSchema = z
+export const ExecutorVersionSchema = z
   .string()
   .trim()
   .max(32)
@@ -74,7 +74,7 @@ export const ClientVersionSchema = z
 export const PairingInputSchema = z.object({
   code: z.string().min(1).max(64),
   browser: z.string().trim().min(1).max(80).nullish(),
-  version: ClientVersionSchema.nullish(),
+  version: ExecutorVersionSchema.nullish(),
 });
 export type PairingInput = z.infer<typeof PairingInputSchema>;
 
@@ -127,12 +127,12 @@ export type PairingChangeOutcome = { ok: true; pairing: PairingView } | { ok: fa
 // The one refusal both halves of version negotiation give (ADR-0021): the 配对 request and the channel's first
 // message answer with the same sentence, so an employee who hits it twice reads it once. Running the 设置页's install
 // command again puts the current program in place and pairs it in one go.
-export const CLIENT_VERSION_TOO_OLD_CODE = 'version_too_old';
+export const EXECUTOR_VERSION_TOO_OLD_CODE = 'version_too_old';
 
 // Null when the reported version is good enough; the sentence to show otherwise. A client that reports no version
 // at all is by construction older than the first one that did, so it is refused too.
-export function clientVersionRefusal(reported: string | null | undefined, minimum: string): string | null {
-  if (reported && compareClientVersions(reported, minimum) >= 0) return null;
+export function executorVersionRefusal(reported: string | null | undefined, minimum: string): string | null {
+  if (reported && compareExecutorVersions(reported, minimum) >= 0) return null;
   const which = reported ? `你装的是 ${reported} 版。` : '你装的这一版太旧，连版本号都报不上来。';
   return `这台服务器要求 baox 本地执行器 ${minimum} 或更新的版本，所以没有连上。${which}请回到设置页生成安装命令，在这台电脑上再运行一次。`;
 }
@@ -173,7 +173,7 @@ export const CHANNEL_HEARTBEAT_MS = 15_000;
 export const ChannelHelloSchema = z.object({
   type: z.literal('hello'),
   token: z.string().min(1),
-  version: ClientVersionSchema.nullish(),
+  version: ExecutorVersionSchema.nullish(),
 });
 export type ChannelHello = z.infer<typeof ChannelHelloSchema>;
 

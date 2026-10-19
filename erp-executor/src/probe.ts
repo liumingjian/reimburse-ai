@@ -57,8 +57,8 @@ const hasText = (value: unknown) => (typeof value === 'string' ? value.trim().le
 export function identityFromObservation(info: Observation | null | undefined, { transport = 'default', origin = DEFAULT_ERP_ORIGIN }: { transport?: string | { kind?: string }; origin?: string } = {}): ProbeVerdict | null {
   if (!info || info.ready !== 'complete') return null;
   const cdp = transport === 'chromium-cdp' || (typeof transport === 'object' && transport?.kind === 'chromium-cdp');
-  // Where the page is, in words true for both CDP executors: the employee's own Chrome or Edge through the extension, and
-  // the dedicated Chromium of development and e2e. Each opens a tab of its own for the job.
+  // Where the page is, in words true for every CDP run: the 本地执行器's Chromium, and the dedicated Chromium of
+  // development and e2e. Each opens a tab of its own for the job.
   const page = cdp ? '为这次报销打开的报销系统标签页' : '系统默认浏览器里的报销系统页面';
 
   if (hasText(info.displayName) && hasText(info.account) && hasText(info.tenant)) {

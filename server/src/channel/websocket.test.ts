@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CHANNEL_PATH } from '@baox/contract';
 import { parsePublicOrigin } from '../public-origin';
 import { createTestServer, type TestServer } from '../test/harness';
-import { attachClientChannel } from './websocket';
+import { attachExecutorHub } from './websocket';
 
 // The upgrade seam. An upgrade never reaches Hono, so the Host guard in `app.ts` never sees it; this is the one test
 // that has to open a real loopback socket, because what is under test is the handshake itself. The request is
@@ -20,7 +20,7 @@ let detach: () => void;
 async function listen(publicOrigin: string | null): Promise<number> {
   app = await createTestServer(publicOrigin ? { publicOrigin } : {});
   http = createServer((_request, response) => response.end());
-  detach = attachClientChannel(http, app.app.clientChannel, publicOrigin ? parsePublicOrigin(publicOrigin) : null);
+  detach = attachExecutorHub(http, app.app.executorHub, publicOrigin ? parsePublicOrigin(publicOrigin) : null);
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
   return (http.address() as AddressInfo).port;
 }

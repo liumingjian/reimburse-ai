@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, PAIRING_PATH, CLIENT_VERSION, ErpCredentialsViewSchema, PairingViewSchema, PairingTokenSchema } from '@baox/contract';
+import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, PAIRING_PATH, EXECUTOR_VERSION, ErpCredentialsViewSchema, PairingViewSchema, PairingTokenSchema } from '@baox/contract';
 import { abortedResult } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
@@ -16,7 +16,6 @@ import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 // the server's key, tried on the employee's PC through the paired 本地执行器, deleted the moment ERP refuses them, and
 // sent down with each job.
 
-const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const PASSWORD = 'erp-Pa55-秘密';
 
 let server: ScenarioServer;
@@ -33,8 +32,8 @@ async function pair(owner: TestClient): Promise<string> {
   const issued = PairingViewSchema.parse(await (await owner.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXECUTOR_VERSION }),
   });
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
@@ -42,12 +41,12 @@ async function pair(owner: TestClient): Promise<string> {
 const trials: TrySignInRequest[] = [];
 beforeEach(() => { trials.length = 0; });
 async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner): Promise<FakeLocalExecutor> {
-  const extension = fakeLocalExecutor(server.app.clientChannel, await pair(alice), {
+  const localExecutor = fakeLocalExecutor(server.app.executorHub, await pair(alice), {
     trySignIn: async (request) => { trials.push(request); return answer; },
     ...(fill ? { fill } : {}),
   });
-  await extension.connect();
-  return extension;
+  await localExecutor.connect();
+  return localExecutor;
 }
 
 const view = async (response: Response) => ErpCredentialsViewSchema.parse(await response.json());
@@ -120,13 +119,13 @@ describe('去报销 through a baox 本地执行器', () => {
   const sceneOnFakeErp = () => scenario(server, alice).at('actions');
 
   it('sends the authorised 凭据 down with the job, next to the plan and not in it', async () => {
-    const extension = await executor({ ok: true }, (plan, channel) => uncertainSave(plan, channel));
+    const localExecutor = await executor({ ok: true }, (plan, channel) => uncertainSave(plan, channel));
     await save();
     const scene = await sceneOnFakeErp();
 
     await scene.run('start-erp-write');
 
-    const fill = extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!;
+    const fill = localExecutor.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!;
     expect(fill.payload).toMatchObject({ credentials: { account: 'zhangsan', password: PASSWORD } });
     const stored = await server.db.selectFrom('erp_job').select('plan').where('task_id', '=', scene.task.taskId).executeTakeFirstOrThrow();
     expect(stored.plan).not.toContain(PASSWORD);
@@ -134,13 +133,13 @@ describe('去报销 through a baox 本地执行器', () => {
 
   // ADR-0029: the 本地执行器 runs unattended, so it 暂存s the bill under the job's ownership marker.
   it('asks the 本地执行器 to 暂存 under the job\'s marker, and ends at ERP 草稿已交接', async () => {
-    const extension = await executor({ ok: true }, drafted);
+    const localExecutor = await executor({ ok: true }, drafted);
     await save();
     const scene = await sceneOnFakeErp();
 
     const done = await scene.run('start-erp-write');
 
-    const fill = extension.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!;
+    const fill = localExecutor.asked().find((asked) => asked.method === EXECUTOR_METHODS.fill)!;
     const jobId = (fill.payload as { plan: { jobId: string } }).plan.jobId;
     expect(fill.payload).toMatchObject({ plan: { draft: { mark: draftMarkOf(jobId) } } });
     expect(draftMarkOf(jobId)).toMatch(/^baox-[a-z0-9]{10}$/);

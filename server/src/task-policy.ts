@@ -76,8 +76,7 @@ export type ErpPhase = 'running' | 'catalog_mismatch' | 'aborted' | 'drafted' | 
 
 export type ErpFacts = {
   jobId: string;
-  // `confirm_login` is the 「我已登录，继续」 of jobs stored before ADR-0037; nothing records it any more.
-  trigger: 'start' | 'confirm_login' | 'refill' | 'rerun';
+  trigger: 'start' | 'refill' | 'rerun';
   // The revision the job was accepted at.
   revision: number;
   phase: ErpPhase;

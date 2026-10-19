@@ -69,7 +69,7 @@ final report:
 
 | Watch | Hit means |
 |---|---|
-| `MINIMUM_CLIENT_VERSION` raised in `contract/src/channel.ts` | Every installed 本地执行器 older than it is refused until it updates itself (ADR-0035); QA waits until the QA PC's 本地执行器 shows connected on the 设置页. |
+| `MINIMUM_EXECUTOR_VERSION` raised in `contract/src/channel.ts` | Every installed 本地执行器 older than it is refused until it updates itself (ADR-0035); QA waits until the QA PC's 本地执行器 shows connected on the 设置页. |
 | `local-executor/` or `channel/` changed | Installed 本地执行器s replace themselves with the new build at start, every 30 idle minutes, or when refused (ADR-0035); a QA PC runs the old build until then. |
 | A new key in the migrations map of `server/src/db/migrations.ts` | Schema migration: rollback to the previous release is unsafe from now on (the database never migrates backwards, and there is no backup). |
 

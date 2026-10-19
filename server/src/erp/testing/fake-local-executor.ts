@@ -9,10 +9,10 @@
 // by id with what it re-observed, and only then carries on over `channel(jobId)`. A lost page (`erp.detached`) is
 // `detached(jobId)` on a socket that stays up.
 
-import { CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
+import { EXECUTOR_VERSION, type ChannelMessage } from '@baox/contract';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ReconcilePlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, ResumeVerdictSchema, TrySignInRequestSchema, wireChannel, type FillRequest, type PageObservation, type ResumeVerdict, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
-import type { ClientChannel } from '../../channel/channel';
+import type { ExecutorHub } from '../../channel/channel';
 
 export type FillRunner = (plan: FillPlan, channel: ExecutorChannel, trigger: FillRequest['trigger']) => Promise<ResultEvent>;
 export type ReconcileRunner = (plan: ReconcilePlan, channel: ExecutorChannel) => Promise<ResultEvent>;
@@ -45,7 +45,7 @@ class FakeRequestFailed extends Error {
   }
 }
 
-export function fakeLocalExecutor(channel: ClientChannel, token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner; trySignIn?: TrySignInRunner }): FakeLocalExecutor {
+export function fakeLocalExecutor(channel: ExecutorHub, token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner; trySignIn?: TrySignInRunner }): FakeLocalExecutor {
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const asked: Array<{ method: string; payload: unknown }> = [];
   const sent: ExecutorEvent[] = [];
@@ -119,7 +119,7 @@ export function fakeLocalExecutor(channel: ClientChannel, token: string, runners
 
   return {
     async connect() {
-      say({ type: 'hello', token, version: CLIENT_VERSION });
+      say({ type: 'hello', token, version: EXECUTOR_VERSION });
       await readied;
     },
     disconnect() {

@@ -1,4 +1,4 @@
-import { CHANNEL_PING_METHOD, ChannelMessageSchema, CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
+import { CHANNEL_PING_METHOD, ChannelMessageSchema, CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, EXECUTOR_VERSION, type ChannelMessage } from '@baox/contract';
 import { CHANNEL_CLOSED } from './messages';
 
 // The 本地执行器's side of the channel. It dials; the server never dials it, because a browser on an employee's
@@ -65,7 +65,7 @@ class RequestFailed extends Error {
   }
 }
 
-export function createChannelClient({ origin, token, open, version = CLIENT_VERSION, onRequest, onStatus }: ChannelClientOptions): ChannelClient {
+export function createChannelClient({ origin, token, open, version = EXECUTOR_VERSION, onRequest, onStatus }: ChannelClientOptions): ChannelClient {
   type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
   const pending = new Map<string, Pending>();
   let socket: ClientSocket | null = null;

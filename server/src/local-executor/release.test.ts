@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_ERRORS, LOCAL_EXECUTOR_RELEASE_PATH, LocalExecutorReleaseSchema } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION, PairingViewSchema, PairingTokenSchema, LOCAL_EXECUTOR_PROGRAM_PATH, LOCAL_EXECUTOR_RELEASE_ERRORS, LOCAL_EXECUTOR_RELEASE_PATH, LocalExecutorReleaseSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
 import type { LocalExecutorDist } from './release';
@@ -37,8 +37,8 @@ async function pairedToken(): Promise<string> {
   const issued = PairingViewSchema.parse(await (await alice.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXECUTOR_VERSION }),
   });
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }

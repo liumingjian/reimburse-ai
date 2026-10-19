@@ -1,4 +1,4 @@
-import { PAIRING_CODE_TTL_MS, PAIRING_ERRORS, CLIENT_VERSION, type CreatePairingCodeInput, type PairingView, type PairingChangeOutcome, type LocalExecutorPairingState } from '@baox/contract';
+import { PAIRING_CODE_TTL_MS, PAIRING_ERRORS, EXECUTOR_VERSION, type CreatePairingCodeInput, type PairingView, type PairingChangeOutcome, type LocalExecutorPairingState } from '@baox/contract';
 import type { LocalExecutorPort } from '../adapter/local-executor-port';
 import { MOCK_ACCOUNT } from './auth';
 import type { MockOptions } from './options';
@@ -23,7 +23,7 @@ const OTHER_ACCOUNT_ID = 'A9';
 const EXECUTOR_BROWSER = 'baox 本地执行器（darwin）';
 
 const unpaired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null });
-const paired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'paired', browser: EXECUTOR_BROWSER, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected: true, version: CLIENT_VERSION, code: null });
+const paired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'paired', browser: EXECUTOR_BROWSER, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected: true, version: EXECUTOR_VERSION, code: null });
 
 export type PairingFlow = {
   getPairing(): Promise<PairingView>;

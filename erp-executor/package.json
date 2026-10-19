@@ -13,9 +13,6 @@
       "default": "./src/*.ts"
     }
   },
-  "browser": {
-    "./src/staging.ts": "./src/staging.browser.ts"
-  },
   "scripts": {
     "probe": "tsx src/recording/cli.ts",
     "test": "vitest run",

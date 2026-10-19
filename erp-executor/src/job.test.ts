@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { stageInPage } from './invoice-files';
 import { runFillJob } from './job';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES } from './invoice-type';
 import { writeHeader } from './erpform';
@@ -488,29 +487,12 @@ describe('fill job through the protocol on the fake ERP', () => {
 // What ERP does when an invoice the bill already holds is imported again: it rewrites that receipt row (收票行),
 // which it keys by its receipt number (收票单), instead of adding a second one (ADR-0026). Driven through the fill
 // job's own import step, for the reason `uploadAndImport` gives.
-// The browser extension's route (#256): no local path, so the invoices go into the assistant's file input as `File`
-// objects in a `DataTransfer` built inside the page. Same recognition, same upload/import split (ADR-0025).
-describe('invoices put into the page as bytes', () => {
-  const inPage = (fake: FakeErp) =>
-    runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), staging: stageInPage, channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0 });
-  const builtInThePage = (fake: FakeErp) =>
-    fake.commands.filter((c) => c.sessionId !== null && c.method === 'Runtime.evaluate' && String(c.params['expression']).includes('new DataTransfer()'));
-
-  it('are recognised by the assistant and imported, with no path handed to the page', async () => {
-    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
-    const result = await inPage(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
-    expect(receiptNumbers(fake)).toEqual(expect.arrayContaining(INVOICES.map((invoice) => invoice.receiptNumber)));
-    expect(fake.commands.filter((c) => c.method === 'DOM.setFileInputFiles')).toEqual([]);
-    // Both invoices are PDFs: one batch, one assignment.
-    expect(builtInThePage(fake)).toHaveLength(1);
-  });
-
-  it('start no attempt when the assistant recognises none of them: an upload consumes nothing', async () => {
+describe('an upload the assistant recognises none of', () => {
+  it('starts no attempt: an upload consumes nothing', async () => {
     const fake = await createFakeErp(fakeErpOptions({ invoices: [] }));
-    const result = await inPage(fake);
+    const result = await runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0 });
     expect(result).toMatchObject({ status: 'aborted', code: 'INVOICE_SELECTION_EMPTY' });
-    expect(builtInThePage(fake)).toHaveLength(1);
+    expect(fake.commands.filter((c) => c.method === 'DOM.setFileInputFiles')).toHaveLength(1);
     expect(server.attempts).toEqual([]);
     expect(fake.mutations).toEqual([]);
   });

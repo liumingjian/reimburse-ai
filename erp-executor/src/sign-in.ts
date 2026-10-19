@@ -1,5 +1,5 @@
 // Signing in to ERP with the employee's ERP 凭据, and out again, for the headless path (ADR-0033): nobody sees that
-// browser, so baox fills the login form itself. The extension path never calls this; there the employee logs in.
+// browser, so baox fills the login form itself.
 //
 // What is handled is what the S2 and S8 runs met on the Mac mini (docs/design/erp-headless-v1.md, server/scripts/spike/
 // erp.ts holds the measured version with its diagnostics):

@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream';
 import { CHANNEL_PATH } from '@baox/contract';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { admitsHost, type PublicOrigin } from '../public-origin';
-import type { ClientChannel } from './channel';
+import type { ExecutorHub } from './channel';
 
 // Structural, so both what `@hono/node-server` returns and a bare `http.Server` fit without a cast.
 export type UpgradeHost = {
@@ -23,7 +23,7 @@ export type UpgradeHost = {
 // runtime sends, or none), which the exact-origin check could never admit — the same reasoning as the 配对码
 // redemption in `app.ts` — and the channel reads no cookie: the 配对凭据 in the first frame (`channel.ts`) is its
 // whole authority.
-export function attachClientChannel(server: UpgradeHost, channel: ClientChannel, publicOrigin: PublicOrigin | null): () => void {
+export function attachExecutorHub(server: UpgradeHost, channel: ExecutorHub, publicOrigin: PublicOrigin | null): () => void {
   const sockets = new WebSocketServer({ noServer: true });
 
   const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {

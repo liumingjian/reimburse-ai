@@ -1,16 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PAIRING_CODE_TTL_MS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingViewSchema, PairingTokenSchema, type PairingView } from '@baox/contract';
+import { PAIRING_CODE_TTL_MS, PAIRING_PATH, EXECUTOR_VERSION, PairingIdentitySchema, PairingViewSchema, PairingTokenSchema, type PairingView } from '@baox/contract';
 import { createTestServer, TEST_PASSWORD, type TestClient, type TestServer } from '../test/harness';
 
 // The HTTP seam (spec #246 Testing Decisions): 配对 (pairing, ADR-0019) driven through `app.request()`,
 // which is where both sides of it live — the settings page behind the session cookie, and the 本地执行器, which has
 // no session, at PAIRING_PATH.
 //
-// The 本地执行器's requests are written the way a real one arrives: an `Origin` of its own
-// `chrome-extension://…`, which the app's exact-origin guard would refuse for any other write.
+// The 本地执行器's requests are written the way a real one arrives: with no `Origin`, which node's fetch never sends.
 
 const PAIRING = '/api/pairing';
-const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const json = { 'content-type': 'application/json' };
 
 let server: TestServer;
@@ -32,7 +30,7 @@ const revoke = (client: TestClient) => client.post(`${PAIRING}/revoke`, {}).then
 
 // Every real 本地执行器 reports its version (ADR-0021); `channel.test.ts` covers what happens when it is too old.
 const redeem = (code: string, browser?: string) =>
-  server.app.request(PAIRING_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION, ...(browser === undefined ? {} : { browser }) }) });
+  server.app.request(PAIRING_PATH, { method: 'POST', headers: json, body: JSON.stringify({ code, version: EXECUTOR_VERSION, ...(browser === undefined ? {} : { browser }) }) });
 const whoami = (token: string) => server.app.request(PAIRING_PATH, { headers: { authorization: `Bearer ${token}` } });
 
 const codeOf = (pairing: PairingView): string => {
@@ -168,20 +166,20 @@ describe('配对 at the address colleagues reach the app at', () => {
     }
   });
 
-  it('admits the 本地执行器\'s redemption from its own origin while still refusing every other cross-origin write', async () => {
+  it('admits the 本地执行器\'s redemption, which carries no Origin, while still refusing a cross-origin write', async () => {
     const issued = PairingViewSchema.parse(await (await intranet.app.request(`${INTRANET}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin: INTRANET, cookie }, body: '{}' })).json());
     const code = issued.code ?? '';
 
-    const fromExtension = await intranet.app.request(`${INTRANET}${PAIRING_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION }) });
-    expect(fromExtension.status).toBe(200);
+    const fromExecutor = await intranet.app.request(`${INTRANET}${PAIRING_PATH}`, { method: 'POST', headers: json, body: JSON.stringify({ code, version: EXECUTOR_VERSION }) });
+    expect(fromExecutor.status).toBe(200);
 
-    // The exemption is this one route, not the guard going soft: another origin's write is still refused.
-    const write = await intranet.app.request(`${INTRANET}${PAIRING}/revoke`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN, cookie }, body: '{}' });
+    // The guard has not gone soft: another origin's write is still refused.
+    const write = await intranet.app.request(`${INTRANET}${PAIRING}/revoke`, { method: 'POST', headers: { ...json, origin: 'https://elsewhere.example', cookie }, body: '{}' });
     expect(write.status).toBe(403);
     expect(await errorOf(write)).toBe('forbidden_host');
 
     // And the Host check still covers the redemption: a rebound name reaches it no more than anything else.
-    const rebound = await intranet.app.request(`http://evil.example.com${PAIRING_PATH}`, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION }) });
+    const rebound = await intranet.app.request(`http://evil.example.com${PAIRING_PATH}`, { method: 'POST', headers: json, body: JSON.stringify({ code, version: EXECUTOR_VERSION }) });
     expect(rebound.status).toBe(403);
     expect(await errorOf(rebound)).toBe('forbidden_host');
   });

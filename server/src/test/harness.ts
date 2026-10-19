@@ -77,7 +77,7 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // database and data directory shared with an earlier server, to test a restart (default `:memory:` + a fresh dir).
 // `publicOrigin`: the address colleagues reach the app at (e.g. `http://10.250.0.222:8888`); without it only 127.0.0.1 is
 // admitted, which is what every test but the deployment ones wants.
-// `schedule`: the client channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
+// `schedule`: the 本地执行器 channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
 // `erpCredentialKey`: the key the hosted ERP 凭据 are sealed with; without it they cannot be saved.
 export type TestServerOptions = { parser?: ParseExecutor; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; schedule?: Schedule; database?: string; dataDir?: string; erpCredentialKey?: Buffer | null; autoRerun?: boolean; localExecutor?: LocalExecutorDist | null };
 

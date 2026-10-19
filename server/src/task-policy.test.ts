@@ -79,7 +79,7 @@ const record = (extra: Partial<ErpRecord> = {}): ErpRecord => ({ ...NO_ERP, ...e
 const notReady = { code: 'not_ready', message: ERP_ACTION_ERRORS.notReady };
 const notReconciling = { code: 'not_reconciling', message: ERP_ACTION_ERRORS.notReconciling };
 // The refusal names the 设置页 in words and as a link target, so the page can offer the way there.
-const notPaired = { code: EXECUTOR_NOT_PAIRED_CODE, message: '先在设置页安装本地执行器。', link: 'settings' } as const;
+const notPaired = { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' } as const;
 
 describe('taskPolicy: admit', () => {
   it.each<[string, Partial<TaskFacts>, boolean, ActionName, string | null, Admission]>([
@@ -105,7 +105,7 @@ describe('taskPolicy: admit', () => {
     ['a saved draft closes the task', { ...confirmed, erp: job('saved') }, true, 'upload', TOKEN, closed],
     // print
     ['print outlives 转人工', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, true, 'print', TOKEN, 'ok'],
-    ['print outlives the handed-over draft', { ...confirmed, erp: job('drafted') }, true, 'print', TOKEN, 'ok'],
+    ['print outlives a drafted job', { ...confirmed, erp: job('drafted') }, true, 'print', TOKEN, 'ok'],
     ['print outlives a write result unknown', { ...confirmed, erp: job('unknown') }, true, 'print', TOKEN, 'ok'],
     ['print stops at a voided task', { lifecycle: 'voided' }, false, 'print', TOKEN, closed],
     ['print stops at a legacy task', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'draft_handed_over' }, false, 'print', TOKEN, closed],

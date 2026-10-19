@@ -4,9 +4,10 @@ import {
   ChannelMessageSchema,
   CHANNEL_ERRORS,
   CHANNEL_HEARTBEAT_MS,
-  MINIMUM_CLIENT_VERSION,
-  CLIENT_VERSION_TOO_OLD_CODE,
-  clientVersionRefusal,
+  MINIMUM_EXECUTOR_VERSION,
+  EXECUTOR_VERSION_TOO_OLD_CODE,
+  executorVersionRefusal,
+  EXECUTOR_OFFLINE_CODE,
   type ChannelMessage,
 } from '@baox/contract';
 import type { Clock } from '../accounts/accounts';
@@ -67,7 +68,7 @@ export class ChannelError extends Error {
 // The timer seam: runs `run` after `ms` and returns what cancels it. Tests pass one they fire by hand.
 export type Schedule = (run: () => void, ms: number) => () => void;
 
-export type ClientChannelOptions = {
+export type ExecutorHubOptions = {
   pairings: PairingService;
   now: Clock;
   // What this server still talks to. Injected so a test can pin refusal without inventing a fictional release.
@@ -88,7 +89,7 @@ export type ClientChannelOptions = {
   schedule?: Schedule;
 };
 
-export type ClientChannel = {
+export type ExecutorHub = {
   // Called by the transport once a socket is up; the returned session is fed every frame and the close event.
   open(socket: ChannelSocket): ChannelSession;
   // Whether this account's 本地执行器 is listening right now. The settings page shows this.
@@ -128,11 +129,11 @@ export const realTimer: Schedule = (run, ms) => {
   return () => clearTimeout(timer);
 };
 
-// Why `request` rejected: nothing of that account was connected, or its socket went with the request in flight.
-export const EXECUTOR_OFFLINE_CODE = 'executor_offline';
+// Why `request` rejected: nothing of that account was connected (EXECUTOR_OFFLINE_CODE, in the contract), or its
+// socket went with the request in flight.
 export const EXECUTOR_CONNECTION_LOST_CODE = 'executor_connection_lost';
 
-export function createClientChannel({ pairings, now, minimumVersion = MINIMUM_CLIENT_VERSION, onRequest, onEvent, onLost, silenceMs = CHANNEL_HEARTBEAT_MS * 3, helloDeadlineMs = CHANNEL_HEARTBEAT_MS, schedule = realTimer }: ClientChannelOptions): ClientChannel {
+export function createExecutorHub({ pairings, now, minimumVersion = MINIMUM_EXECUTOR_VERSION, onRequest, onEvent, onLost, silenceMs = CHANNEL_HEARTBEAT_MS * 3, helloDeadlineMs = CHANNEL_HEARTBEAT_MS, schedule = realTimer }: ExecutorHubOptions): ExecutorHub {
   const byAccount = new Map<string, Connection>();
   let nextId = 0;
   // `disconnect` bumps the generation and notes it per account. A `hello` whose token was looked up before a
@@ -192,8 +193,8 @@ export function createClientChannel({ pairings, now, minimumVersion = MINIMUM_CL
           // Nothing but `hello` is read before the 本地执行器 has said who it is: an unauthenticated socket gets no
           // side effects at all.
           if (message.type !== 'hello') return refuse(socket, CHANNEL_CLOSE.badMessage, 'bad_message', CHANNEL_ERRORS.badMessage);
-          const tooOld = clientVersionRefusal(message.version, minimumVersion);
-          if (tooOld) return refuse(socket, CHANNEL_CLOSE.versionTooOld, CLIENT_VERSION_TOO_OLD_CODE, tooOld);
+          const tooOld = executorVersionRefusal(message.version, minimumVersion);
+          if (tooOld) return refuse(socket, CHANNEL_CLOSE.versionTooOld, EXECUTOR_VERSION_TOO_OLD_CODE, tooOld);
           const lookedUpAt = generation;
           const found = await pairings.lookup(message.token);
           if (!found) return refuseNotPaired(socket);

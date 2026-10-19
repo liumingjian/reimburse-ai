@@ -1,4 +1,4 @@
-// The client channel's timers, fired by hand (`createTestServer({ schedule })`): the hello deadline and the
+// The 本地执行器 channel's timers, fired by hand (`createTestServer({ schedule })`): the hello deadline and the
 // reconnection window close when a test says so, not 15 or 120 seconds later.
 export function manualTimers() {
   const due = new Set<{ run: () => void; ms: number }>();

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { CREATE_TASK_ERRORS, CreateTaskInputSchema, PENDING_ANSWER_ERRORS, isRealDate, validatePendingAnswer } from './actions';
 import { STAGE_DEFAULT_PAGE, pageAllowed, stageReached, type TaskStage } from './stage';
 import { UrlSchema } from './primitives';
-import { CHANNEL_ERRORS, PAIRING_ERRORS, PAIRING_STATUS_LABELS, clientVersionRefusal } from './channel';
+import { CHANNEL_ERRORS, PAIRING_ERRORS, PAIRING_STATUS_LABELS, executorVersionRefusal } from './channel';
 import { CONFIRMATION_NO_COLUMN, CONFIRMATION_TABLE_COLUMNS, ERP_STEPS, ERP_SAVED_OUTCOME_NOTICE } from './snapshot';
 import { KERNEL_PHASES } from './stage';
 
@@ -114,7 +114,7 @@ describe('交接文案', () => {
 describe('本地执行器版本太旧的拒绝文案', () => {
   test('说本地执行器，让人回设置页生成安装命令再运行一次，不提扩展', () => {
     for (const reported of ['0.9.0', null]) {
-      const refusal = clientVersionRefusal(reported, '2.0.0') ?? '';
+      const refusal = executorVersionRefusal(reported, '2.0.0') ?? '';
       for (const step of ['baox 本地执行器 2.0.0', '设置页', '安装命令']) expect(refusal).toContain(step);
       expect(refusal).not.toMatch(/扩展|浏览器/);
     }

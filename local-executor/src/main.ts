@@ -23,7 +23,7 @@ import { existsSync, readFileSync, realpathSync, statSync, truncateSync } from '
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PAIRING_PATH, CLIENT_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/channel/connection';
 import { serverBlobs } from '@baox/channel/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/channel/pairing';
@@ -62,7 +62,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LOG_LIMIT_BYTES = 5 * 1024 * 1024;
 
 async function redeem(origin: string, code: string) {
-  return redeemPairingCode({ origin: origin.replace(/\/+$/, ''), code, browser: `baox 本地执行器（${process.platform}）`, version: CLIENT_VERSION });
+  return redeemPairingCode({ origin: origin.replace(/\/+$/, ''), code, browser: `baox 本地执行器（${process.platform}）`, version: EXECUTOR_VERSION });
 }
 
 async function pair(args: string[]) {

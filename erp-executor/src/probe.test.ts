@@ -100,7 +100,7 @@ describe('ERP login probe (登录探测)', () => {
     expect(evaluated, 'must not read and pick the first of several pages').toBe(0);
   });
 
-  // Live 2026-10-12 (S8): the extension's fresh tab reads `complete` a moment before Kingdee paints its login form,
+  // Live 2026-10-12 (S8): a fresh tab reads `complete` a moment before Kingdee paints its login form,
   // and the probe gave up on that one blank read with `unknown` instead of looking again within its wait.
   it('looks again when a loaded page shows neither a user nor the login form yet', async () => {
     const blank: Observation = { ...loginPage, loginFormVisible: false };

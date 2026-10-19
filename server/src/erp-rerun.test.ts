@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type TaskSnapshot } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION, PairingViewSchema, PairingTokenSchema, type TaskSnapshot } from '@baox/contract';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
@@ -27,17 +27,17 @@ async function executor(scripts: FillRunner[]): Promise<FakeLocalExecutor> {
   const issued = PairingViewSchema.parse(await (await alice.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXECUTOR_VERSION }),
   });
   let run = 0;
-  const extension = fakeLocalExecutor(server.app.clientChannel, PairingTokenSchema.parse(await redeemed.json()).token, {
+  const localExecutor = fakeLocalExecutor(server.app.executorHub, PairingTokenSchema.parse(await redeemed.json()).token, {
     trySignIn: async () => ({ ok: true }),
     fill: (plan, channel, trigger) => scripts[Math.min(run++, scripts.length - 1)]!(plan, channel, trigger),
   });
-  await extension.connect();
+  await localExecutor.connect();
   await alice.post('/api/erp-credentials', { account: 'zhangsan', password: 'erp-Pa55' });
-  return extension;
+  return localExecutor;
 }
 
 // The precondition answered no: a 费用报销单 already holds an invoice, so the re-run stops before uploading.
@@ -56,11 +56,11 @@ async function after(scene: { task: { taskId: string }; settled: () => Promise<T
   await new Promise((resolve) => setTimeout(resolve, 50));
   return { snapshot: await scene.settled(), jobs: (await rows()).map((row) => ({ jobId: row.job_id, trigger: row.trigger, frozen: JSON.parse(row.plan) as FrozenJob })), first: snapshot };
 }
-const fills = (extension: FakeLocalExecutor) => extension.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
+const fills = (localExecutor: FakeLocalExecutor) => localExecutor.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
 
 describe('自动重新去报销', () => {
   it('starts over on a fresh form after a stop before 暂存, asks ERP first, and ends at the draft', async () => {
-    const extension = await executor([readbackMismatch, drafted]);
+    const localExecutor = await executor([readbackMismatch, drafted]);
     const scene = await scenario(server, alice).at('actions');
     await scene.accept('start-erp-write');
 
@@ -71,8 +71,8 @@ describe('自动重新去报销', () => {
     const invoiceNos = first!.frozen.judge.invoices.map((invoice) => invoice.identity?.number);
     expect(second!.frozen.plan).toMatchObject({ replaceAbandonedForm: true, rerun: { invoiceNos, marks: [draftMarkOf(first!.jobId)] } });
     expect(second!.frozen.rerunOf).toEqual({ jobId: first!.jobId, code: 'strict_readback_failed', no: 1 });
-    expect(fills(extension).map((fill) => fill.trigger)).toEqual(['start', 'rerun']);
-    expect(fills(extension)[1]!.plan).toMatchObject({ draft: { mark: draftMarkOf(second!.jobId) } });
+    expect(fills(localExecutor).map((fill) => fill.trigger)).toEqual(['start', 'rerun']);
+    expect(fills(localExecutor)[1]!.plan).toMatchObject({ draft: { mark: draftMarkOf(second!.jobId) } });
     expect(snapshot).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted' } });
   });
 

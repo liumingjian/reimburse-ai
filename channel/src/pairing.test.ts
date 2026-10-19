@@ -1,4 +1,4 @@
-import { PAIRING_PATH, CLIENT_VERSION } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION } from '@baox/contract';
 import { describe, expect, it } from 'vitest';
 import { redeemPairingCode, revokePairing } from './pairing';
 
@@ -17,7 +17,7 @@ describe('redeeming the 配对码 the employee typed', () => {
       },
     });
 
-    expect(seen).toEqual({ url: `http://10.250.0.222${PAIRING_PATH}`, body: { code: 'k7mq-2pxd', browser: 'Chrome 142 Windows', version: CLIENT_VERSION } });
+    expect(seen).toEqual({ url: `http://10.250.0.222${PAIRING_PATH}`, body: { code: 'k7mq-2pxd', browser: 'Chrome 142 Windows', version: EXECUTOR_VERSION } });
     expect(outcome).toEqual({ ok: true, token: 'tok', accountId: 'a1' });
   });
 

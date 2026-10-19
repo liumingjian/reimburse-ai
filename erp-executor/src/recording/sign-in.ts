@@ -1,6 +1,5 @@
 // Fills and submits the ERP login form. The recorder, the live harness (server/scripts/test-erp-live.ts), probe-login.ts
-// and the headless path's `sign-in.ts` (ADR-0033) all sign in with this one snippet; on the extension path the employee
-// logs in themselves. The secret goes into the page it authenticates and nowhere else.
+// and the headless path's `sign-in.ts` (ADR-0033) all sign in with this one snippet. The secret goes into the page it authenticates and nowhere else.
 //
 // Measured on 金蝶云星空 8.2.0.20250701: the login page carries #user (account) and #password, plus a second visible
 // #CAuser for certificate login that must not be mistaken for the account box. Ids first, shape as fallback. The

@@ -3,7 +3,6 @@ import { describe, expect, test } from 'vitest';
 import { LEGACY_IMPORT_ERRORS, LEGACY_IMPORT_STATUS_LABELS, RESET_COPY } from '@baox/contract';
 import { App } from '../App';
 import { createMockAdapter, type MockOptions } from '../mock/mock-adapter';
-import type { LegacyOption } from '../mock/options';
 import { SETTINGS_COPY } from './SettingsPage';
 import { ERP_CREDENTIALS_COPY } from './ErpCredentialsSection';
 import { LOCAL_EXECUTOR_COPY } from './LocalExecutorSection';
@@ -12,21 +11,15 @@ import { LOCAL_EXECUTOR_COPY } from './LocalExecutorSection';
 // 服务端的接口一直都在（#195），这里补的是它的界面。
 // Since ADR-0037 the 本地执行器 is the only way to 去报销: the 设置页 shows its section and nothing to choose (#437).
 
-function renderSettings(legacy?: LegacyOption) {
-  window.location.hash = '#/settings';
-  const adapter = createMockAdapter({ seed: 'actions', fault: null, ...(legacy ? { legacy } : {}) });
-  render(<App adapter={adapter} />);
-  return adapter;
-}
-
-const panel = () => screen.getByRole('region', { name: '旧数据导入' });
-
-function renderPage(options: Partial<MockOptions> = {}) {
+// The 设置页 of an account with no 本地执行器 paired yet, unless `options` says otherwise.
+function renderSettings(options: Partial<MockOptions> = {}) {
   window.location.hash = '#/settings';
   const adapter = createMockAdapter({ seed: 'actions', fault: null, pairing: 'none', localExecutorInstallMs: 60_000, ...options });
   render(<App adapter={adapter} localExecutor={adapter.localExecutor} />);
   return adapter;
 }
+
+const panel = () => screen.getByRole('region', { name: '旧数据导入' });
 
 const localRegion = () => screen.getByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
 
@@ -40,7 +33,7 @@ const openTrouble = (details: HTMLDetailsElement) => fireEvent.click(within(deta
 
 describe('设置页：旧数据导入', () => {
   test('导入失败：逐个文件说明原因，并给出重试与跳过', async () => {
-    renderSettings('failed');
+    renderSettings({ legacy: 'failed' });
     await screen.findByText(LEGACY_IMPORT_STATUS_LABELS.failed);
     const problems = within(panel()).getByRole('list', { name: '旧数据里的问题' });
     expect(within(problems).getByText('tasks/2026-05-10-b1b2c3d4e5/invoices.json')).toBeTruthy();
@@ -50,7 +43,7 @@ describe('设置页：旧数据导入', () => {
   });
 
   test('修好之后重试：变成已导入，报告显示导进了什么，重试与跳过都收起', async () => {
-    renderSettings('failed');
+    renderSettings({ legacy: 'failed' });
     fireEvent.click(await screen.findByRole('button', { name: '重试导入' }));
 
     expect(await screen.findByText(LEGACY_IMPORT_STATUS_LABELS.imported)).toBeTruthy();
@@ -63,7 +56,7 @@ describe('设置页：旧数据导入', () => {
   });
 
   test('明确跳过：记为已跳过，之后不再提供重试', async () => {
-    renderSettings('failed');
+    renderSettings({ legacy: 'failed' });
     fireEvent.click(await screen.findByRole('button', { name: '跳过导入' }));
 
     expect(await screen.findByText(LEGACY_IMPORT_STATUS_LABELS.skipped)).toBeTruthy();
@@ -81,7 +74,7 @@ describe('设置页：旧数据导入', () => {
 
 describe('设置页：只有本地执行器', () => {
   test('没有「去报销的方式」可选，也没有浏览器扩展一节', async () => {
-    renderPage();
+    renderSettings();
     expect(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).toBeTruthy();
     expect(screen.queryByRole('group', { name: '去报销的方式' })).toBeNull();
     expect(screen.queryByRole('radio', { name: /浏览器扩展/ })).toBeNull();
@@ -90,21 +83,21 @@ describe('设置页：只有本地执行器', () => {
   });
 
   test('本地执行器配对着：同样只有它这一节，显示已连接', async () => {
-    renderPage({ pairing: 'paired', localExecutor: 'paired' });
+    renderSettings({ pairing: 'paired', localExecutor: 'paired' });
     expect(await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
     expect(screen.queryByRole('group', { name: '去报销的方式' })).toBeNull();
     expect(document.body.textContent).not.toMatch(/扩展/);
   });
 
   test('页头一句话说完整件事', async () => {
-    renderPage();
+    renderSettings();
     expect(await screen.findByText(SETTINGS_COPY.lead)).toBeTruthy();
     expect(SETTINGS_COPY.lead).not.toMatch(/方式|扩展/);
     expect(SETTINGS_COPY.lead.match(/。/g)).toHaveLength(1);
   });
 
   test('报销系统账号表单在本地执行器一节里', async () => {
-    renderPage();
+    renderSettings();
     const local = await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     const form = within(local).getByRole('region', { name: ERP_CREDENTIALS_COPY.title });
     expect(await within(form).findByRole('button', { name: ERP_CREDENTIALS_COPY.save })).toBeTruthy();
@@ -117,7 +110,7 @@ describe('设置页：只有本地执行器', () => {
 
   test('本地执行器的「安装遇到问题？」默认收起，里面是安装步骤和 Mac、Windows 的卸载命令', async () => {
     const ORIGIN = 'http://10.250.0.222:8888';
-    renderPage();
+    renderSettings();
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     const details = troubleArea(localRegion());
     expect(details.open).toBe(false);
@@ -131,13 +124,13 @@ describe('设置页：只有本地执行器', () => {
   });
 
   test('本地执行器已连接时，「安装遇到问题？」仍在，仍收起', async () => {
-    renderPage({ pairing: 'paired', localExecutor: 'paired' });
+    renderSettings({ pairing: 'paired', localExecutor: 'paired' });
     await within(await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title })).findByText(LOCAL_EXECUTOR_COPY.connected);
     expect(troubleArea(localRegion()).open).toBe(false);
   });
 
   test('重置藏在高级设置里', async () => {
-    renderPage();
+    renderSettings();
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
     const advanced = screen.getByText('高级设置').closest('details');
     expect(advanced?.open).toBe(false);

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, invoiceBlobPath } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION, PairingViewSchema, PairingTokenSchema, invoiceBlobPath } from '@baox/contract';
 import type { FillPlan } from '@baox/erp-executor/protocol';
 import { RECONNECT_WINDOW_MS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -15,7 +15,6 @@ import { manualTimers } from './test/timers';
 // session, and serves only the originals named in the plan of the 去报销 running in that 应用账号's 本地执行器
 // (user story 25: a compromised 本地执行器 must not be able to walk the employee's archive).
 
-const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
 let server: ScenarioServer;
@@ -31,40 +30,40 @@ async function pair(owner: TestClient): Promise<string> {
   const issued = PairingViewSchema.parse(await (await owner.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: CLIENT_VERSION }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXECUTOR_VERSION }),
   });
   // A 去报销 starts only with authorised ERP 凭据 (ADR-0037).
   await server.authoriseErpCredentials(owner.account.accountId);
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
-// As the 本地执行器 asks: a GET from its own origin, the token as a bearer.
+// As the 本地执行器 asks: a GET with no Origin (node's fetch sends none), the token as a bearer.
 const fetchBlob = (sha256: string, token: string | null) =>
-  server.app.request(invoiceBlobPath(sha256), { headers: { origin: EXTENSION_ORIGIN, ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+  server.app.request(invoiceBlobPath(sha256), { headers: token ? { authorization: `Bearer ${token}` } : {} });
 
 /**
  * A 去报销 held open in alice's 本地执行器 until `finish` is called, so the test can fetch while it runs. The task is
  * the scenario default, a hotel invoice with its folio, confirmed: the plan names the invoice, not the folio.
  */
-async function running(token: string): Promise<{ plan: FillPlan; taskId: string; extension: FakeLocalExecutor; finish(): Promise<void> }> {
+async function running(token: string): Promise<{ plan: FillPlan; taskId: string; localExecutor: FakeLocalExecutor; finish(): Promise<void> }> {
   let finish!: () => void;
   const gate = new Promise<void>((resolve) => { finish = resolve; });
   let started!: (plan: FillPlan) => void;
   const planned = new Promise<FillPlan>((resolve) => { started = resolve; });
-  const extension = fakeLocalExecutor(server.app.clientChannel, token, {
+  const localExecutor = fakeLocalExecutor(server.app.executorHub, token, {
     fill: async (plan, channel) => {
       started(plan);
       await gate;
       return notSignedIn(plan, channel);
     },
   });
-  await extension.connect();
+  await localExecutor.connect();
   const scene = await scenario(server, alice).at('actions');
   await scene.accept('start-erp-write');
   const plan = await planned;
   return {
-    plan, taskId: scene.task.taskId, extension,
+    plan, taskId: scene.task.taskId, localExecutor,
     async finish() {
       finish();
       await scene.settled();
@@ -165,7 +164,7 @@ describe('the 本地执行器\'s invoice originals across an interruption', () =
     const job = await running(token);
     const invoice = sha(sample('m01').bytes);
 
-    job.extension.disconnect();
+    job.localExecutor.disconnect();
 
     // The socket went, so the job is interrupted and its window is open: it has not ended.
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(1);
@@ -185,7 +184,7 @@ describe('the 本地执行器\'s invoice originals across an interruption', () =
     expect((await alice.post('/api/pairing/revoke', {})).status).toBe(200);
 
     // Revoking closed the socket, so the job is interrupted like any lost connection; the token serves nothing.
-    expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(false);
+    expect(server.app.executorHub.connected(alice.account.accountId)).toBe(false);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(1);
     expect((await fetchBlob(invoice, token)).status).toBe(401);
 

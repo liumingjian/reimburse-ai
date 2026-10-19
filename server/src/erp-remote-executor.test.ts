@@ -1,4 +1,4 @@
-import { ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, PAIRING_PATH, CLIENT_VERSION, PairingViewSchema, PairingTokenSchema, type ChannelMessage } from '@baox/contract';
+import { ERP_ACTION_ERRORS, EXECUTOR_NOT_PAIRED_CODE, EXECUTOR_OFFLINE_CODE, PAIRING_PATH, EXECUTOR_VERSION, PairingViewSchema, PairingTokenSchema, type ChannelMessage } from '@baox/contract';
 import { runFillJob } from '@baox/erp-executor/job';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { createFakeErp, type FakeErp, type FakeErpOptions } from '@baox/erp-executor/testing/fake-erp';
@@ -25,7 +25,6 @@ import { manualTimers } from './test/timers';
 // The job's event journal (erp_job_event), its action attempts (动作尝试, erp_attempt) and erp_job rows are read from the database: the
 // snapshot shows the job's outcome, not the record these tests are about.
 
-const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 
 let server: ScenarioServer;
 let alice: TestClient;
@@ -46,17 +45,17 @@ async function pair(owner: TestClient): Promise<string> {
   const issued = PairingViewSchema.parse(await (await owner.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ code: issued.code, browser: 'Chrome 142 Windows', version: CLIENT_VERSION }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXECUTOR_VERSION }),
   });
   await server.authoriseErpCredentials(owner.account.accountId);
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
 async function connected(token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner }): Promise<FakeLocalExecutor> {
-  const extension = fakeLocalExecutor(server.app.clientChannel, token, runners);
-  await extension.connect();
-  return extension;
+  const localExecutor = fakeLocalExecutor(server.app.executorHub, token, runners);
+  await localExecutor.connect();
+  return localExecutor;
 }
 
 // The executor on the fake ERP, run on the client's side of the wire: the invoices fetched from the app's blob route
@@ -114,21 +113,21 @@ describe('去报销 in the paired 本地执行器', () => {
       }) as ExecutorChannel['emit'],
     });
     const token = await pair(alice);
-    const extension = await connected(token, { fill: (plan, channel, trigger) => realExecutor(token)(plan, watched(channel), trigger) });
+    const localExecutor = await connected(token, { fill: (plan, channel, trigger) => realExecutor(token)(plan, watched(channel), trigger) });
     const scene = await actionsOnFakeErp();
 
     const done = await scene.run('start-erp-write');
 
     expect(done.erp.abortReason, JSON.stringify(done.erp)).toBeNull();
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
-    expect(extension.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: {
+    expect(localExecutor.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: {
       trigger: 'start',
       plan: expect.objectContaining({ kind: 'fill', taskId: scene.task.taskId, draft: { mark: expect.stringMatching(/^baox-/) } }),
       credentials: { account: 'zhangsan', password: 'erp-Pa55' },
     } }]);
     // Every event the 本地执行器 sent is on the job's record, in the order sent; the verdicts it acted on were the server's.
-    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(extension.sent().map((event) => event.type));
-    expect(new Set(extension.sent().map((event) => event.type))).toEqual(new Set(['step', 'attempt_started', 'readback', 'result']));
+    expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(localExecutor.sent().map((event) => event.type));
+    expect(new Set(localExecutor.sent().map((event) => event.type))).toEqual(new Set(['step', 'attempt_started', 'readback', 'result']));
     // `attempt_started` was durable before its ack reached the 本地执行器, and the ack came before that action's write.
     expect(acks.map(({ action, durable }) => ({ action, durable }))).toEqual([
       { action: 'import', durable: true },
@@ -145,25 +144,25 @@ describe('去报销 in the paired 本地执行器', () => {
     ['stops at an ERP login it cannot sign in to', notSignedIn, 'step', 'aborted'],
     ['stops on a 报销信息核对 mismatch', catalogMismatch, 'catalog_mismatch', 'catalog_mismatch'],
   ] as const)('%s with the event the 本地执行器 sent', async (_name, script, event, status) => {
-    const extension = await connected(await pair(alice), { fill: (plan, channel) => script(plan, channel) });
+    const localExecutor = await connected(await pair(alice), { fill: (plan, channel) => script(plan, channel) });
     const scene = await actionsOnFakeErp();
 
     await scene.run('start-erp-write');
 
-    expect(extension.sent().map((sent) => sent.type)).toContain(event);
-    expect((await journal(scene.task.taskId)).map((logged) => logged.type)).toEqual(extension.sent().map((sent) => sent.type));
+    expect(localExecutor.sent().map((sent) => sent.type)).toContain(event);
+    expect((await journal(scene.task.taskId)).map((logged) => logged.type)).toEqual(localExecutor.sent().map((sent) => sent.type));
     expect((await resultsOf(scene.task.taskId)).map((result) => result.status)).toEqual([status]);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
   });
 
   it('runs the read-only 对账 in the 本地执行器 too', async () => {
-    const extension = await connected(await pair(alice), { fill: (plan, channel) => uncertainSave(plan, channel), reconcile: noFormOpen });
+    const localExecutor = await connected(await pair(alice), { fill: (plan, channel) => uncertainSave(plan, channel), reconcile: noFormOpen });
     const scene = await actionsOnFakeErp();
     expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
 
     const judged = await scene.run('reconcile');
 
-    expect(extension.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill, EXECUTOR_METHODS.reconcile]);
+    expect(localExecutor.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill, EXECUTOR_METHODS.reconcile]);
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知' } });
   });
 
@@ -171,7 +170,7 @@ describe('去报销 in the paired 本地执行器', () => {
   // paired the refusal also carries the 设置页 as its link target.
   it.each([
     ['no 本地执行器 is paired', false, { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' }],
-    ['the paired 本地执行器 is not connected', true, { code: 'executor_offline', message: ERP_ACTION_ERRORS.executorOffline }],
+    ['the paired 本地执行器 is not connected', true, { code: EXECUTOR_OFFLINE_CODE, message: ERP_ACTION_ERRORS.executorOffline }],
   ])('refuses 去报销 before any job exists when %s, and points at the settings page', async (_case, paired, error) => {
     if (paired) await pair(alice);
     const scene = await actionsOnFakeErp();
@@ -190,13 +189,13 @@ describe('去报销 in the paired 本地执行器', () => {
     await pair(alice);
     const scene = await actionsOnFakeErp();
     // The check sees a connection; by the time the plan is sent, there is none.
-    vi.spyOn(server.app.clientChannel, 'connected').mockReturnValue(true);
+    vi.spyOn(server.app.executorHub, 'connected').mockReturnValue(true);
 
     const stopped = await scene.run('start-erp-write');
 
     expect(stopped.erp.abortReason).toContain('本地执行器');
     expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'executor_connection', outcome: 'none', allowedActions: ['refresh'] });
-    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'executor_offline' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: EXECUTOR_OFFLINE_CODE }]);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
@@ -242,22 +241,22 @@ describe('an interrupted 去报销', () => {
     const plan = new Promise<FillPlan>((resolve) => {
       started = resolve;
     });
-    const extension = fakeLocalExecutor(server.app.clientChannel, token, {
+    const localExecutor = fakeLocalExecutor(server.app.executorHub, token, {
       fill: async (fillPlan, channel) => {
         started(fillPlan);
         await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
-        extension.disconnect();
+        localExecutor.disconnect();
         await channel.emit({ type: 'step', step: 'chromium', status: 'done' });
         throw new Error('unreachable: the channel is gone');
       },
     });
-    return { extension, plan };
+    return { localExecutor, plan };
   }
 
   it('resumes by jobId inside the window, over the new socket, and carries the job to its end', async () => {
     const token = await pair(alice);
-    const { extension, plan } = droppedAfterOneStep(token);
-    await extension.connect();
+    const { localExecutor, plan } = droppedAfterOneStep(token);
+    await localExecutor.connect();
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     const { jobId } = await plan;
@@ -282,8 +281,8 @@ describe('an interrupted 去报销', () => {
   // never hears it, retries, and must find the job interrupted again rather than live with nobody on the other end.
   async function resumeLostInFlight() {
     const token = await pair(alice);
-    const { extension, plan } = droppedAfterOneStep(token);
-    await extension.connect();
+    const { localExecutor, plan } = droppedAfterOneStep(token);
+    await localExecutor.connect();
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     const { jobId } = await plan;
@@ -325,8 +324,8 @@ describe('an interrupted 去报销', () => {
 
   it('holds the lease through the window, then aborts in place past it and says plainly that nothing was written', async () => {
     const token = await pair(alice);
-    const { extension, plan } = droppedAfterOneStep(token);
-    await extension.connect();
+    const { localExecutor, plan } = droppedAfterOneStep(token);
+    await localExecutor.connect();
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     const { jobId } = await plan;
@@ -356,12 +355,12 @@ describe('an interrupted 去报销', () => {
   it('goes to 对账 past the window when an attempt is on record, and never mutates or replays', async () => {
     const token = await pair(alice);
     let mutated = false;
-    const extension: FakeLocalExecutor = await connected(token, {
+    const localExecutor: FakeLocalExecutor = await connected(token, {
       fill: async (plan, channel) => {
         await channel.emit({ type: 'step', step: 'import', status: 'running' });
         const ack = channel.emit(attemptStarted(plan));
         // The socket goes with the attempt in flight: the server may make it durable, but no ack reaches the executor.
-        extension.disconnect();
+        localExecutor.disconnect();
         await ack;
         mutated = true;
         throw new Error('unreachable: an unacknowledged attempt is never followed by a write');
@@ -386,13 +385,13 @@ describe('an interrupted 去报销', () => {
     const back = await connected(token, { fill: realExecutor(token) });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(back.asked()).toEqual([]);
-    expect(extension.asked()).toHaveLength(1);
+    expect(localExecutor.asked()).toHaveLength(1);
   });
 
   it('takes nothing from a resumed 本地执行器 before its re-observation, and ends the job when the page is not the one it left', async () => {
     const token = await pair(alice);
-    const { extension, plan } = droppedAfterOneStep(token);
-    await extension.connect();
+    const { localExecutor, plan } = droppedAfterOneStep(token);
+    await localExecutor.connect();
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     const { jobId } = await plan;
@@ -416,10 +415,10 @@ describe('an interrupted 去报销', () => {
 
   it('sends a job whose re-observed form is not the attempted one to 对账', async () => {
     const token = await pair(alice);
-    const extension: FakeLocalExecutor = await connected(token, {
+    const localExecutor: FakeLocalExecutor = await connected(token, {
       fill: async (plan, channel) => {
         await channel.emit(attemptStarted(plan));
-        extension.disconnect();
+        localExecutor.disconnect();
         throw new Error('the channel is gone');
       },
     });
@@ -442,12 +441,12 @@ describe('an interrupted 去报销', () => {
   it('replays nothing across a resume: every event is on record once, and the plan is never asked again', async () => {
     const token = await pair(alice);
     let jobPlan!: FillPlan;
-    const extension: FakeLocalExecutor = await connected(token, {
+    const localExecutor: FakeLocalExecutor = await connected(token, {
       fill: async (plan, channel) => {
         jobPlan = plan;
         await channel.emit({ type: 'step', step: 'import', status: 'running' });
         const ack = channel.emit(attemptStarted(plan));
-        extension.disconnect();
+        localExecutor.disconnect();
         await ack;
         throw new Error('unreachable: the ack went with the socket');
       },
@@ -469,19 +468,19 @@ describe('an interrupted 去报销', () => {
 
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'step', 'result']);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
-    expect(extension.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill]);
+    expect(localExecutor.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill]);
     expect(back.asked()).toEqual([]);
   });
 
   describe('a lost page (erp.detached) is the same event as a disconnect', () => {
     it('resumes on the same socket once the page is re-observed', async () => {
       const token = await pair(alice);
-      const extension: FakeLocalExecutor = await connected(token, {
+      const localExecutor: FakeLocalExecutor = await connected(token, {
         fill: async (plan, channel) => {
           await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
-          await extension.detached(plan.jobId);
+          await localExecutor.detached(plan.jobId);
           await expect(channel.emit({ type: 'step', step: 'chromium', status: 'done' })).rejects.toMatchObject({ code: 'resume_required' });
-          expect(await extension.resume(plan.jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
+          expect(await localExecutor.resume(plan.jobId, PAGE, PAGE)).toEqual({ ok: true, recorded: 1 });
           return notSignedIn(plan, channel);
         },
       });
@@ -490,16 +489,16 @@ describe('an interrupted 去报销', () => {
       const paused = await scene.run('start-erp-write');
 
       expect(paused.erp).toMatchObject({ status: 'idle', abortReason: expect.stringContaining('设置页') });
-      expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', ...extension.sent().slice(2).map((event) => event.type)]);
+      expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', ...localExecutor.sent().slice(2).map((event) => event.type)]);
       expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(0);
     });
 
     it('ends past the window exactly as a lost socket does, and ignores the executor’s late answer', async () => {
       const token = await pair(alice);
-      const extension: FakeLocalExecutor = await connected(token, {
+      const localExecutor: FakeLocalExecutor = await connected(token, {
         fill: async (plan, channel) => {
           await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
-          await extension.detached(plan.jobId);
+          await localExecutor.detached(plan.jobId);
           // The executor's own run fails with the page gone; that answer describes nothing the server may act on.
           throw new Error('Debugger is not attached to the tab');
         },
@@ -579,14 +578,14 @@ describe('a job that outlives its deadline', () => {
 
   it('also ends a job that is waiting out its reconnection window', async () => {
     const token = await pair(alice);
-    const extension = fakeLocalExecutor(server.app.clientChannel, token, {
+    const localExecutor = fakeLocalExecutor(server.app.executorHub, token, {
       fill: async (_plan, channel) => {
         await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
-        extension.disconnect();
+        localExecutor.disconnect();
         return new Promise<never>(() => undefined);
       },
     });
-    await extension.connect();
+    await localExecutor.connect();
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     await interrupted();
@@ -626,7 +625,7 @@ describe('the real 本地执行器 across an interruption', () => {
         session.closed();
         socket.onclose?.({ code: 1006, reason: '' });
       };
-      const session = server.app.clientChannel.open({
+      const session = server.app.executorHub.open({
         send: (data) => {
           if (gone) return;
           if (cut?.(JSON.parse(data) as ChannelMessage, sent)) return drop();

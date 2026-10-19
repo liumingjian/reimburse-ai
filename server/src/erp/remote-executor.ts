@@ -25,7 +25,8 @@
 //   plan is stored), as the job runner hands them to every executor (`fill-jobs.ts`).
 
 import type { Db } from '../db/database';
-import { EXECUTOR_CONNECTION_LOST_CODE, EXECUTOR_OFFLINE_CODE, ChannelError, realTimer, type ChannelRequestHandler, type ClientChannel, type Schedule } from '../channel/channel';
+import { EXECUTOR_OFFLINE_CODE } from '@baox/contract';
+import { EXECUTOR_CONNECTION_LOST_CODE, ChannelError, realTimer, type ChannelRequestHandler, type ExecutorHub, type Schedule } from '../channel/channel';
 import type { ExecutorOptions, FillExecutor } from './fill-jobs';
 import type { ReconcileExecutor } from './reconcile-job';
 import type { ErpCredentials } from '@baox/erp-executor/sign-in';
@@ -116,7 +117,7 @@ function payloadFor(payload: FillRequest | ReconcileRequest, credentials: ErpCre
   return credentials ? { ...payload, credentials } : payload;
 }
 
-export function createRemoteExecutor({ db, extension, schedule = realTimer }: { db: Db; extension: Pick<ClientChannel, 'request'>; schedule?: Schedule }): RemoteExecutor {
+export function createRemoteExecutor({ db, channel: hub, schedule = realTimer }: { db: Db; channel: Pick<ExecutorHub, 'request'>; schedule?: Schedule }): RemoteExecutor {
   const running = new Map<string, Running>();
 
   // Ends the job on the server's say-so, after any event already in flight has landed, so the result is judged with
@@ -162,7 +163,7 @@ export function createRemoteExecutor({ db, extension, schedule = realTimer }: { 
       job.state = 'ended';
       job.fail(new Error('这次任务已经被应用结束了。'));
     }, { once: true });
-    extension.request(accountId, method, payloadFor(payload, credentials)).then(
+    hub.request(accountId, method, payloadFor(payload, credentials)).then(
       // The executor's own answer counts only while the job is live: an interrupted job's late answer describes a page
       // nobody watched.
       (answer) => {

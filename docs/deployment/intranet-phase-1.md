@@ -235,7 +235,7 @@ For an existing deployment whose origin differs from the new default, follow the
 [External address for new configurations](#external-address-for-new-configurations-270--271). Routine operator releases retain the installed origin.
 
 When the release changes the 本地执行器, the installed ones update themselves (ADR-0035); the server refuses one older
-than `MINIMUM_CLIENT_VERSION`, and a refused 本地执行器 checks for an update at once. A controlled repair with the same tarball rebuilds nothing and only restarts.
+than `MINIMUM_EXECUTOR_VERSION`, and a refused 本地执行器 checks for an update at once. A controlled repair with the same tarball rebuilds nothing and only restarts.
 
 **Rollback** is `ln -sfn releases/<older> /opt/tools/baox/current && systemctl restart baox`. It is safe only if the
 newer release added no schema migration: the database is never migrated backwards, and there is no backup to return to.

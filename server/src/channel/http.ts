@@ -1,4 +1,4 @@
-import { CreatePairingCodeInputSchema, MINIMUM_CLIENT_VERSION, PAIRING_ERRORS, PAIRING_PATH, CLIENT_VERSION_TOO_OLD_CODE, PairingInputSchema, clientVersionRefusal, HTTP_ENDPOINTS, type PairingState } from '@baox/contract';
+import { CreatePairingCodeInputSchema, MINIMUM_EXECUTOR_VERSION, PAIRING_ERRORS, PAIRING_PATH, EXECUTOR_VERSION_TOO_OLD_CODE, PairingInputSchema, executorVersionRefusal, HTTP_ENDPOINTS, type PairingState } from '@baox/contract';
 import type { Context, Hono } from 'hono';
 import { AuthRefusal } from '../accounts/accounts';
 import { accountOf, type AppEnv } from '../accounts/http';
@@ -27,7 +27,7 @@ export function bearer(c: Context): string | undefined {
 // Mount before `requireAccount`: these carry no cookie. The exact-origin guard in `app.ts` lets the redemption
 // through because the 配对码 in the body is its whole authority, so a page on another origin gains nothing by
 // posting one it does not have.
-export function mountClientPairRoutes(app: Hono<AppEnv>, pairings: PairingService, minimumVersion: string = MINIMUM_CLIENT_VERSION): void {
+export function mountExecutorPairRoutes(app: Hono<AppEnv>, pairings: PairingService, minimumVersion: string = MINIMUM_EXECUTOR_VERSION): void {
   // No rate limit, deliberately. A 配对码 is 8 characters from a 31-letter alphabet (about 8.5e11 codes), good for ten
   // minutes and for one redemption, and only exists while an employee is pairing; guessing one live code in that window
   // takes hundreds of billions of requests, far past what this host could answer. A limiter would add state for no
@@ -37,8 +37,8 @@ export function mountClientPairRoutes(app: Hono<AppEnv>, pairings: PairingServic
     if (!input.success) throw new AuthRefusal(401, 'pairing_code_invalid', PAIRING_ERRORS.codeInvalid);
     // Before the code is spent: a 配对码 burnt by a 本地执行器 that then cannot connect would leave the employee
     // issuing a second one for no reason.
-    const tooOld = clientVersionRefusal(input.data.version, minimumVersion);
-    if (tooOld) throw new AuthRefusal(403, CLIENT_VERSION_TOO_OLD_CODE, tooOld);
+    const tooOld = executorVersionRefusal(input.data.version, minimumVersion);
+    if (tooOld) throw new AuthRefusal(403, EXECUTOR_VERSION_TOO_OLD_CODE, tooOld);
     return c.json(await pairings.redeem(input.data.code, input.data.browser ?? null, input.data.version ?? null));
   });
 

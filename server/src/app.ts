@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, INVOICE_BLOB_PATH, PAIRING_PATH, PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
+import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, INVOICE_BLOB_PATH, PAIRING_PATH, PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, EXECUTOR_OFFLINE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -22,10 +22,10 @@ import { hasUnfinishedErpJobs, recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
-import { createClientChannel, EXECUTOR_OFFLINE_CODE, realTimer, type ClientChannel, type Schedule } from './channel/channel';
+import { createExecutorHub, realTimer, type ExecutorHub, type Schedule } from './channel/channel';
 import { mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
 import type { LocalExecutorDist } from './local-executor/release';
-import { bearer, mountClientPairRoutes, mountPairingRoutes } from './channel/http';
+import { bearer, mountExecutorPairRoutes, mountPairingRoutes } from './channel/http';
 import { createPairingService, hasPairing } from './channel/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
@@ -69,7 +69,7 @@ export type AppOptions = {
   // The built 本地执行器 program and the Node runtimes fetched at deploy (`local-executor/release.ts`, ADR-0035). null
   // (default) answers its install script, runtime downloads and its executors' update checks as unavailable.
   localExecutor?: LocalExecutorDist | null;
-  // The client channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
+  // The 本地执行器 channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
   // hand.
   schedule?: Schedule;
   // The key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`). null (default) disables them: nothing can
@@ -81,9 +81,9 @@ export type AppOptions = {
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
-// closing the database. `clientChannel` is what `server.ts` hands an upgraded socket to; the app itself never
+// closing the database. `executorHub` is what `server.ts` hands an upgraded socket to; the app itself never
 // opens one.
-export type App = Hono<AppEnv> & { close: () => Promise<void>; clientChannel: ClientChannel; maintenance: MaintenanceGate; ready: Promise<void> };
+export type App = Hono<AppEnv> & { close: () => Promise<void>; executorHub: ExecutorHub; maintenance: MaintenanceGate; ready: Promise<void> };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
@@ -105,17 +105,15 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   };
   // The 去报销 jobs write their facts through the owner's task service (one revision per executor event).
   const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
-  // The 本地执行器's executor answers through the channel built further down, so it reaches the channel through the
-  // binding rather than the value.
-  const remote = createRemoteExecutor({
-    db, schedule,
-    extension: { request: (accountId, method, payload) => clientChannel.request(accountId, method, payload) },
-  });
+  // A request to the account's 本地执行器 over the channel built further down, reached through the binding rather than
+  // the value.
+  const requestExecutor: ExecutorHub['request'] = (accountId, method, payload) => executorHub.request(accountId, method, payload);
+  const remote = createRemoteExecutor({ db, schedule, channel: { request: requestExecutor } });
   // ERP 凭据 (ADR-0033) for a baox 本地执行器: the 试登录 goes to the account's executor over the same channel, and is
   // held back while a job of the account drives ERP, whose session it would knock off.
   const erpCredentials = createErpCredentialService({
     db, clock: now, vault: erpCredentialKey ? createCredentialVault(erpCredentialKey) : null, erpOrigin: erpConfig.origin,
-    request: (accountId, method, payload) => clientChannel.request(accountId, method, payload),
+    request: requestExecutor,
     erpBusy: (accountId) => erpLease.holder(accountId) !== null,
     acquireWrite: () => maintenance.enter('background'),
   });
@@ -134,7 +132,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // with, is `executorReady`'s. An injected executor (development, e2e, tests) needs neither. The in-job
   // `executor_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
   const executorReady = async (tx: Db, accountId: string) => {
-    if (!clientChannel.connected(accountId)) return { code: EXECUTOR_OFFLINE_CODE, message: ERP_ACTION_ERRORS.executorOffline };
+    if (!executorHub.connected(accountId)) return { code: EXECUTOR_OFFLINE_CODE, message: ERP_ACTION_ERRORS.executorOffline };
     return (await erpCredentialsReady(tx, accountId, !!erpCredentialKey)) ? null : { code: ERP_CREDENTIALS_MISSING_CODE, message: ERP_CREDENTIAL_ERRORS.missing };
   };
   const erpService: ErpServiceOptions = {
@@ -291,11 +289,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   const pairings = createPairingService(
     db,
     now,
-    { connected: (accountId) => clientChannel.connected(accountId), disconnect: (accountId) => clientChannel.disconnect(accountId) },
+    { connected: (accountId) => executorHub.connected(accountId), disconnect: (accountId) => executorHub.disconnect(accountId) },
     () => maintenance.enter('background'),
   );
-  const clientChannel = createClientChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
-  mountClientPairRoutes(app, pairings);
+  const executorHub = createExecutorHub({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
+  mountExecutorPairRoutes(app, pairings);
   mountLocalExecutorReleaseRoutes(app, localExecutor, pairings);
   mountLocalExecutorRuntimeRoutes(app, localExecutor);
   mountLocalExecutorInstallRoutes(app, localExecutor, pairings, publicOrigin);
@@ -319,7 +317,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     ...accounts,
     update: async (actor, accountId, change) => {
       const list = await accounts.update(actor, accountId, change);
-      if ('active' in change && !change.active) clientChannel.disconnect(accountId);
+      if ('active' in change && !change.active) executorHub.disconnect(accountId);
       return list;
     },
   });
@@ -539,11 +537,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
   return Object.assign(app, {
-    clientChannel,
+    executorHub,
     maintenance,
     ready,
     close: async () => {
-      clientChannel.close();
+      executorHub.close();
       await settled();
       await parseJobs.close();
       await fillJobs.close();

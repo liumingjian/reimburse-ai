@@ -1,4 +1,4 @@
-import { CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
+import { CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, EXECUTOR_VERSION, type ChannelMessage } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { channelUrl, channelWatch, createChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 
@@ -46,7 +46,7 @@ describe('the 本地执行器 opens the channel and holds it', () => {
 
     expect(server.dialled).toEqual([`ws://10.250.0.222${CHANNEL_PATH}`]);
     expect(server.dialled[0]).not.toContain('secret-token');
-    expect(server.said[0]).toEqual({ type: 'hello', token: 'secret-token', version: CLIENT_VERSION });
+    expect(server.said[0]).toEqual({ type: 'hello', token: 'secret-token', version: EXECUTOR_VERSION });
     client.stop();
   });
 
@@ -60,7 +60,7 @@ describe('the 本地执行器 opens the channel and holds it', () => {
     vi.advanceTimersByTime(600);
     server.accept();
 
-    expect(server.said.filter((message) => message.type === 'hello').map((message) => 'version' in message && message.version)).toEqual([CLIENT_VERSION, CLIENT_VERSION]);
+    expect(server.said.filter((message) => message.type === 'hello').map((message) => 'version' in message && message.version)).toEqual([EXECUTOR_VERSION, EXECUTOR_VERSION]);
     client.stop();
   });
 

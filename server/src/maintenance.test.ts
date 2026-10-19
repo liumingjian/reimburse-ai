@@ -1,7 +1,7 @@
 import { lstatSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
-import { PAIRING_CODE_TTL_MS, PAIRING_PATH, CLIENT_VERSION } from '@baox/contract';
+import { PAIRING_CODE_TTL_MS, PAIRING_PATH, EXECUTOR_VERSION } from '@baox/contract';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SESSION_TTL_MS } from './accounts/accounts';
 import { databasePath } from './data-dir';
@@ -225,8 +225,8 @@ describe('maintenance admission', () => {
     const issued = (await (await alice.post('/api/pairing/code', {})).json()) as { code: string };
     const redeemed = await server.app.request(PAIRING_PATH, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: 'chrome-extension://maintenance-test' },
-      body: JSON.stringify({ code: issued.code, version: CLIENT_VERSION }),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: issued.code, version: EXECUTOR_VERSION }),
     });
     expect(redeemed.status).toBe(200);
     const { token } = (await redeemed.json()) as { token: string };
@@ -235,11 +235,11 @@ describe('maintenance admission', () => {
     expect(await operator(control.path, 'admit')).toMatchObject({ state: 'admitted', barrier: true, activeWrites: 0 });
 
     const heard: unknown[] = [];
-    const session = server.app.clientChannel.open({
+    const session = server.app.executorHub.open({
       send: (message) => heard.push(JSON.parse(message) as unknown),
       close: () => undefined,
     });
-    await session.message(JSON.stringify({ type: 'hello', token, version: CLIENT_VERSION }));
+    await session.message(JSON.stringify({ type: 'hello', token, version: EXECUTOR_VERSION }));
     expect(heard).toContainEqual(expect.objectContaining({ type: 'ready', accountId: alice.account.accountId }));
     expect(await server.db.selectFrom('pairing').select(['last_connected_at', 'version']).where('account_id', '=', alice.account.accountId).executeTakeFirstOrThrow()).toEqual(before);
     expect(await operator(control.path, 'status')).toMatchObject({ state: 'admitted', activeWrites: 0 });

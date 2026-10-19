@@ -193,13 +193,16 @@ export const ERP_ACTION_ERRORS = {
   preflight: (problems: readonly string[]) => `还不能写入报销系统：${problems.join('；')}。`,
   // 去报销 runs only in the employee's paired 本地执行器 (ADR-0037); without one nothing is started (story 13).
   // `executor_not_paired` (EXECUTOR_NOT_PAIRED_CODE): this 应用账号 has no pairing; the refusal links to the 设置页.
-  // `extension_offline`: paired, but the 本地执行器 is not connected.
+  // `executor_offline` (EXECUTOR_OFFLINE_CODE): paired, but the 本地执行器 is not connected.
   notPaired: '先在设置页安装本地执行器。',
   executorOffline: '本地执行器现在没有连上应用，所以现在去报销不了。请在电脑上打开 baox 本地执行器，等设置页显示已连接，再来去报销。',
 } as const;
 
 // The 去报销 refusal when the 应用账号 has no paired 本地执行器 (ADR-0037). It carries `link: 'settings'`.
 export const EXECUTOR_NOT_PAIRED_CODE = 'executor_not_paired';
+// The 去报销 refusal, and the in-job abort, when the paired 本地执行器 is not connected; the channel's `request` rejects
+// with it too.
+export const EXECUTOR_OFFLINE_CODE = 'executor_offline';
 
 // The one task-action refusal that is HTTP 409 but not stale_step: this 应用账号's ERP lease is held by another of
 // its own tasks.

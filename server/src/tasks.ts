@@ -25,6 +25,7 @@ import {
   type TaskListItem,
   type TaskSnapshot,
   type UploadRejectCode,
+  EXECUTOR_OFFLINE_CODE,
 } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
@@ -50,7 +51,7 @@ import type { ErpConfig } from './erp/config';
 import { buildFillJob, draftMarkOf, planOfJob, type FrozenJob } from './erp/fill-plan';
 import { JOB_DEADLINE_CODE, newJobId, NO_RESULT_CODE, type FillRun, type FillTrigger } from './erp/fill-jobs';
 import { RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
-import { EXECUTOR_CONNECTION_LOST_CODE, EXECUTOR_OFFLINE_CODE } from './channel/channel';
+import { EXECUTOR_CONNECTION_LOST_CODE } from './channel/channel';
 import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
 import { loadErp, type ErpRecord } from './erp/fill-state';

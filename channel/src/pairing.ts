@@ -1,4 +1,4 @@
-import { PAIRING_ERRORS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingFailureSchema, PairingTokenSchema } from '@baox/contract';
+import { PAIRING_ERRORS, PAIRING_PATH, EXECUTOR_VERSION, PairingIdentitySchema, PairingFailureSchema, PairingTokenSchema } from '@baox/contract';
 import { APP_UNREACHABLE } from './messages';
 
 // Redeeming the 配对码 (pairing code) the install command or the 设置页 hands over, and 撤销配对 (revoking the pairing) by the 本地执行器 itself.
@@ -22,7 +22,7 @@ export type RedeemOptions = {
 
 const NETWORK_REFUSAL = { ok: false as const, code: 'network_error', message: `${APP_UNREACHABLE}然后再点一次配对。` };
 
-export async function redeemPairingCode({ origin, code, browser = null, version = CLIENT_VERSION, fetchImpl = fetch }: RedeemOptions): Promise<PairingOutcome> {
+export async function redeemPairingCode({ origin, code, browser = null, version = EXECUTOR_VERSION, fetchImpl = fetch }: RedeemOptions): Promise<PairingOutcome> {
   let response: Response;
   try {
     response = await fetchImpl(`${origin}${PAIRING_PATH}`, {

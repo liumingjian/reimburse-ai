@@ -1,7 +1,5 @@
 // The local-path route for invoices (`invoice-files.ts`): fetch each original by content, verify its sha256, write it
-// to a private temp directory, and hand the paths to `DOM.setFileInputFiles`. Node only — the server's own CDP
-// executor. The browser extension has no filesystem and no path to hand over, so its bundle swaps this module for
-// `staging.browser.ts` (the `browser` map in package.json), which puts the bytes into the page instead.
+// to a private temp directory, and hand the paths to `DOM.setFileInputFiles`.
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
