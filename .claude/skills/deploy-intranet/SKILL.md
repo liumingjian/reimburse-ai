@@ -69,12 +69,11 @@ final report:
 
 | Watch | Hit means |
 |---|---|
-| `MINIMUM_CLIENT_VERSION` raised in `contract/src/channel.ts` | Every QA browser's old extension is refused: re-download from the settings page and reload it before QA. |
-| `CLIENT_VERSION` raised, minimum unchanged | A new extension is available; reload it to QA the extension change. |
-| `extension/` changed, `CLIENT_VERSION` unchanged | The extension changed without a version bump; QA browsers keep running the old build. Flag it as a probable release mistake. |
+| `MINIMUM_CLIENT_VERSION` raised in `contract/src/channel.ts` | Every installed 本地执行器 older than it is refused until it updates itself (ADR-0035); QA waits until the QA PC's 本地执行器 shows connected on the 设置页. |
+| `local-executor/` or `channel/` changed | Installed 本地执行器s replace themselves with the new build at start, every 30 idle minutes, or when refused (ADR-0035); a QA PC runs the old build until then. |
 | A new key in the migrations map of `server/src/db/migrations.ts` | Schema migration: rollback to the previous release is unsafe from now on (the database never migrates backwards, and there is no backup). |
 
-Routine releases keep the installed origin, so 扩展配对 (extension pairing) survives; say so only if the user asks.
+Routine releases keep the installed origin, so each 本地执行器's 配对 (pairing) survives; say so only if the user asks.
 
 If the deployed commit is missing from local history, write "impact unknown: deployed commit `<commit12>` not in
 local history" and continue.

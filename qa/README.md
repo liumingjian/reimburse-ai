@@ -132,7 +132,7 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 任务本身不被改动。驱动会把这几点分别记成 `ok` 或 `DEFECT`。
 
 `erp-write` 这一段并不只管「浏览器关着」这一条路：它是整个驱动里唯一会点 去报销 的地方，专用浏览器
-开着的时候，它点的就是一次真写入。写入走到底（`erp.status` 变 `done`，单据填好、交给本人自己按保存）
+开着的时候，它点的就是一次真写入。写入走到底（`erp.status` 变 `done`，单据已暂存，ERP 草稿已交接，由本人检查后自己提交）
 记 `ok`；预算用完还在 `running` 记 `WARN`（实测一次真写入约 141 秒，预算 300 秒）；只有 `aborted`
 ——也就是写入结果不确定——才是 `DEFECT`。
 

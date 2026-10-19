@@ -88,6 +88,6 @@ Kylin 上的 SQLite 原生模块已通过隔离 GCC 编译，恢复快照通过�
 pnpm --filter @baox/operator operator deploy
 ```
 
-常规发布会自动准备候选、创建并演练恢复快照、切换版本及验证入口，无需重复初始化。发布沿用主机已安装的访问地址；新配置的 8888 默认端口不会自动迁移现有浏览器扩展的连接地址。
+常规发布会自动准备候选、创建并演练恢复快照、切换版本及验证入口，无需重复初始化。发布沿用主机已安装的访问地址；新配置的 8888 默认端口不会自动迁移已装本地执行器记下的应用地址。
 首次接入前的完整备份保留在 `/opt/tools/baox/initialization/backup-before-gate-37660bd-r3`；
 后续发布快照保留在 `/opt/tools/baox/recovery-snapshots/`。
