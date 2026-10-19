@@ -214,15 +214,15 @@ describe('maintenance admission', () => {
     control = await startMaintenanceControl({ gate: server.app.maintenance, path: maintenanceSocketPath(server.dataDir), token: TOKEN });
 
     // An expired pairing code normally deletes its row when the settings GET renders it.
-    await alice.post('/api/extension/pairing/code', {});
+    await alice.post('/api/pairing/code', {});
     server.clock.advance(PAIRING_CODE_TTL_MS + 1);
     expect(await operator(control.path, 'admit')).toMatchObject({ state: 'admitted', barrier: true });
-    expect((await (await alice.request('/api/extension/pairing')).json()) as { status: string }).toMatchObject({ status: 'none' });
+    expect((await (await alice.request('/api/pairing')).json()) as { status: string }).toMatchObject({ status: 'none' });
     expect(await server.db.selectFrom('pairing').select('account_id').where('account_id', '=', alice.account.accountId).executeTakeFirst()).toEqual({ account_id: alice.account.accountId });
 
     // Reopen only to make a pairing, then close again before its real channel hello would update liveness/version.
     expect(await operator(control.path, 'reopen')).toMatchObject({ state: 'open', barrier: false });
-    const issued = (await (await alice.post('/api/extension/pairing/code', {})).json()) as { code: string };
+    const issued = (await (await alice.post('/api/pairing/code', {})).json()) as { code: string };
     const redeemed = await server.app.request(PAIRING_PATH, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: 'chrome-extension://maintenance-test' },
@@ -235,7 +235,7 @@ describe('maintenance admission', () => {
     expect(await operator(control.path, 'admit')).toMatchObject({ state: 'admitted', barrier: true, activeWrites: 0 });
 
     const heard: unknown[] = [];
-    const session = server.app.extensionChannel.open({
+    const session = server.app.clientChannel.open({
       send: (message) => heard.push(JSON.parse(message) as unknown),
       close: () => undefined,
     });

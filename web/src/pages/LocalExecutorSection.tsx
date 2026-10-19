@@ -181,7 +181,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
     setBusy('generate');
     setError(null);
     setCopied(null);
-    const outcome = await store.pairingAction((adapter) => adapter.createExtensionPairingCode({ system }));
+    const outcome = await store.pairingAction((adapter) => adapter.createPairingCode({ system }));
     setBusy(null);
     if (!outcome.ok) {
       setError(outcome.error.message);
@@ -204,7 +204,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
     setAsking(null);
     setBusy('connect');
     setError(null);
-    const outcome = await store.pairingAction((adapter) => adapter.createExtensionPairingCode());
+    const outcome = await store.pairingAction((adapter) => adapter.createPairingCode());
     const code = outcome.ok ? outcome.pairing.code : null;
     if (!outcome.ok || !code) {
       setBusy(null);
@@ -234,7 +234,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
   const revoke = async () => {
     setBusy('revoke');
     setError(null);
-    const outcome = await store.pairingAction((adapter) => adapter.revokeExtensionPairing());
+    const outcome = await store.pairingAction((adapter) => adapter.revokePairing());
     setBusy(null);
     if (!outcome.ok) {
       setError(outcome.error.message);

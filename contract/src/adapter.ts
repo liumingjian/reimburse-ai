@@ -101,13 +101,13 @@ export interface AppAdapter {
   getLegacyImport(): Promise<LegacyImport>;
   retryLegacyImport(): Promise<LegacyImportOutcome>;
   skipLegacyImport(): Promise<LegacyImportOutcome>;
-  // 扩展配对 (extension pairing, ADR-0019): read this account's pairing; issue a 配对码 (pairing code), which voids
+  // 配对 (pairing, ADR-0019): read this account's pairing; issue a 配对码 (pairing code), which voids
   // the old pairing; revoke the pairing. Pairing and login are independent: revoking signs nobody out, and signing out
   // revokes nothing.
-  getExtensionPairing(): Promise<PairingView>;
+  getPairing(): Promise<PairingView>;
   // `system`: the one-command install's choice of Mac or Windows, stored with the code (`/install/<配对码>`).
-  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
-  revokeExtensionPairing(): Promise<PairingChangeOutcome>;
+  createPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
+  revokePairing(): Promise<PairingChangeOutcome>;
   // ERP 凭据 (ADR-0033): read the view (never the password); save, which runs a 试登录 through the paired baox 本地执行器;
   // run the 试登录 again; clear, which deletes them.
   getErpCredentials(): Promise<ErpCredentialsView>;

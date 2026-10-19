@@ -13,7 +13,7 @@
 // In memory on purpose: one server process owns the data directory (data-dir lock), and a restart ends every job it
 // was running, so a lease never needs to outlive the process. There is no heartbeat for the same reason.
 //
-// A job run in the paired 浏览器扩展 (browser extension) keeps its lease across a lost connection: inside the
+// A job run in the paired 本地执行器 (local executor) keeps its lease across a lost connection: inside the
 // reconnection window the job is interrupted, not over, and a second 去报销 of the same account must not start while
 // the first may still resume (ADR-0020). It gives the lease back when it ends, like every job — resumed and finished,
 // or past the window (`erp/remote-executor.ts`).

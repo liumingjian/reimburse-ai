@@ -139,7 +139,7 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
   const startupEntry = () => join(appData(), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'baox-local-executor.cmd');
   const installLog = () => (existsSync(join(executorHome(), 'logs', 'install.log')) ? readFileSync(join(executorHome(), 'logs', 'install.log'), 'utf8').slice(-3000) : 'no install log');
   const finishArgs = () => readFileSync(notes(), 'utf8').trim().split('\n');
-  const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'windows' })).json()).code!;
+  const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createPairingCode.path, { system: 'windows' })).json()).code!;
 
   /** `irm <app><path> | iex` as the command on the 设置页 runs it: what the employee sees, line by line, and the exit. */
   function run(path: string, env: Record<string, string> = {}): Promise<{ lines: string[]; status: number | null }> {

@@ -82,7 +82,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     stub('codesign', `#!/bin/sh\necho "$*" >> '${join(home, 'codesign.log')}'\nexit ${signed ? 0 : 1}\n`);
   }
 
-  const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'mac' })).json()).code!;
+  const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createPairingCode.path, { system: 'mac' })).json()).code!;
 
   /** What the employee sees in the terminal, line by line, and how it ended. */
   function run(path: string): Promise<{ lines: string[]; status: number | null }> {

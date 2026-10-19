@@ -13,7 +13,7 @@ describe('the development entry', () => {
     }
   });
 
-  it('leaves ERP jobs to the paired 浏览器扩展 or 本地执行器 when asked, as the production entry does', () => {
+  it('leaves ERP jobs to the paired 本地执行器 when asked, as the production entry does', () => {
     expect(devExecutors('paired', '/tmp/baox-dev')).toEqual({});
   });
 

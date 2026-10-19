@@ -181,7 +181,7 @@ export function parseLegacyImportActionResponse(status: number, body: unknown): 
 }
 
 // 配对 (pairing with the 本地执行器): the GET is a read (401 throws UnauthenticatedError).
-export function parseExtensionPairingResponse(status: number, body: unknown): PairingView {
+export function parsePairingResponse(status: number, body: unknown): PairingView {
   refuseUnauthenticated(status);
   if (!isSuccess(status)) throw new Error(`配对情况加载失败（HTTP ${status}）`);
   const parsed = PairingViewSchema.safeParse(body);
@@ -191,7 +191,7 @@ export function parseExtensionPairingResponse(status: number, body: unknown): Pa
 
 // 生成配对码 / 撤销配对 (issue a pairing code / revoke the pairing): success is the new pairing (a freshly issued code
 // appears in this answer only); failure is { error } alone.
-export function parseExtensionPairingActionResponse(status: number, body: unknown): PairingChangeOutcome {
+export function parsePairingActionResponse(status: number, body: unknown): PairingChangeOutcome {
   if (isSuccess(status)) {
     const view = PairingViewSchema.safeParse(body);
     if (view.success) return { ok: true, pairing: view.data };
@@ -332,7 +332,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     } catch {
       return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, pairing: null };
     }
-    return parseExtensionPairingActionResponse(response.status, await readJson(response));
+    return parsePairingActionResponse(response.status, await readJson(response));
   }
   async function credentialsAction(target: string, payload: Record<string, unknown> = {}): Promise<ErpCredentialsOutcome> {
     let response: Response;
@@ -430,17 +430,17 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     },
     retryLegacyImport: () => legacyImportAction(url(E.retryLegacyImport.path)),
     skipLegacyImport: () => legacyImportAction(url(E.skipLegacyImport.path)),
-    async getExtensionPairing() {
+    async getPairing() {
       let response: Response;
       try {
-        response = await fetch(url(E.getExtensionPairing.path));
+        response = await fetch(url(E.getPairing.path));
       } catch {
         throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
       }
-      return parseExtensionPairingResponse(response.status, await readJson(response));
+      return parsePairingResponse(response.status, await readJson(response));
     },
-    createExtensionPairingCode: (input) => pairingAction(url(E.createExtensionPairingCode.path), input?.system ? { system: input.system } : {}),
-    revokeExtensionPairing: () => pairingAction(url(E.revokeExtensionPairing.path)),
+    createPairingCode: (input) => pairingAction(url(E.createPairingCode.path), input?.system ? { system: input.system } : {}),
+    revokePairing: () => pairingAction(url(E.revokePairing.path)),
     async getErpCredentials() {
       let response: Response;
       try {

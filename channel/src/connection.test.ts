@@ -2,7 +2,7 @@ import { CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, CLIENT_VERSION, type ChannelMessage
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { channelUrl, channelWatch, createChannelClient, type ChannelStatus, type ClientSocket } from './connection';
 
-// A fake server on the other end of the socket: it records what the extension says and can say anything back.
+// A fake server on the other end of the socket: it records what the 本地执行器 says and can say anything back.
 function fakeServer() {
   const dialled: string[] = [];
   const said: ChannelMessage[] = [];
@@ -35,7 +35,7 @@ const flush = async () => {
   for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
 };
 
-describe('the extension opens the channel and holds it', () => {
+describe('the 本地执行器 opens the channel and holds it', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -64,7 +64,7 @@ describe('the extension opens the channel and holds it', () => {
     client.stop();
   });
 
-  it('keeps the service worker alive with a heartbeat well inside 20 seconds', () => {
+  it('keeps the channel alive with a heartbeat well inside 20 seconds', () => {
     const server = fakeServer();
     const client = createChannelClient({ origin: 'http://127.0.0.1:4319', token: 't', open: server.open });
     server.accept();
@@ -88,7 +88,7 @@ describe('the extension opens the channel and holds it', () => {
     server.accept();
     server.reply({ type: 'ready', accountId: 'a1', heartbeatMs: CHANNEL_HEARTBEAT_MS });
 
-    // Extension asks, server answers out of order: two requests are in flight and only the id says which is which.
+    // The client asks, server answers out of order: two requests are in flight and only the id says which is which.
     const first = client.request('readback', { bill: 1 });
     const second = client.request('attempt_started', { bill: 2 });
     const asked = server.said.filter((message) => message.type === 'request' && message.method !== 'ping');
@@ -99,7 +99,7 @@ describe('the extension opens the channel and holds it', () => {
     await expect(first).resolves.toEqual({ verdict: 'ok' });
     await expect(second).resolves.toEqual({ persisted: true });
 
-    // Server asks, extension answers, echoing the id it was given.
+    // Server asks, the client answers, echoing the id it was given.
     server.reply({ type: 'request', id: 'server-7', method: 'fill', payload: { plan: 'p' } });
     await flush();
     expect(server.said.at(-1)).toEqual({ type: 'response', id: 'server-7', ok: true, payload: { ran: 'fill', saw: { plan: 'p' } } });
@@ -111,12 +111,12 @@ describe('the extension opens the channel and holds it', () => {
     const seen: ChannelStatus[] = [];
     const client = createChannelClient({ origin: 'http://127.0.0.1:4319', token: 't', open: server.open, onStatus: (status) => seen.push(status) });
     server.accept();
-    server.reply({ type: 'refused', code: 'version_too_old', message: '这台服务器要求浏览器扩展 2.0.0 或更新的版本' });
+    server.reply({ type: 'refused', code: 'version_too_old', message: '这台服务器要求 baox 本地执行器 2.0.0 或更新的版本' });
     server.drop();
     vi.advanceTimersByTime(60_000);
 
     expect(server.dialled).toHaveLength(1);
-    expect(client.status()).toEqual({ state: 'refused', code: 'version_too_old', message: '这台服务器要求浏览器扩展 2.0.0 或更新的版本' });
+    expect(client.status()).toEqual({ state: 'refused', code: 'version_too_old', message: '这台服务器要求 baox 本地执行器 2.0.0 或更新的版本' });
     expect(seen.map((status) => status.state)).toContain('refused');
     client.stop();
   });

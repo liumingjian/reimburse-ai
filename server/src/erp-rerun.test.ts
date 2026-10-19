@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FrozenJob } from './erp/fill-plan';
 import { draftMarkOf } from './erp/fill-plan';
 import { drafted, gated, readbackMismatch, uncertainDraft } from './erp/testing/fake-executor';
-import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
+import { fakeLocalExecutor, type FakeLocalExecutor, type FillRunner } from './erp/testing/fake-local-executor';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
@@ -18,20 +18,20 @@ import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: true });
+  server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: true });
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());
 
-async function executor(scripts: FillRunner[]): Promise<FakeExtension> {
-  const issued = PairingViewSchema.parse(await (await alice.post('/api/extension/pairing/code', {})).json());
+async function executor(scripts: FillRunner[]): Promise<FakeLocalExecutor> {
+  const issued = PairingViewSchema.parse(await (await alice.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
     body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: CLIENT_VERSION }),
   });
   let run = 0;
-  const extension = fakeExtension(server.app.extensionChannel, PairingTokenSchema.parse(await redeemed.json()).token, {
+  const extension = fakeLocalExecutor(server.app.clientChannel, PairingTokenSchema.parse(await redeemed.json()).token, {
     trySignIn: async () => ({ ok: true }),
     fill: (plan, channel, trigger) => scripts[Math.min(run++, scripts.length - 1)]!(plan, channel, trigger),
   });
@@ -56,7 +56,7 @@ async function after(scene: { task: { taskId: string }; settled: () => Promise<T
   await new Promise((resolve) => setTimeout(resolve, 50));
   return { snapshot: await scene.settled(), jobs: (await rows()).map((row) => ({ jobId: row.job_id, trigger: row.trigger, frozen: JSON.parse(row.plan) as FrozenJob })), first: snapshot };
 }
-const fills = (extension: FakeExtension) => extension.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
+const fills = (extension: FakeLocalExecutor) => extension.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
 
 describe('自动重新去报销', () => {
   it('starts over on a fresh form after a stop before 暂存, asks ERP first, and ends at the draft', async () => {
@@ -142,7 +142,7 @@ describe('自动重新去报销', () => {
 
   it('stays off when the app is told so', async () => {
     await server.close();
-    server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: false });
+    server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: false });
     alice = await server.signIn('alice');
     await executor([readbackMismatch, drafted]);
     const scene = await scenario(server, alice).at('actions');

@@ -1,11 +1,11 @@
 import { CHANNEL_PING_METHOD, ChannelMessageSchema, CHANNEL_PATH, CHANNEL_HEARTBEAT_MS, CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
 import { CHANNEL_CLOSED } from './messages';
 
-// The extension's side of the channel. It dials; the server never dials it, because a browser on an employee's
+// The 本地执行器's side of the channel. It dials; the server never dials it, because a browser on an employee's
 // machine has no address a server could reach.
 //
 // Everything here is one socket's worth of state plus the loop that replaces it. Nothing in this file knows about
-// `chrome.*`: the service worker supplies the socket and the credentials, and a test supplies a fake, which is how a
+// a runtime: the 本地执行器 supplies the socket and the credentials, and a test supplies a fake, which is how a
 // channel with correlated request/response gets covered without a browser or a port.
 
 export type ClientSocket = {
@@ -19,17 +19,17 @@ export type ClientSocket = {
 
 export type OpenSocket = (url: string) => ClientSocket;
 
-// What the popup shows. `refused` is terminal: the server has said this extension may not connect at all, and
+// What the client reports. `refused` is terminal: the server has said this 本地执行器 may not connect at all, and
 // dialling again would only repeat the refusal.
 export type ChannelStatus = { state: 'connecting' } | { state: 'ready'; accountId: string } | { state: 'offline'; retryInMs: number } | { state: 'refused'; code: string; message: string };
 
-// What the server asks this extension to do. #254 gives the methods meaning; without a handler every request is
+// What the server asks this 本地执行器 to do. #254 gives the methods meaning; without a handler every request is
 // refused by name rather than dropped, so a mismatch shows up as an error and not as a hang.
 export type ClientRequestHandler = (method: string, payload: unknown) => Promise<unknown>;
 
 export type ChannelClientOptions = {
   // Baked in at build time (`origin.ts`). There is deliberately no way to change it at run time: an employee who
-  // could retarget the extension could be talked into targeting someone else's server.
+  // could retarget the 本地执行器 could be talked into targeting someone else's server.
   origin: string;
   token: string;
   open: OpenSocket;
@@ -142,15 +142,15 @@ export function createChannelClient({ origin, token, open, version = CLIENT_VERS
         return;
       }
       case 'request': {
-        const answer = onRequest ? onRequest(message.method, message.payload) : Promise.reject(new RequestFailed('unknown_method', `这个扩展不认识 ${message.method}。`));
+        const answer = onRequest ? onRequest(message.method, message.payload) : Promise.reject(new RequestFailed('unknown_method', `这个本地执行器不认识 ${message.method}。`));
         void answer.then(
           (payload) => write({ type: 'response', id: message.id, ok: true, payload: payload ?? null }),
-          (error: unknown) => write({ type: 'response', id: message.id, ok: false, error: { code: error instanceof RequestFailed ? error.code : 'extension_error', message: error instanceof Error ? error.message : String(error) } }),
+          (error: unknown) => write({ type: 'response', id: message.id, ok: false, error: { code: error instanceof RequestFailed ? error.code : 'executor_error', message: error instanceof Error ? error.message : String(error) } }),
         );
         return;
       }
       default:
-        // `hello` and `event` are not answers to anything the extension asked for; an event with no handler is
+        // `hello` and `event` are not answers to anything the 本地执行器 asked for; an event with no handler is
         // nothing to do, which is what one-way means.
         return;
     }

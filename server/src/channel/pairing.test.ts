@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PAIRING_CODE_TTL_MS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingViewSchema, PairingTokenSchema, type PairingView } from '@baox/contract';
 import { createTestServer, TEST_PASSWORD, type TestClient, type TestServer } from '../test/harness';
 
-// The HTTP seam (spec #246 Testing Decisions): 扩展配对 (extension pairing, ADR-0019) driven through `app.request()`,
-// which is where both sides of it live — the settings page behind the session cookie, and the extension, which has
+// The HTTP seam (spec #246 Testing Decisions): 配对 (pairing, ADR-0019) driven through `app.request()`,
+// which is where both sides of it live — the settings page behind the session cookie, and the 本地执行器, which has
 // no session, at PAIRING_PATH.
 //
-// The extension's requests are written the way a real one arrives: an `Origin` of its own
+// The 本地执行器's requests are written the way a real one arrives: an `Origin` of its own
 // `chrome-extension://…`, which the app's exact-origin guard would refuse for any other write.
 
-const PAIRING = '/api/extension/pairing';
+const PAIRING = '/api/pairing';
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const json = { 'content-type': 'application/json' };
 
@@ -30,7 +30,7 @@ const view = (client: TestClient) => client.request(PAIRING).then(parse);
 const issue = (client: TestClient) => client.post(`${PAIRING}/code`, {}).then(parse);
 const revoke = (client: TestClient) => client.post(`${PAIRING}/revoke`, {}).then(parse);
 
-// Every real extension reports its version (ADR-0021); `channel.test.ts` covers what happens when it is too old.
+// Every real 本地执行器 reports its version (ADR-0021); `channel.test.ts` covers what happens when it is too old.
 const redeem = (code: string, browser?: string) =>
   server.app.request(PAIRING_PATH, { method: 'POST', headers: { ...json, origin: EXTENSION_ORIGIN }, body: JSON.stringify({ code, version: CLIENT_VERSION, ...(browser === undefined ? {} : { browser }) }) });
 const whoami = (token: string) => server.app.request(PAIRING_PATH, { headers: { authorization: `Bearer ${token}` } });
@@ -46,8 +46,8 @@ const pair = async (client: TestClient, browser?: string): Promise<string> => {
 };
 const errorOf = async (response: Response): Promise<string> => ((await response.json()) as { error: { code: string } }).error.code;
 
-describe('扩展配对 (extension pairing)', () => {
-  it('issues a 配对码 of 8 characters an extension exchanges once for a long-lived token carrying the 应用账号', async () => {
+describe('配对 (pairing)', () => {
+  it('issues a 配对码 of 8 characters a 本地执行器 exchanges once for a long-lived token carrying the 应用账号', async () => {
     const issued = await issue(alice);
     expect(issued.status).toBe('waiting');
     expect(codeOf(issued)).toMatch(/^[A-Z2-9]{8}$/);
@@ -58,7 +58,7 @@ describe('扩展配对 (extension pairing)', () => {
     const paired = PairingTokenSchema.parse(await redeemed.json());
     expect(paired.accountId).toBe(alice.account.accountId);
     // The token is what routes ERP work afterwards, and it names the same 应用账号 without a session anywhere near it.
-    // The username is how the extension names this account before switching away from it (#292).
+    // The username is how the 本地执行器 names this account before switching away from it (#292).
     expect(PairingIdentitySchema.parse(await (await whoami(paired.token)).json())).toEqual({ accountId: alice.account.accountId, username: 'alice' });
 
     // Single use: the code the employee read is spent, and reading it again pairs nothing.
@@ -79,11 +79,11 @@ describe('扩展配对 (extension pairing)', () => {
     const late = await redeem(codeOf(issued));
     expect(late.status).toBe(401);
     expect(await errorOf(late)).toBe('pairing_code_invalid');
-    // Not left saying an extension is still expected: an unused code that ran out is no pairing.
+    // Not left saying a 本地执行器 is still expected: an unused code that ran out is no pairing.
     expect((await view(alice)).status).toBe('none');
   });
 
-  it('replaces the previous 扩展配对 when a new 配对码 is issued: the old extension is no longer this account\'s', async () => {
+  it('replaces the previous 配对 when a new 配对码 is issued: the old 本地执行器 is no longer this account\'s', async () => {
     const first = await pair(alice);
     expect((await view(alice)).status).toBe('paired');
 
@@ -97,7 +97,7 @@ describe('扩展配对 (extension pairing)', () => {
     expect((await whoami(first)).status).toBe(401);
   });
 
-  it('revokes the pairing without signing the account out, and a logout leaves the extension paired', async () => {
+  it('revokes the pairing without signing the account out, and a logout leaves the 本地执行器 paired', async () => {
     const token = await pair(alice);
     expect((await revoke(alice)).status).toBe('none');
     expect((await whoami(token)).status).toBe(401);
@@ -107,11 +107,11 @@ describe('扩展配对 (extension pairing)', () => {
     const kept = await pair(alice);
     expect((await alice.post('/api/auth/logout', {})).status).toBe(200);
     expect((await alice.request('/api/tasks')).status).toBe(401);
-    // A logout is not an unpair: the extension keeps working for the 应用账号 it was paired with.
+    // A logout is not an unpair: the 本地执行器 keeps working for the 应用账号 it was paired with.
     expect(PairingIdentitySchema.parse(await (await whoami(kept)).json()).accountId).toBe(alice.account.accountId);
   });
 
-  it('lists the paired browser and its last connection, and the connection time follows the extension', async () => {
+  it('lists the paired browser and its last connection, and the connection time follows the 本地执行器', async () => {
     const token = await pair(alice, 'Chrome 142 on Windows');
     const paired = await view(alice);
     expect(paired).toMatchObject({ status: 'paired', browser: 'Chrome 142 on Windows', code: null, codeExpiresAt: null });
@@ -136,8 +136,8 @@ describe('扩展配对 (extension pairing)', () => {
   });
 });
 
-describe('扩展配对 at the address colleagues reach the app at', () => {
-  // Phase 1 (docs/design/browser-extension-v1.md): the exact-origin guard of #251 is live, and the extension is the
+describe('配对 at the address colleagues reach the app at', () => {
+  // Phase 1 (docs/design/browser-extension-v1.md): the exact-origin guard of #251 is live, and the 本地执行器 is the
   // one caller that is not the app's own page.
   const INTRANET = 'http://10.250.0.222:8888';
   let intranet: TestServer;
@@ -168,7 +168,7 @@ describe('扩展配对 at the address colleagues reach the app at', () => {
     }
   });
 
-  it('admits the extension\'s redemption from its own origin while still refusing every other cross-origin write', async () => {
+  it('admits the 本地执行器\'s redemption from its own origin while still refusing every other cross-origin write', async () => {
     const issued = PairingViewSchema.parse(await (await intranet.app.request(`${INTRANET}${PAIRING}/code`, { method: 'POST', headers: { ...json, origin: INTRANET, cookie }, body: '{}' })).json());
     const code = issued.code ?? '';
 

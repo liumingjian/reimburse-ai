@@ -9,7 +9,7 @@ import { createLocalRunner } from '@baox/local-executor/runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogMismatch, noFormOpen, notSignedIn, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
 import { FILL_JOB_DEADLINE_MS, JOB_DEADLINE_CODE } from './erp/fill-jobs';
-import { fakeExtension, type FakeExtension, type FillRunner, type ReconcileRunner } from './erp/testing/fake-extension';
+import { fakeLocalExecutor, type FakeLocalExecutor, type FillRunner, type ReconcileRunner } from './erp/testing/fake-local-executor';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
 import { BACKSTOP_MS } from './test/deadlines';
 import type { TestClient } from './test/harness';
@@ -37,13 +37,13 @@ let timers: ReturnType<typeof manualTimers>;
 beforeEach(async () => {
   fake = null;
   timers = manualTimers();
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule, autoRerun: false });
+  server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule, autoRerun: false });
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());
 
 async function pair(owner: TestClient): Promise<string> {
-  const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
+  const issued = PairingViewSchema.parse(await (await owner.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
@@ -53,8 +53,8 @@ async function pair(owner: TestClient): Promise<string> {
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
-async function connected(token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner }): Promise<FakeExtension> {
-  const extension = fakeExtension(server.app.extensionChannel, token, runners);
+async function connected(token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner }): Promise<FakeLocalExecutor> {
+  const extension = fakeLocalExecutor(server.app.clientChannel, token, runners);
   await extension.connect();
   return extension;
 }
@@ -89,7 +89,7 @@ const journal = async (taskId: string) =>
   (await server.db.selectFrom('erp_job_event').select(['type', 'payload']).where('task_id', '=', taskId).orderBy('created_at').orderBy('seq').execute()).map((row) => JSON.parse(row.payload) as ExecutorEvent);
 const resultsOf = async (taskId: string) => (await journal(taskId)).filter((event): event is ResultEvent => event.type === 'result');
 
-// The page the jobs below were on when they were interrupted, as the extension re-observes it: the form and identity
+// The page the jobs below were on when they were interrupted, as the 本地执行器 re-observes it: the form and identity
 // `attemptStarted` records, the 发票助手 open.
 const PAGE: PageObservation = { erpAccount: TEST_ERP_ACCOUNT, form: { targetId: 'erp-page-1', formInstanceId: 'form-1', formMode: 'new', billNo: null }, assistant: 'open' };
 
@@ -99,9 +99,9 @@ const attemptStarted = (plan: FillPlan): Extract<ExecutorEvent, { type: 'attempt
   expectedPostconditions: {}, compatibility: plan.compatibility, erpAccount: TEST_ERP_ACCOUNT,
 });
 
-describe('去报销 in the paired 浏览器扩展', () => {
+describe('去报销 in the paired 本地执行器', () => {
   it('hands the plan down with the 凭据, takes every event back in order, and ends at the 暂存 draft', async () => {
-    // At each ack, what the extension can observe: is the attempt already durable, and has ERP been touched yet?
+    // At each ack, what the 本地执行器 can observe: is the attempt already durable, and has ERP been touched yet?
     const acks: Array<{ action: string; durable: boolean; mutationsBefore: string[] }> = [];
     const watched = (channel: ExecutorChannel): ExecutorChannel => ({
       emit: (async (event: ExecutorEvent) => {
@@ -126,10 +126,10 @@ describe('去报销 in the paired 浏览器扩展', () => {
       plan: expect.objectContaining({ kind: 'fill', taskId: scene.task.taskId, draft: { mark: expect.stringMatching(/^baox-/) } }),
       credentials: { account: 'zhangsan', password: 'erp-Pa55' },
     } }]);
-    // Every event the extension sent is on the job's record, in the order sent; the verdicts it acted on were the server's.
+    // Every event the 本地执行器 sent is on the job's record, in the order sent; the verdicts it acted on were the server's.
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(extension.sent().map((event) => event.type));
     expect(new Set(extension.sent().map((event) => event.type))).toEqual(new Set(['step', 'attempt_started', 'readback', 'result']));
-    // `attempt_started` was durable before its ack reached the extension, and the ack came before that action's write.
+    // `attempt_started` was durable before its ack reached the 本地执行器, and the ack came before that action's write.
     expect(acks.map(({ action, durable }) => ({ action, durable }))).toEqual([
       { action: 'import', durable: true },
       { action: 'fill', durable: true },
@@ -144,7 +144,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
   it.each([
     ['stops at an ERP login it cannot sign in to', notSignedIn, 'step', 'aborted'],
     ['stops on a 报销信息核对 mismatch', catalogMismatch, 'catalog_mismatch', 'catalog_mismatch'],
-  ] as const)('%s with the event the extension sent', async (_name, script, event, status) => {
+  ] as const)('%s with the event the 本地执行器 sent', async (_name, script, event, status) => {
     const extension = await connected(await pair(alice), { fill: (plan, channel) => script(plan, channel) });
     const scene = await actionsOnFakeErp();
 
@@ -156,7 +156,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
   });
 
-  it('runs the read-only 对账 in the extension too', async () => {
+  it('runs the read-only 对账 in the 本地执行器 too', async () => {
     const extension = await connected(await pair(alice), { fill: (plan, channel) => uncertainSave(plan, channel), reconcile: noFormOpen });
     const scene = await actionsOnFakeErp();
     expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
@@ -171,7 +171,7 @@ describe('去报销 in the paired 浏览器扩展', () => {
   // paired the refusal also carries the 设置页 as its link target.
   it.each([
     ['no 本地执行器 is paired', false, { code: EXECUTOR_NOT_PAIRED_CODE, message: ERP_ACTION_ERRORS.notPaired, link: 'settings' }],
-    ['the paired 本地执行器 is not connected', true, { code: 'extension_offline', message: ERP_ACTION_ERRORS.executorOffline }],
+    ['the paired 本地执行器 is not connected', true, { code: 'executor_offline', message: ERP_ACTION_ERRORS.executorOffline }],
   ])('refuses 去报销 before any job exists when %s, and points at the settings page', async (_case, paired, error) => {
     if (paired) await pair(alice);
     const scene = await actionsOnFakeErp();
@@ -190,18 +190,18 @@ describe('去报销 in the paired 浏览器扩展', () => {
     await pair(alice);
     const scene = await actionsOnFakeErp();
     // The check sees a connection; by the time the plan is sent, there is none.
-    vi.spyOn(server.app.extensionChannel, 'connected').mockReturnValue(true);
+    vi.spyOn(server.app.clientChannel, 'connected').mockReturnValue(true);
 
     const stopped = await scene.run('start-erp-write');
 
     expect(stopped.erp.abortReason).toContain('本地执行器');
     expect(stopped.erp).toMatchObject({ status: 'idle', externalWait: 'executor_connection', outcome: 'none', allowedActions: ['refresh'] });
-    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_offline' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'executor_offline' }]);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
-  it("refuses another account's extension speaking for a running job", async () => {
+  it("refuses another account's 本地执行器 speaking for a running job", async () => {
     let release!: () => void;
     let entered!: (jobId: string) => void;
     const gate = new Promise<void>((resolve) => {
@@ -232,8 +232,8 @@ describe('去报销 in the paired 浏览器扩展', () => {
   });
 });
 
-// #257, ADR-0020: a reconnect restores the channel, not the page. A lost socket or a detached debugger interrupts the
-// job; within the window the extension resumes it by `jobId` with what it re-observed, and past it the server decides
+// #257, ADR-0020: a reconnect restores the channel, not the page. A lost socket or a lost page interrupts the
+// job; within the window the 本地执行器 resumes it by `jobId` with what it re-observed, and past it the server decides
 // the job's end by whether an attempt is on record.
 describe('an interrupted 去报销', () => {
   // A fill that sends one step, then loses its socket; the job it ran in is handed to the test.
@@ -242,7 +242,7 @@ describe('an interrupted 去报销', () => {
     const plan = new Promise<FillPlan>((resolve) => {
       started = resolve;
     });
-    const extension = fakeExtension(server.app.extensionChannel, token, {
+    const extension = fakeLocalExecutor(server.app.clientChannel, token, {
       fill: async (fillPlan, channel) => {
         started(fillPlan);
         await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
@@ -278,7 +278,7 @@ describe('an interrupted 去报销', () => {
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
-  // The extension's resume is answered over a socket that is gone by the time the verdict is ready: the extension
+  // The 本地执行器's resume is answered over a socket that is gone by the time the verdict is ready: the 本地执行器
   // never hears it, retries, and must find the job interrupted again rather than live with nobody on the other end.
   async function resumeLostInFlight() {
     const token = await pair(alice);
@@ -311,14 +311,14 @@ describe('an interrupted 去报销', () => {
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
-  it('ends the job past the reopened window when the extension does not come back after an unheard resume', async () => {
+  it('ends the job past the reopened window when the 本地执行器 does not come back after an unheard resume', async () => {
     const { scene } = await resumeLostInFlight();
     await interrupted();
 
     windowCloses();
     const stopped = await scene.settled();
 
-    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'executor_reconnect_expired' }]);
     expect(stopped.erp.status).toBe('idle');
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
@@ -342,7 +342,7 @@ describe('an interrupted 去报销', () => {
     windowCloses();
     const stopped = await scene.settled();
 
-    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'executor_reconnect_expired' }]);
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual([]);
     expect(stopped.erp.status).toBe('idle');
     expect(stopped.erp.abortReason).toBe('上次去报销在写入报销系统之前就停止了，报销系统没有被改动，可以再去报销。原因：本地执行器和报销系统页面之间的连接中断了，两分钟内没有恢复。');
@@ -356,7 +356,7 @@ describe('an interrupted 去报销', () => {
   it('goes to 对账 past the window when an attempt is on record, and never mutates or replays', async () => {
     const token = await pair(alice);
     let mutated = false;
-    const extension: FakeExtension = await connected(token, {
+    const extension: FakeLocalExecutor = await connected(token, {
       fill: async (plan, channel) => {
         await channel.emit({ type: 'step', step: 'import', status: 'running' });
         const ack = channel.emit(attemptStarted(plan));
@@ -379,17 +379,17 @@ describe('an interrupted 去报销', () => {
     expect(await attemptedActions(server.db, scene.task.taskId)).toEqual(['import']);
     // The result follows the attempt on record, and the server's guard made it 写入结果未知.
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'attempt_started', 'result']);
-    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'extension_reconnect_expired' }]);
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: 'executor_reconnect_expired' }]);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
 
-    // The extension comes back: nothing is re-sent to it.
+    // The 本地执行器 comes back: nothing is re-sent to it.
     const back = await connected(token, { fill: realExecutor(token) });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(back.asked()).toEqual([]);
     expect(extension.asked()).toHaveLength(1);
   });
 
-  it('takes nothing from a resumed extension before its re-observation, and ends the job when the page is not the one it left', async () => {
+  it('takes nothing from a resumed 本地执行器 before its re-observation, and ends the job when the page is not the one it left', async () => {
     const token = await pair(alice);
     const { extension, plan } = droppedAfterOneStep(token);
     await extension.connect();
@@ -416,7 +416,7 @@ describe('an interrupted 去报销', () => {
 
   it('sends a job whose re-observed form is not the attempted one to 对账', async () => {
     const token = await pair(alice);
-    const extension: FakeExtension = await connected(token, {
+    const extension: FakeLocalExecutor = await connected(token, {
       fill: async (plan, channel) => {
         await channel.emit(attemptStarted(plan));
         extension.disconnect();
@@ -442,7 +442,7 @@ describe('an interrupted 去报销', () => {
   it('replays nothing across a resume: every event is on record once, and the plan is never asked again', async () => {
     const token = await pair(alice);
     let jobPlan!: FillPlan;
-    const extension: FakeExtension = await connected(token, {
+    const extension: FakeLocalExecutor = await connected(token, {
       fill: async (plan, channel) => {
         jobPlan = plan;
         await channel.emit({ type: 'step', step: 'import', status: 'running' });
@@ -458,10 +458,10 @@ describe('an interrupted 去报销', () => {
 
     const back = await connected(token, {});
     const verdict = await back.resume(jobPlan.jobId, PAGE, PAGE);
-    // The attempt whose ack was lost is on record, and so counts as acknowledged: the extension does not send it again.
+    // The attempt whose ack was lost is on record, and so counts as acknowledged: the 本地执行器 does not send it again.
     expect(verdict).toEqual({ ok: true, recorded: 2 });
     const wire = back.channel(jobPlan.jobId);
-    // An extension that re-sent it anyway gets no second acknowledgement, so it could never write twice.
+    // A 本地执行器 that re-sent it anyway gets no second acknowledgement, so it could never write twice.
     await expect(wire.emit(attemptStarted(jobPlan))).rejects.toBeDefined();
     await wire.emit({ type: 'step', step: 'import', status: 'done' });
     await wire.emit({ type: 'result', status: 'aborted', code: 'test_stop', message: '测试到此为止', billNo: null, capture: null });
@@ -473,10 +473,10 @@ describe('an interrupted 去报销', () => {
     expect(back.asked()).toEqual([]);
   });
 
-  describe('a chrome.debugger detach is the same event as a disconnect', () => {
+  describe('a lost page (erp.detached) is the same event as a disconnect', () => {
     it('resumes on the same socket once the page is re-observed', async () => {
       const token = await pair(alice);
-      const extension: FakeExtension = await connected(token, {
+      const extension: FakeLocalExecutor = await connected(token, {
         fill: async (plan, channel) => {
           await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
           await extension.detached(plan.jobId);
@@ -496,7 +496,7 @@ describe('an interrupted 去报销', () => {
 
     it('ends past the window exactly as a lost socket does, and ignores the executor’s late answer', async () => {
       const token = await pair(alice);
-      const extension: FakeExtension = await connected(token, {
+      const extension: FakeLocalExecutor = await connected(token, {
         fill: async (plan, channel) => {
           await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
           await extension.detached(plan.jobId);
@@ -512,14 +512,14 @@ describe('an interrupted 去报销', () => {
       windowCloses();
       const stopped = await scene.settled();
 
-      expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'extension_reconnect_expired' }]);
+      expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: 'executor_reconnect_expired' }]);
       expect(stopped.erp.abortReason).toContain('报销系统没有被改动，可以再去报销');
       expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     });
   });
 });
 
-// An extension that stays connected but never finishes (a page that hangs, a runner stuck on an await): the socket is
+// A 本地执行器 that stays connected but never finishes (a page that hangs, a runner stuck on an await): the socket is
 // healthy, so no window ever opens. The server's own deadline is what ends the job.
 describe('a job that outlives its deadline', () => {
   async function hanging(onPlan: (plan: FillPlan, channel: ExecutorChannel) => Promise<void>) {
@@ -579,7 +579,7 @@ describe('a job that outlives its deadline', () => {
 
   it('also ends a job that is waiting out its reconnection window', async () => {
     const token = await pair(alice);
-    const extension = fakeExtension(server.app.extensionChannel, token, {
+    const extension = fakeLocalExecutor(server.app.clientChannel, token, {
       fill: async (_plan, channel) => {
         await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
         extension.disconnect();
@@ -626,7 +626,7 @@ describe('the real 本地执行器 across an interruption', () => {
         session.closed();
         socket.onclose?.({ code: 1006, reason: '' });
       };
-      const session = server.app.extensionChannel.open({
+      const session = server.app.clientChannel.open({
         send: (data) => {
           if (gone) return;
           if (cut?.(JSON.parse(data) as ChannelMessage, sent)) return drop();

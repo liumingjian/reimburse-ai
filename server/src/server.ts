@@ -8,7 +8,7 @@ import type { ReconcileExecutor } from './erp/reconcile-job';
 import type { ParseExecutor } from './parse/executor';
 import { acquireDataDirLock, databasePath, ensureDataDir } from './data-dir';
 import { openDatabase, type Db } from './db/database';
-import { attachExtensionChannel } from './extension/websocket';
+import { attachClientChannel } from './channel/websocket';
 import { maintenanceSocketPath as defaultMaintenanceSocketPath, startMaintenanceControl, type MaintenanceControl } from './maintenance-control';
 import { parsePublicOrigin } from './public-origin';
 
@@ -72,16 +72,16 @@ export async function startServer({ dataDir, port, webDist = null, legacyHome = 
     release();
     throw error;
   }
-  // The 浏览器扩展 channel shares this listening socket: Hono answers the requests, `ws` answers the upgrades
-  // (`extension/websocket.ts`). Attached after listening so nothing can upgrade before the app exists.
-  const detachExtensionChannel = attachExtensionChannel(server!, app.extensionChannel, served);
+  // The 本地执行器 channel shares this listening socket: Hono answers the requests, `ws` answers the upgrades
+  // (`channel/websocket.ts`). Attached after listening so nothing can upgrade before the app exists.
+  const detachClientChannel = attachClientChannel(server!, app.clientChannel, served);
   return {
     url: `http://${HOST}:${info!.port}`,
     port: info!.port,
     maintenanceSocketPath: socketPath,
     async close() {
       await control?.close();
-      detachExtensionChannel();
+      detachClientChannel();
       // Open SSE streams would keep the server alive forever.
       if ('closeAllConnections' in server!) server!.closeAllConnections();
       await new Promise<void>((resolve) => server!.close(() => resolve()));

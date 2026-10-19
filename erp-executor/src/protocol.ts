@@ -3,8 +3,8 @@
 // The server sends one plan per job; the executor answers with events. Two events wait for a server reply:
 //   - `attempt_started`: the executor must not mutate ERP until the server has persisted the attempt;
 //   - `readback`: the server owns judgement, so it answers each raw read-back with a verdict.
-// This file and the executor ship together in @baox/erp-executor, so a second consumer — the 浏览器扩展 (browser
-// extension) — speaks the protocol without importing the server. A lint rule keeps the package off the server.
+// This file and the executor ship together in @baox/erp-executor, so a second consumer — the 本地执行器 (local
+// executor) — speaks the protocol without importing the server. A lint rule keeps the package off the server.
 
 import { sha256Hex } from './sha256';
 import { z } from 'zod';
@@ -123,7 +123,7 @@ export type Step = (typeof STEPS)[number];
 
 /**
  * 去报销进度 (#420): how far a step with countable parts is, on its `step` event. Today only 填写明细 sends it: `total`
- * 明细 rows with its start (`done: 0`), then one event per row written. An executor or 浏览器扩展 from before it sends
+ * 明细 rows with its start (`done: 0`), then one event per row written. An executor from before it sends
  * none; the server then counts the step once. Optional on purpose: a new event type would be refused (`bad_event`).
  */
 export const StepProgressSchema = z.object({ done: z.number().int().min(0), total: z.number().int().min(1) })
@@ -210,7 +210,7 @@ export type ExecutorEvent = z.infer<typeof ExecutorEventSchema>;
 export type ResultEvent = Extract<ExecutorEvent, { type: 'result' }>;
 /**
  * A job ended as `aborted` by whoever could not let it go on: the server past its reconnection window, or the
- * extension's job link. It never picks the disposition — the server turns it into `unknown` (对账) when an attempt is
+ * 本地执行器's job link. It never picks the disposition — the server turns it into `unknown` (对账) when an attempt is
  * on record.
  */
 export const abortedResult = (code: string, message: string): ResultEvent => ({ type: 'result', status: 'aborted', code, message, billNo: null, capture: null });

@@ -6,7 +6,7 @@
 
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
-import { realTimer, type Schedule } from '../extension/channel';
+import { realTimer, type Schedule } from '../channel/channel';
 import type { MaintenanceLease } from '../maintenance';
 import { ensureResult, JOB_DEADLINE_CODE, JOB_DEADLINE_COPY, NO_CREDENTIALS, RECONCILE_JOB_DEADLINE_MS, withCredentials, withinDeadline, type JobCredentials, type RecordFacts } from './fill-jobs';
 import { writeEvent } from './jobs';

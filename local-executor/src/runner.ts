@@ -1,9 +1,9 @@
-// The local executor's end of the executor protocol (`@baox/erp-executor/wire`), the counterpart of the extension's
+// The local executor's end of the executor protocol (`@baox/erp-executor/wire`), the counterpart of the 本地执行器's
 // `erp-runner.ts`: `erp.fill` and `erp.reconcile` arrive as channel requests, each runs in a headless Chromium of its
 // own, and every executor event goes back through the job's link (`@baox/channel/job-link`), so `attempt_started`
 // still waits for its durable ack and a dropped channel is resumed inside the reconnection window.
 //
-// What differs from the extension is the page's lifetime. Nobody sees this browser, so the job signs in with the
+// What differs from the 本地执行器 is the page's lifetime. Nobody sees this browser, so the job signs in with the
 // employee's ERP 凭据 and, whatever happens, signs out and closes the browser at the end (ADR-0033). An unsaved form
 // therefore never outlives its job: 对账 (reconcile) finds a fresh console, which is the truth about that form.
 //

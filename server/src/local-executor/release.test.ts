@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 async function pairedToken(): Promise<string> {
-  const issued = PairingViewSchema.parse(await (await alice.post('/api/extension/pairing/code', {})).json());
+  const issued = PairingViewSchema.parse(await (await alice.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },

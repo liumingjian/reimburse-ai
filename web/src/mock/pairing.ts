@@ -26,9 +26,9 @@ const unpaired = (activeOrigin: string): PairingView => ({ activeOrigin, status:
 const paired = (activeOrigin: string): PairingView => ({ activeOrigin, status: 'paired', browser: EXECUTOR_BROWSER, pairedAt: PAIRED_AT, lastConnectedAt: LAST_CONNECTED_AT, codeExpiresAt: null, connected: true, version: CLIENT_VERSION, code: null });
 
 export type PairingFlow = {
-  getExtensionPairing(): Promise<PairingView>;
-  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
-  revokeExtensionPairing(): Promise<PairingChangeOutcome>;
+  getPairing(): Promise<PairingView>;
+  createPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
+  revokePairing(): Promise<PairingChangeOutcome>;
 };
 
 export function createPairingFlow(options: MockOptions): { flow: PairingFlow; localExecutor: LocalExecutorPort; paired: () => boolean } {
@@ -52,9 +52,9 @@ export function createPairingFlow(options: MockOptions): { flow: PairingFlow; lo
   };
 
   const flow: PairingFlow = {
-    getExtensionPairing: async () => current,
+    getPairing: async () => current,
     // The code appears only in the answer that issued it; no later read returns it, as on the server.
-    async createExtensionPairingCode(input) {
+    async createPairingCode(input) {
       cancelInstall();
       const codeExpiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
       current = { activeOrigin, status: 'waiting', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt, connected: false, version: null, code: null };
@@ -66,7 +66,7 @@ export function createPairingFlow(options: MockOptions): { flow: PairingFlow; lo
       }
       return { ok: true, pairing: { ...current, code: MOCK_CODE } };
     },
-    async revokeExtensionPairing() {
+    async revokePairing() {
       cancelInstall();
       current = unpaired(activeOrigin);
       return { ok: true, pairing: current };

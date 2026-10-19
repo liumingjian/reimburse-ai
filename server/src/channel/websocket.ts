@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream';
 import { CHANNEL_PATH } from '@baox/contract';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { admitsHost, type PublicOrigin } from '../public-origin';
-import type { ExtensionChannel } from './channel';
+import type { ClientChannel } from './channel';
 
 // Structural, so both what `@hono/node-server` returns and a bare `http.Server` fit without a cast.
 export type UpgradeHost = {
@@ -19,10 +19,11 @@ export type UpgradeHost = {
 // predicate (`admitsHost`, `public-origin.ts`) is applied here, before the handshake: a name rebound onto this
 // machine gets a 403 at this door exactly as it does at the other one (story 32).
 //
-// There is deliberately no Origin check. The extension connects from its own `chrome-extension://…` origin, which the
-// exact-origin check could never admit — the same reasoning as the 配对码 redemption in `app.ts` — and the channel
-// reads no cookie: the 配对凭据 in the first frame (`channel.ts`) is its whole authority.
-export function attachExtensionChannel(server: UpgradeHost, channel: ExtensionChannel, publicOrigin: PublicOrigin | null): () => void {
+// There is deliberately no Origin check. The 本地执行器 is no page of the app's origin (it sends whatever Origin its
+// runtime sends, or none), which the exact-origin check could never admit — the same reasoning as the 配对码
+// redemption in `app.ts` — and the channel reads no cookie: the 配对凭据 in the first frame (`channel.ts`) is its
+// whole authority.
+export function attachClientChannel(server: UpgradeHost, channel: ClientChannel, publicOrigin: PublicOrigin | null): () => void {
   const sockets = new WebSocketServer({ noServer: true });
 
   const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {

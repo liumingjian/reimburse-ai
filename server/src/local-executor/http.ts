@@ -6,8 +6,8 @@ import {
 } from '@baox/contract';
 import type { Context, Hono } from 'hono';
 import type { AppEnv } from '../accounts/http';
-import { bearer } from '../extension/http';
-import type { PairingService } from '../extension/pairing';
+import { bearer } from '../channel/http';
+import type { PairingService } from '../channel/pairing';
 import { activeOrigin, type PublicOrigin } from '../public-origin';
 import { expiredScript, macInstallScript, macUninstallScript, systemOfAgent, unavailableScript, windowsInstallScript, windowsUninstallScript } from './install-script';
 import { LocalExecutorUnavailable, releaseOf, runtimeOf, type LocalExecutorDist } from './release';

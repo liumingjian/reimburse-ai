@@ -8,7 +8,7 @@ import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { drafted, uncertainDraft, uncertainSave } from './erp/testing/fake-executor';
 import type { FillExecutor } from './erp/fill-jobs';
 import { draftMarkOf } from './erp/fill-plan';
-import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
+import { fakeLocalExecutor, type FakeLocalExecutor, type FillRunner } from './erp/testing/fake-local-executor';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
@@ -23,14 +23,14 @@ let server: ScenarioServer;
 let alice: TestClient;
 
 async function start(key: Buffer | null = randomBytes(32)) {
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: key });
+  server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: key });
   alice = await server.signIn('alice');
 }
 beforeEach(() => start());
 afterEach(() => server.close());
 
 async function pair(owner: TestClient): Promise<string> {
-  const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
+  const issued = PairingViewSchema.parse(await (await owner.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
@@ -41,8 +41,8 @@ async function pair(owner: TestClient): Promise<string> {
 
 const trials: TrySignInRequest[] = [];
 beforeEach(() => { trials.length = 0; });
-async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner): Promise<FakeExtension> {
-  const extension = fakeExtension(server.app.extensionChannel, await pair(alice), {
+async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner): Promise<FakeLocalExecutor> {
+  const extension = fakeLocalExecutor(server.app.clientChannel, await pair(alice), {
     trySignIn: async (request) => { trials.push(request); return answer; },
     ...(fill ? { fill } : {}),
   });

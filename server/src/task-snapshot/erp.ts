@@ -6,7 +6,7 @@ import { erpEntryOf } from '@baox/erp-executor/probe';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
 import type { DraftOutcome, ErpRecord, ReconcileJudgement } from '../erp/fill-state';
-import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from '../extension/channel';
+import { EXECUTOR_CONNECTION_LOST_CODE, EXECUTOR_OFFLINE_CODE } from '../channel/channel';
 import { erpActionsOf, reconcileActionsOf, reconcileReading, type ErpPhase } from '../task-policy';
 
 // Executor events are only interpreted here. The client receives the resulting stage and never infers progress from
@@ -115,7 +115,7 @@ function currentStageOf(steps: readonly ErpStep[]): Erp['currentStage'] {
   return complete ? complete.key as ErpProgressStage : null;
 }
 
-const CONNECTION_WAIT_CODES = new Set([EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE, 'extension_reconnect_expired']);
+const CONNECTION_WAIT_CODES = new Set([EXECUTOR_OFFLINE_CODE, EXECUTOR_CONNECTION_LOST_CODE, 'executor_reconnect_expired']);
 
 function externalWaitOf(record: ErpRecord): Erp['externalWait'] {
   if (record.facts?.phase === 'running') return 'erp_response';

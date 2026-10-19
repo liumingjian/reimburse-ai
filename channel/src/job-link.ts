@@ -10,10 +10,10 @@ import {
 // reconnect restores the channel, not the page).
 //
 // Everything the executor does goes through here: its events (`channel`) and its commands to the page (`adopt`). So
-// when either the socket or the `chrome.debugger` goes, this is where the job stops dead, and where it resumes:
+// when either the socket or the page goes, this is where the job stops dead, and where it resumes:
 //
 //   1. On a detach, `erp.detached {jobId}` goes first. On a closed channel nothing is sent: the server saw it go.
-//   2. Once the channel is `ready` again, the job's own tab is re-attached if the debugger lost it (never a new tab),
+//   2. Once the channel is `ready` again, the job's own tab is re-attached if it was lost (never a new tab),
 //      the page is re-observed read-only, and `erp.resume {jobId, last, now}` goes out. Until that answers `ok`, the
 //      executor gets neither an event out nor a command in. The server would refuse such an event anyway
 //      (`resume_required`); this does not rely on it.
@@ -63,7 +63,7 @@ export type JobLink = {
 };
 
 class JobStopped extends Error {
-  readonly code = 'extension_job_stopped';
+  readonly code = 'executor_job_stopped';
   constructor(message = '这次去报销已经停下，没有再动报销系统页面。') {
     super(message);
     this.name = 'JobStopped';
@@ -77,10 +77,10 @@ const cutOffByBreak = (error: unknown) => codeOf(error) === 'channel_closed' || 
 /** The job's own end when a detach cut off a command under way (exported for the real-browser suite's assertion). */
 export const DETACHED_MID_COMMAND = {
   code: 'debugger_detached_mid_command',
-  message: '浏览器扩展对报销系统页面的控制在一步操作进行到一半时断开了，这一步有没有生效看不出来，所以没有继续。',
+  message: '本地执行器对报销系统页面的控制在一步操作进行到一半时断开了，这一步有没有生效看不出来，所以没有继续。',
 } as const;
 const READBACK_VERDICT_LOST = { code: 'readback_verdict_lost', message: '连接恢复了，但中断前送去核对的页面读数没有拿到结论，所以没有继续。' } as const;
-const RECORD_MISMATCH = { code: 'resume_record_mismatch', message: '连接恢复了，但应用记下的进展和浏览器扩展发出的对不上，所以没有继续。' } as const;
+const RECORD_MISMATCH = { code: 'resume_record_mismatch', message: '连接恢复了，但应用记下的进展和本地执行器发出的对不上，所以没有继续。' } as const;
 
 export function createJobLink({ jobId, erpOrigin, request, channel, reattach, onInterrupted, windowMs = RECONNECT_WINDOW_MS }: JobLinkPorts): JobLink {
   let state: 'live' | 'interrupted' | 'stopped' = 'live';

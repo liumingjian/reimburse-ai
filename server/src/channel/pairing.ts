@@ -5,18 +5,17 @@ import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
 
 // 配对 (pairing, ADR-0019, ADR-0037): one baox 本地执行器 bound to one 应用账号 (app account). The settings page issues
-// a 配对码 (pairing code); the 本地执行器 exchanges it once for a long-lived token. "The extension" below is the
-// paired client, as it was when this was written; the 浏览器扩展 itself is gone.
+// a 配对码 (pairing code); the 本地执行器 exchanges it once for a long-lived token.
 //
-// The token is held the way a session token is: the extension keeps the random string, the database keeps only its
-// sha256, so a copy of the database never hands anyone a working extension. The 配对码 is stored the same way, and
+// The token is held the way a session token is: the 本地执行器 keeps the random string, the database keeps only its
+// sha256, so a copy of the database never hands anyone a working 本地执行器. The 配对码 is stored the same way, and
 // only for the ten minutes it is good for.
 //
 // One row per 应用账号 (the primary key), so "one active pairing per account" is the table's own shape: issuing a new
-// 配对码 replaces the row, which is what makes the previously paired extension's token stop resolving. Revoking
+// 配对码 replaces the row, which is what makes the previously paired 本地执行器's token stop resolving. Revoking
 // deletes the row and touches no session; a logout deletes a session and touches no row. Both also close the old
-// extension's live socket (`live.disconnect`): the token is checked only when a socket opens, so a row deleted under
-// an open socket would otherwise leave that extension receiving this account's next 去报销.
+// 本地执行器's live socket (`live.disconnect`): the token is checked only when a socket opens, so a row deleted under
+// an open socket would otherwise leave that 本地执行器 receiving this account's next 去报销.
 //
 // What is stored is what the settings page can still read after a restart: which browser, when it paired, when it
 // last spoke, which version it reported. Whether it is connected *now* is not storable — it is a live socket
@@ -36,7 +35,7 @@ function generatePairingCode(): string {
 // A 配对码 is read aloud or copied with stray spaces and dashes, and its alphabet has no lowercase letters.
 const normalise = (code: string) => code.replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
 
-// Wrong, expired and already-used codes get the same refusal: which one it was is not the extension's business, and
+// Wrong, expired and already-used codes get the same refusal: which one it was is not the 本地执行器's business, and
 // telling it apart would confirm a guessed code to whoever guessed it.
 const refuseCode = () => new AuthRefusal(401, 'pairing_code_invalid', PAIRING_ERRORS.codeInvalid);
 
@@ -48,7 +47,7 @@ export async function hasPairing(db: Db, accountId: string): Promise<boolean> {
   return !!row?.token_sha256;
 }
 
-// What the pairing service needs of the live channel (`channel.ts`): whether an account's extension is connected, and
+// What the pairing service needs of the live channel (`channel.ts`): whether an account's 本地执行器 is connected, and
 // closing its socket when the pairing goes. It defaults to "nothing is connected" so a server wired without a channel —
 // every test that only exercises pairing — still answers the contract's shape.
 export type LivePairings = { connected(accountId: string): boolean; disconnect(accountId: string): void };
@@ -76,7 +75,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     const row = await db.selectFrom('pairing').selectAll().where('account_id', '=', accountId).executeTakeFirst();
     if (!row) return NOT_PAIRED;
     if (!row.token_sha256 && (row.code_expires_at === null || Date.parse(row.code_expires_at) <= clock().getTime())) {
-      // Nobody used it in time; drop it rather than leave the page saying an extension is expected.
+      // Nobody used it in time; drop it rather than leave the page saying a 本地执行器 is expected.
       await optionalWrite(() => db.deleteFrom('pairing').where('account_id', '=', accountId).execute());
       return NOT_PAIRED;
     }
@@ -95,8 +94,8 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
   return {
     view,
 
-    // Issuing is also how a pairing is replaced: the previous row goes first, so an extension paired a moment ago
-    // stops being this account's extension before the new 配对码 is even readable.
+    // Issuing is also how a pairing is replaced: the previous row goes first, so a 本地执行器 paired a moment ago
+    // stops being this account's 本地执行器 before the new 配对码 is even readable.
     // `system`: the one-command install's choice (#425), which makes the code fetch that system's install script.
     async issue(accountId: string, system: InstallSystem | null = null): Promise<PairingState> {
       const code = generatePairingCode();
@@ -137,7 +136,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       return system.success ? { accountId: row.account_id, system: system.data } : null;
     },
 
-    // 撤销配对 (revoke the pairing): the extension's token stops resolving and its socket closes, at once. The
+    // 撤销配对 (revoke the pairing): the 本地执行器's token stops resolving and its socket closes, at once. The
     // account's web session is untouched.
     async revoke(accountId: string): Promise<PairingState> {
       await db.deleteFrom('pairing').where('account_id', '=', accountId).execute();
@@ -145,8 +144,8 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       return NOT_PAIRED;
     },
 
-    // 撤销配对 from the extension's own popup, authorised by the token it holds. It works for a deactivated account
-    // too, whose token no longer resolves in `lookup`: the extension is giving the pairing up, not using it. False
+    // 撤销配对 from the 本地执行器 itself, authorised by the token it holds. It works for a deactivated account
+    // too, whose token no longer resolves in `lookup`: the 本地执行器 is giving the pairing up, not using it. False
     // when the token names no pairing (already revoked or replaced).
     async revokeToken(token: string | undefined): Promise<boolean> {
       if (!token) return false;
@@ -158,7 +157,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     },
 
     // Single use: the update matches only while the code is still on the row and clears it in the same statement, so
-    // two extensions racing the same 配对码 cannot both walk away with a token.
+    // two 本地执行器s racing the same 配对码 cannot both walk away with a token.
     async redeem(code: string, browser: string | null, version: string | null): Promise<{ token: string; accountId: string }> {
       const now = clock();
       const codeSha = sha256(normalise(code));
@@ -176,10 +175,10 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       return { token, accountId: row.account_id };
     },
 
-    // The 应用账号 an extension acts for, or null when the pairing is gone (revoked, replaced) or the account can no
-    // longer act at all. A deactivated or unapproved account loses its extension the way it loses its sessions.
+    // The 应用账号 a 本地执行器 acts for, or null when the pairing is gone (revoked, replaced) or the account can no
+    // longer act at all. A deactivated or unapproved account loses its 本地执行器 the way it loses its sessions.
     // Every answer marks the connection: the settings page has no other sign that the pairing is alive. The username is
-    // how the extension names the account when asking before it switches to another one (#292).
+    // how the 本地执行器 names the account when asking before it switches to another one (#292).
     async lookup(token: string | undefined): Promise<{ accountId: string; username: string } | null> {
       if (!token) return null;
       const tokenSha = sha256(token);
@@ -194,7 +193,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
       return { accountId: row.account_id, username: row.username ?? row.account_id };
     },
 
-    // The version an extension reports when it opens its channel (ADR-0021). An extension is replaced by unpacking a
+    // The version a 本地执行器 reports when it opens its channel (ADR-0021). A 本地执行器 is replaced by unpacking a
     // new directory over the old one, so the version on the row is only ever as fresh as the last connect.
     async noteConnection(accountId: string, version: string | null): Promise<void> {
       await optionalWrite(() => db.updateTable('pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute());

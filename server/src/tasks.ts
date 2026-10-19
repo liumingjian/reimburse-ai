@@ -50,7 +50,7 @@ import type { ErpConfig } from './erp/config';
 import { buildFillJob, draftMarkOf, planOfJob, type FrozenJob } from './erp/fill-plan';
 import { JOB_DEADLINE_CODE, newJobId, NO_RESULT_CODE, type FillRun, type FillTrigger } from './erp/fill-jobs';
 import { RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE } from './erp/remote-executor';
-import { EXTENSION_CONNECTION_LOST_CODE, EXTENSION_OFFLINE_CODE } from './extension/channel';
+import { EXECUTOR_CONNECTION_LOST_CODE, EXECUTOR_OFFLINE_CODE } from './channel/channel';
 import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
 import { loadErp, type ErpRecord } from './erp/fill-state';
@@ -140,7 +140,7 @@ async function draftLookupOf(tx: Db, taskId: string, fillJobId: string, mark: st
 // 自动重新去报销 (ADR-0034): at most this many in a row, then the task waits for the employee as before.
 export const AUTO_RERUN_LIMIT = 2;
 // Results the server, not the executor, gave the job: the run may still hold the page, so nothing starts over on it.
-const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE, EXTENSION_OFFLINE_CODE, EXTENSION_CONNECTION_LOST_CODE]);
+const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE, EXECUTOR_OFFLINE_CODE, EXECUTOR_CONNECTION_LOST_CODE]);
 
 export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 

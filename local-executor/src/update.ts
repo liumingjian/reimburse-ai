@@ -72,7 +72,7 @@ export async function checkForUpdate({ origin, token, programPath, running, runt
     if (!program.ok) return { kind: 'failed', reason: `应用回答 ${program.status}` };
     const bytes = new Uint8Array(await program.arrayBuffer());
     if (sha256(bytes) !== release.program) return { kind: 'failed', reason: '下载到的程序和应用说的不一致' };
-    // Still a .mjs: Node picks the module system by the extension, and the self-check must load it as it will run.
+    // Still a .mjs: Node picks the module system by the 本地执行器, and the self-check must load it as it will run.
     const next = programPath.replace(/\.mjs$/, '') + '.next.mjs';
     writeFileSync(next, bytes);
     if (!selfCheck(next, under)) {

@@ -1,19 +1,18 @@
-// The executor protocol carried over the 浏览器扩展 (browser extension) channel (ADR-0016, ADR-0020).
+// The executor protocol carried over the 本地执行器 (local executor) channel (ADR-0016, ADR-0020).
 //
 // The channel's envelope (`@baox/contract`, `ChannelMessageSchema`) already correlates a `request` with its
 // `response`, in both directions. This module gives three request methods their meaning and nothing else, so the
-// server's remote executor and the extension's runner speak one vocabulary:
+// server's remote executor and the 本地执行器's runner speak one vocabulary:
 //
-//   server -> extension  `erp.fill`       {plan, trigger}   answered with the job's `result` event
-//   server -> extension  `erp.reconcile`  {plan}            answered with the job's `result` event
+//   server -> 本地执行器  `erp.fill`       {plan, trigger}   answered with the job's `result` event
+//   server -> 本地执行器  `erp.reconcile`  {plan}            answered with the job's `result` event
 //   server -> executor   `erp.trySignIn`  {erpOrigin, credentials}  试登录: answered with a `TrySignInAnswer`
-//   extension -> server  `erp.event`      {jobId, event}    answered with what `ExecutorChannel.emit` resolves to
-//   extension -> server  `erp.detached`   {jobId}           the `chrome.debugger` lost the page: interrupts the job
-//   extension -> server  `erp.resume`     {jobId, last, now}  answered with a `ResumeVerdict`
+//   本地执行器 -> server  `erp.event`      {jobId, event}    answered with what `ExecutorChannel.emit` resolves to
+//   本地执行器 -> server  `erp.detached`   {jobId}           the job lost its page: interrupts the job
+//   本地执行器 -> server  `erp.resume`     {jobId, last, now}  answered with a `ResumeVerdict`
 //
 // A local executor (ADR-0033) signs in itself, so its `erp.fill` and `erp.reconcile` also carry the employee's ERP 凭据.
-// They travel with the request, never in the plan: the plan is stored with the job, the 凭据 must not be. A browser
-// extension is never sent any; it works in the employee's own logged-in ERP.
+// They travel with the request, never in the plan: the plan is stored with the job, the 凭据 must not be.
 //
 // Every executor event is a request, not a one-way `event`: the executor awaits each emit, and a reply per event keeps
 // the job log in order and lets a failed write reach the executor. Two replies carry weight — the durable-attempt ack
@@ -29,7 +28,7 @@ import {
 export const EXECUTOR_METHODS = { fill: 'erp.fill', reconcile: 'erp.reconcile', trySignIn: 'erp.trySignIn', event: 'erp.event', detached: 'erp.detached', resume: 'erp.resume' } as const;
 
 // Why the server refused a job request. `unknown_job` reads the same for a job that ended, one that never existed and
-// another account's; the other two tell an interrupted job's extension what it must do next.
+// another account's; the other two tell an interrupted job's 本地执行器 what it must do next.
 export const JOB_REFUSALS = { unknownJob: 'unknown_job', resumeRequired: 'resume_required', notInterrupted: 'job_not_interrupted' } as const;
 
 // What started a fill run (the server's `FillTrigger`). `rerun` is an 自动重新去报销 (ADR-0034): it runs like
@@ -79,7 +78,7 @@ export function resultOf(payload: unknown): ResultEvent {
   return event;
 }
 
-/** Sends one request over the channel and resolves with the other side's answer (the extension client's `request`). */
+/** Sends one request over the channel and resolves with the other side's answer (the 本地执行器 client's `request`). */
 export type WireRequest = (method: string, payload: unknown) => Promise<unknown>;
 
 /** The executor's end of the wire: an `ExecutorChannel` whose every emit is one `erp.event` request for `jobId`. */
@@ -93,16 +92,16 @@ export function wireChannel(jobId: string, request: WireRequest): ExecutorChanne
   return { emit: emit as ExecutorChannel['emit'] };
 }
 
-// Reconnection (ADR-0020: a reconnect restores the channel, not the page). A job is *interrupted* when its extension's
-// socket goes or its `chrome.debugger` detaches (`erp.detached`) — one event, one rule. For this long afterwards the
-// extension may resume it by `jobId`; past it, the server ends the job itself.
+// Reconnection (ADR-0020: a reconnect restores the channel, not the page). A job is *interrupted* when its 本地执行器's
+// socket goes or it loses its page (`erp.detached`) — one event, one rule. For this long afterwards the
+// 本地执行器 may resume it by `jobId`; past it, the server ends the job itself.
 export const RECONNECT_WINDOW_MS = 120_000;
 
-// The 发票助手 (invoice assistant) as the extension finds it. It is one-shot — once closed it never reopens — so its
+// The 发票助手 (invoice assistant) as the 本地执行器 finds it. It is one-shot — once closed it never reopens — so its
 // state is part of what "the same page" means, and `unrecognised` is never a page anyone may carry on from.
 export const ASSISTANT_STATES = ['closed', 'open', 'unrecognised'] as const;
 
-/** What the extension sees of the ERP page, read without touching it. */
+/** What the 本地执行器 sees of the ERP page, read without touching it. */
 export const PageObservationSchema = z.object({
   // Who is logged in; null when nobody is, or it could not be read.
   erpAccount: ErpAccountSchema.nullable(),
@@ -113,7 +112,7 @@ export const PageObservationSchema = z.object({
 export type PageObservation = z.infer<typeof PageObservationSchema>;
 
 /**
- * `erp.resume`: sent once the extension is back (a fresh `hello` → `ready`, or the debugger re-attached) and has
+ * `erp.resume`: sent once the 本地执行器 is back (a fresh `hello` → `ready`, or the page re-attached) and has
  * re-observed the page, before it does anything else. `last` is the page as it saw it right before the interruption,
  * `now` as it sees it after; the server judges the two against each other and against the job's record.
  */
@@ -121,11 +120,11 @@ export const ResumeRequestSchema = z.object({ jobId: z.string().min(1), last: Pa
 export type ResumeRequest = z.infer<typeof ResumeRequestSchema>;
 
 /**
- * The server's answer to `erp.resume`. `ok: true` carries how many of the job's events are on record: the extension
+ * The server's answer to `erp.resume`. `ok: true` carries how many of the job's events are on record: the 本地执行器
  * sends none of those again (nothing is ever replayed) and carries on from the next. An `attempt_started` among them
  * counts as acknowledged, because durable is what the acknowledgement means; a `readback` among them lost its
  * verdict, so the executor must not act on it and ends the job instead. `ok: false` means the page is not the one the
- * job left: the server has already ended the job, and the extension stops without touching the page.
+ * job left: the server has already ended the job, and the 本地执行器 stops without touching the page.
  */
 export const ResumeVerdictSchema = z.union([
   z.object({ ok: z.literal(true), recorded: z.number().int().nonnegative() }),

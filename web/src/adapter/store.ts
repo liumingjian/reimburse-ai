@@ -327,7 +327,7 @@ export class AppStore {
     const previous = this.state.pairing;
     this.setState({ pairing: { status: 'loading', data: previous.data, error: null } });
     try {
-      const raw = await this.adapter.getExtensionPairing();
+      const raw = await this.adapter.getPairing();
       const data = this.options.validate ? PairingViewSchema.parse(raw) : raw;
       this.setState({ pairing: { status: 'ready', data, error: null } });
     } catch (error) {

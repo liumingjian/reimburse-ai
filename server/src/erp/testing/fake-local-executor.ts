@@ -1,40 +1,40 @@
-// A fake 浏览器扩展 (browser extension) client for server tests (spec #246 Testing Decisions, seam 2). It speaks the
+// A fake 本地执行器 (local executor) client for server tests (spec #246 Testing Decisions, seam 2). It speaks the
 // channel's real envelope to the app's real channel — `hello`, correlated `request`/`response` in both directions —
 // without a socket or a port, and runs whatever executor a test hands it on its side of the wire, exactly where the
-// extension's `chrome.debugger` executor (#255) will run: the plan arrives as `erp.fill` / `erp.reconcile`, and every
-// event goes back through `wireChannel`, the mapping the real extension uses.
+// 本地执行器's runner (`local-executor/src/runner.ts`) runs it: the plan arrives as `erp.fill` / `erp.reconcile`, and
+// every event goes back through `wireChannel`, the mapping the real 本地执行器 uses.
 //
-// Reconnection (ADR-0020) is driven the way the real extension must drive it: a disconnected fake is gone for good,
-// and the extension coming back is a fresh fake on the same credential that says `hello` again, then `resume`s the job
-// by id with what it re-observed, and only then carries on over `channel(jobId)`. A `chrome.debugger` detach is
+// Reconnection (ADR-0020) is driven the way the real 本地执行器 must drive it: a disconnected fake is gone for good,
+// and the 本地执行器 coming back is a fresh fake on the same credential that says `hello` again, then `resume`s the job
+// by id with what it re-observed, and only then carries on over `channel(jobId)`. A lost page (`erp.detached`) is
 // `detached(jobId)` on a socket that stays up.
 
 import { CLIENT_VERSION, type ChannelMessage } from '@baox/contract';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, ReconcilePlan, ResultEvent } from '@baox/erp-executor/protocol';
 import { EXECUTOR_METHODS, FillRequestSchema, JobEventRequestSchema, ReconcileRequestSchema, ResumeVerdictSchema, TrySignInRequestSchema, wireChannel, type FillRequest, type PageObservation, type ResumeVerdict, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
-import type { ExtensionChannel } from '../../extension/channel';
+import type { ClientChannel } from '../../channel/channel';
 
 export type FillRunner = (plan: FillPlan, channel: ExecutorChannel, trigger: FillRequest['trigger']) => Promise<ResultEvent>;
 export type ReconcileRunner = (plan: ReconcilePlan, channel: ExecutorChannel) => Promise<ResultEvent>;
 // A baox 本地执行器's 试登录 (`erp.trySignIn`).
 export type TrySignInRunner = (request: TrySignInRequest) => Promise<TrySignInAnswer>;
 
-export type FakeExtension = {
+export type FakeLocalExecutor = {
   // Sends `hello` and resolves once the server answered `ready`.
   connect(): Promise<void>;
-  // The socket goes: nothing further is sent either way, and every request of this extension still waiting fails.
+  // The socket goes: nothing further is sent either way, and every request of this 本地执行器 still waiting fails.
   disconnect(): void;
-  // Every request the server made of this extension, in order.
+  // Every request the server made of this 本地执行器, in order.
   asked(): Array<{ method: string; payload: unknown }>;
-  // Every executor event this extension sent up, in order.
+  // Every executor event this 本地执行器 sent up, in order.
   sent(): ExecutorEvent[];
-  // A raw request to the server, as the extension would make one.
+  // A raw request to the server, as the 本地执行器 would make one.
   request(method: string, payload: unknown): Promise<unknown>;
-  // The debugger lost the job's page (`erp.detached`); the socket stays up.
+  // The job's page was lost (`erp.detached`); the socket stays up.
   detached(jobId: string): Promise<unknown>;
   // `erp.resume`: the page as it was right before the interruption, and as it is now.
   resume(jobId: string, last: PageObservation, now: PageObservation): Promise<ResumeVerdict>;
-  // The job's event stream from this extension, for carrying on after a resume.
+  // The job's event stream from this 本地执行器, for carrying on after a resume.
   channel(jobId: string): ExecutorChannel;
 };
 
@@ -45,7 +45,7 @@ class FakeRequestFailed extends Error {
   }
 }
 
-export function fakeExtension(channel: ExtensionChannel, token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner; trySignIn?: TrySignInRunner }): FakeExtension {
+export function fakeLocalExecutor(channel: ClientChannel, token: string, runners: { fill?: FillRunner; reconcile?: ReconcileRunner; trySignIn?: TrySignInRunner }): FakeLocalExecutor {
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const asked: Array<{ method: string; payload: unknown }> = [];
   const sent: ExecutorEvent[] = [];
@@ -102,7 +102,7 @@ export function fakeExtension(channel: ExtensionChannel, token: string, runners:
       const { plan } = ReconcileRequestSchema.parse(payload);
       return runners.reconcile(plan, wireChannel(plan.jobId, request));
     }
-    throw new Error(`this fake extension does not run ${method}`);
+    throw new Error(`this fake 本地执行器 does not run ${method}`);
   }
 
   function request(method: string, payload: unknown): Promise<unknown> {

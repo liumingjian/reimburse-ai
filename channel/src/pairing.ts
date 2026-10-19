@@ -1,13 +1,13 @@
 import { PAIRING_ERRORS, PAIRING_PATH, CLIENT_VERSION, PairingIdentitySchema, PairingFailureSchema, PairingTokenSchema } from '@baox/contract';
 import { APP_UNREACHABLE } from './messages';
 
-// Redeeming the 配对码 (pairing code) the employee typed into the popup, and 撤销配对 (revoking the pairing) from it.
-// Besides fetching invoice originals (`blobs.ts`), these are the only times the extension talks HTTP to the app rather
+// Redeeming the 配对码 (pairing code) the install command or the 设置页 hands over, and 撤销配对 (revoking the pairing) by the 本地执行器 itself.
+// Besides fetching invoice originals (`blobs.ts`), these are the only times the 本地执行器 talks HTTP to the app rather
 // than over the channel. Redeeming is the only thing it ever sends without a credential: the 配对码 is the credential,
 // once.
 //
-// The address is not a parameter of the conversation. It is baked into the build (`origin.ts`) and the popup has no
-// field for it, so no one can be talked into pointing their extension at someone else's server.
+// The address is not a parameter of the conversation: the install command fixes it, so no one can be talked into
+// pointing their 本地执行器 at someone else's server.
 
 export type PairingOutcome = { ok: true; token: string; accountId: string } | { ok: false; code: string; message: string };
 
@@ -16,7 +16,7 @@ export type RedeemOptions = {
   code: string;
   browser?: string | null;
   version?: string;
-  // Injected so the test does not need a network; the service worker passes the global.
+  // Injected so the test does not need a network; the 本地执行器 passes the global.
   fetchImpl?: typeof fetch;
 };
 
@@ -36,7 +36,7 @@ export async function redeemPairingCode({ origin, code, browser = null, version 
   const body: unknown = await response.json().catch(() => null);
   if (response.ok) {
     const parsed = PairingTokenSchema.safeParse(body);
-    if (!parsed.success) return { ok: false, code: 'invalid_response', message: '应用回的内容看不懂，请更新扩展后再试。' };
+    if (!parsed.success) return { ok: false, code: 'invalid_response', message: '应用回的内容看不懂，请在设置页生成安装命令，重新安装后再试。' };
     return { ok: true, token: parsed.data.token, accountId: parsed.data.accountId };
   }
   // A refusal the server wrote is shown as the server wrote it: the upgrade instructions for a version that is too
@@ -71,7 +71,7 @@ export type CheckOptions = { origin: string; token: string; fetchImpl?: typeof f
  * Whether the app still honours `token`: 'not_paired' when it answers 401 (revoked from the settings page, replaced by
  * a newer 配对码, or the account deactivated), 'unknown' when it cannot be reached within `timeoutMs` or answers
  * anything else, including a 200 that is not an identity. The stored pairing alone cannot tell a revoked token from a
- * live one; this is how the extension avoids announcing a pairing the app no longer has. The app marks every answer
+ * live one; this is how the 本地执行器 avoids announcing a pairing the app no longer has. The app marks every answer
  * as a connection (最近连接 (last connected) on the settings page), so ask only when nothing else settles it.
  */
 export async function checkPairing({ origin, token, fetchImpl = fetch, timeoutMs = 800 }: CheckOptions): Promise<PairingCheck> {

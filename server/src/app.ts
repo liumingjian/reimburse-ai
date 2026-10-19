@@ -22,11 +22,11 @@ import { hasUnfinishedErpJobs, recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
-import { createExtensionChannel, EXTENSION_OFFLINE_CODE, realTimer, type ExtensionChannel, type Schedule } from './extension/channel';
+import { createClientChannel, EXECUTOR_OFFLINE_CODE, realTimer, type ClientChannel, type Schedule } from './channel/channel';
 import { mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
 import type { LocalExecutorDist } from './local-executor/release';
-import { bearer, mountExtensionPairRoutes, mountPairingRoutes } from './extension/http';
-import { createPairingService, hasPairing } from './extension/pairing';
+import { bearer, mountClientPairRoutes, mountPairingRoutes } from './channel/http';
+import { createPairingService, hasPairing } from './channel/pairing';
 import { createLegacyImport, LegacyImportRefusal } from './legacy/import';
 import { admitsHost, admitsOrigin, type PublicOrigin } from './public-origin';
 import { createMaintenanceGate, MAINTENANCE_WRITE_CODE, MAINTENANCE_WRITE_MESSAGE, type MaintenanceGate } from './maintenance';
@@ -69,7 +69,7 @@ export type AppOptions = {
   // The built 本地执行器 program and the Node runtimes fetched at deploy (`local-executor/release.ts`, ADR-0035). null
   // (default) answers its install script, runtime downloads and its executors' update checks as unavailable.
   localExecutor?: LocalExecutorDist | null;
-  // The extension channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
+  // The client channel's timers: its hello deadline and a job's reconnection window (ADR-0020). Tests fire them by
   // hand.
   schedule?: Schedule;
   // The key the hosted ERP 凭据 are sealed with (`erp/credential-vault.ts`). null (default) disables them: nothing can
@@ -81,9 +81,9 @@ export type AppOptions = {
 };
 
 // `close` stops the background jobs (after the material in flight) and releases the parse worker; call it before
-// closing the database. `extensionChannel` is what `server.ts` hands an upgraded socket to; the app itself never
+// closing the database. `clientChannel` is what `server.ts` hands an upgraded socket to; the app itself never
 // opens one.
-export type App = Hono<AppEnv> & { close: () => Promise<void>; extensionChannel: ExtensionChannel; maintenance: MaintenanceGate; ready: Promise<void> };
+export type App = Hono<AppEnv> & { close: () => Promise<void>; clientChannel: ClientChannel; maintenance: MaintenanceGate; ready: Promise<void> };
 
 type SnapshotListener = (snapshot: TaskSnapshot) => void;
 
@@ -105,17 +105,17 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   };
   // The 去报销 jobs write their facts through the owner's task service (one revision per executor event).
   const record: RecordFacts = (accountId, taskId, write) => serviceFor(accountId).erpRecord(taskId, write);
-  // The extension's executor answers through the channel built further down, so it reaches the channel through the
+  // The 本地执行器's executor answers through the channel built further down, so it reaches the channel through the
   // binding rather than the value.
   const remote = createRemoteExecutor({
     db, schedule,
-    extension: { request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload) },
+    extension: { request: (accountId, method, payload) => clientChannel.request(accountId, method, payload) },
   });
   // ERP 凭据 (ADR-0033) for a baox 本地执行器: the 试登录 goes to the account's executor over the same channel, and is
   // held back while a job of the account drives ERP, whose session it would knock off.
   const erpCredentials = createErpCredentialService({
     db, clock: now, vault: erpCredentialKey ? createCredentialVault(erpCredentialKey) : null, erpOrigin: erpConfig.origin,
-    request: (accountId, method, payload) => extensionChannel.request(accountId, method, payload),
+    request: (accountId, method, payload) => clientChannel.request(accountId, method, payload),
     erpBusy: (accountId) => erpLease.holder(accountId) !== null,
     acquireWrite: () => maintenance.enter('background'),
   });
@@ -132,9 +132,9 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // it cannot run there, saying which is missing. No pairing at all is the task policy's refusal (`executorPaired`,
   // with the 设置页 as its link); a pairing whose 本地执行器 is not connected, or that has no authorised 凭据 to sign in
   // with, is `executorReady`'s. An injected executor (development, e2e, tests) needs neither. The in-job
-  // `extension_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
+  // `executor_offline` abort stays as the backstop for a socket lost between this check and the dispatch.
   const executorReady = async (tx: Db, accountId: string) => {
-    if (!extensionChannel.connected(accountId)) return { code: EXTENSION_OFFLINE_CODE, message: ERP_ACTION_ERRORS.executorOffline };
+    if (!clientChannel.connected(accountId)) return { code: EXECUTOR_OFFLINE_CODE, message: ERP_ACTION_ERRORS.executorOffline };
     return (await erpCredentialsReady(tx, accountId, !!erpCredentialKey)) ? null : { code: ERP_CREDENTIALS_MISSING_CODE, message: ERP_CREDENTIAL_ERRORS.missing };
   };
   const erpService: ErpServiceOptions = {
@@ -222,12 +222,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   // in Host, and a cross-origin write still carries its Origin. A configured `publicOrigin` turns both checks from
   // "loopback" into "exactly this origin": the reverse proxy in front of Node passes the browser's own Host and
   // Origin through, so the app judges what the browser actually wrote.
-  // The Host predicate is shared with the WebSocket upgrade (`extension/websocket.ts`), which never reaches this
+  // The Host predicate is shared with the WebSocket upgrade (`channel/websocket.ts`), which never reaches this
   // middleware; both live in `public-origin.ts` so the two doors cannot drift apart.
   const forbidden = (c: Context) => failure(c, 403, FORBIDDEN_HOST_CODE, publicOrigin ? NOT_THIS_ADDRESS : NOT_LOCAL);
-  // Redeeming a 配对码, and the extension revoking its own pairing, are the writes that do not come from this app's
-  // page: the extension sends them from its own `chrome-extension://…` origin (ADR-0019), which the exact-origin check
-  // could never admit. That path is exempt because the origin check is a defence for cookie-authorised writes, and
+  // Redeeming a 配对码, and the 本地执行器 revoking its own pairing, are the writes that do not come from this app's
+  // page: the 本地执行器 is no page of this origin (ADR-0019), which the exact-origin check could never admit. That path is exempt because the origin check is a defence for cookie-authorised writes, and
   // it reads no cookie — the single-use 配对码 in the body, or the pairing token in `Authorization`, is its whole
   // authority, and a page on another origin has no way to know either. The Host check still applies to it, so DNS
   // rebinding gains nothing here either.
@@ -283,25 +282,25 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     },
     secureSession,
   );
-  // 扩展配对 (ADR-0019): the extension's own two routes carry no session and are mounted before the gate, because a
+  // 配对 (ADR-0019): the 本地执行器's own two routes carry no session and are mounted before the gate, because a
   // pairing outlives every login. The settings page's routes sit behind it like everything else.
   //
-  // The pairing view reports whether that account's extension is connected, which only the live channel knows, and
+  // The pairing view reports whether that account's 本地执行器 is connected, which only the live channel knows, and
   // the channel resolves tokens through the pairing service: each needs the other, so the pairing service reaches
   // the channel through the binding rather than the value. It also closes the channel's socket when a pairing goes.
   const pairings = createPairingService(
     db,
     now,
-    { connected: (accountId) => extensionChannel.connected(accountId), disconnect: (accountId) => extensionChannel.disconnect(accountId) },
+    { connected: (accountId) => clientChannel.connected(accountId), disconnect: (accountId) => clientChannel.disconnect(accountId) },
     () => maintenance.enter('background'),
   );
-  const extensionChannel = createExtensionChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
-  mountExtensionPairRoutes(app, pairings);
+  const clientChannel = createClientChannel({ pairings, now, schedule, onRequest: remote.answer, onLost: remote.lost });
+  mountClientPairRoutes(app, pairings);
   mountLocalExecutorReleaseRoutes(app, localExecutor, pairings);
   mountLocalExecutorRuntimeRoutes(app, localExecutor);
   mountLocalExecutorInstallRoutes(app, localExecutor, pairings, publicOrigin);
-  // The invoice originals of the 去报销 running in the paired extension (#256, ADR-0022), before the gate for the same
-  // reason: the extension's token is its only credential. Three answers read alike, so nothing can be learnt by
+  // The invoice originals of the 去报销 running in the paired 本地执行器 (#256, ADR-0022), before the gate for the same
+  // reason: the 本地执行器's token is its only credential. Three answers read alike, so nothing can be learnt by
   // probing: no running job, a sha256 its plan does not name, and another account's original. The task service is
   // the token's account's, so the owner check every read path carries is made here too, on top of the plan's.
   app.get(`${INVOICE_BLOB_PATH}/:sha256`, async (c) => {
@@ -314,13 +313,13 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.body(readFileSync(found.path), 200, { 'Content-Type': servedType(found.mime), 'Cache-Control': 'no-store', 'X-Content-Type-Options': NOSNIFF });
   });
   app.use('/api/*', requireAccount(accounts, secureSession));
-  // A deactivated account loses its extension the way it loses its sessions: its token stops resolving (`lookup`),
+  // A deactivated account loses its 本地执行器 the way it loses its sessions: its token stops resolving (`lookup`),
   // and its open socket closes now rather than at the next `hello`.
   mountAccountRoutes(app, {
     ...accounts,
     update: async (actor, accountId, change) => {
       const list = await accounts.update(actor, accountId, change);
-      if ('active' in change && !change.active) extensionChannel.disconnect(accountId);
+      if ('active' in change && !change.active) clientChannel.disconnect(accountId);
       return list;
     },
   });
@@ -540,11 +539,11 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   if (webDist) app.get('*', (c) => serveWebFile(c, webDist));
 
   return Object.assign(app, {
-    extensionChannel,
+    clientChannel,
     maintenance,
     ready,
     close: async () => {
-      extensionChannel.close();
+      clientChannel.close();
       await settled();
       await parseJobs.close();
       await fillJobs.close();

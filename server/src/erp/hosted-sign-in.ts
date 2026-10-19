@@ -17,8 +17,8 @@ import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
-import { EXTENSION_OFFLINE_CODE, ExtensionChannelError } from '../extension/channel';
-import { hasPairing } from '../extension/pairing';
+import { EXECUTOR_OFFLINE_CODE, ChannelError } from '../channel/channel';
+import { hasPairing } from '../channel/pairing';
 import type { CredentialVault } from './credential-vault';
 
 // A cold 本地执行器 has measured up to about a minute to sign in (erp-headless-v1.md); five leaves room for a slow link.
@@ -30,7 +30,7 @@ export type ErpCredentialPorts = {
   /** Null when the server has no key: nothing can be saved, and no job is given any 凭据. */
   vault: CredentialVault | null;
   erpOrigin: string;
-  /** Ask the account's paired executor; rejects with `extension_offline` when nothing is connected. */
+  /** Ask the account's paired executor; rejects with `executor_offline` when nothing is connected. */
   request(accountId: string, method: string, payload: TrySignInRequest): Promise<unknown>;
   /** Whether a job of this account holds ERP right now: a 试登录 would knock it off. */
   erpBusy(accountId: string): boolean;
@@ -78,7 +78,7 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
       const parsed = TrySignInAnswerSchema.safeParse(answer);
       return parsed.success ? parsed.data : { ok: false, code: 'bad_answer', message: 'baox 本地执行器的试登录回答看不懂，请更新本地执行器后再试。' };
     } catch (error) {
-      if (error instanceof ExtensionChannelError && error.code === EXTENSION_OFFLINE_CODE) return { offline: true };
+      if (error instanceof ChannelError && error.code === EXECUTOR_OFFLINE_CODE) return { offline: true };
       return { ok: false, code: 'trial_failed', message: `试登录没有完成：${error instanceof Error ? error.message : String(error)}` };
     } finally {
       clearTimeout(timer);

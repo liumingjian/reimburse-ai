@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
-import { realTimer, type Schedule } from '../extension/channel';
+import { realTimer, type Schedule } from '../channel/channel';
 import type { MaintenanceLease } from '../maintenance';
 import { taskJudge, type FrozenJob } from './fill-plan';
 import { writeAttempt, writeEvent } from './jobs';
@@ -71,7 +71,7 @@ export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): 
 }
 
 /**
- * Every ERP job ends within its deadline, whatever its executor does: an extension whose socket stays up while its
+ * Every ERP job ends within its deadline, whatever its executor does: a 本地执行器 whose socket stays up while its
  * runner hangs opens no reconnection window, and a page that never settles never answers. Past the deadline the server
  * takes no more of the job's events, lets the ones already being recorded land (an `attempt_started` among them must be
  * on record before the result is judged), records `aborted` through the job's own path — which `afterAttempts` turns

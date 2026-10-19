@@ -37,32 +37,32 @@ export const SCENARIO_PROJECTS = [
 ] as const;
 
 export type ScenarioServer = TestServer & {
-  // The scripted fill executor, or null when the test brought its own `erpExecutor` (or 'extension').
+  // The scripted fill executor, or null when the test brought its own `erpExecutor` (or 'paired').
   erp: ScriptedExecutor | null;
   // The preset parser, or null when the test brought its own `parser` (real parsing is opt-in: `inlineExecutor()`).
   presets: PresetParser | null;
   // ERP 凭据 that passed their 试登录, stored for the account as the 设置页 leaves them, without running one: a
-  // 去报销 in the paired 本地执行器 (`erpExecutor: 'extension'`) needs them before anything starts (ADR-0037). Needs
+  // 去报销 in the paired 本地执行器 (`erpExecutor: 'paired'`) needs them before anything starts (ADR-0037). Needs
   // the server's key, which such a server has unless the test passed `erpCredentialKey: null`.
   authoriseErpCredentials(accountId: string, credentials?: { account: string; password: string }): Promise<void>;
 };
 
 // `createTestServer` with the scenario defaults: preset parsing and a scripted
-// fill executor that 暂存s the bill (ERP 草稿已交接), as every 去报销 ends (ADR-0037). Any option overrides its default; `erpExecutor: 'extension'` keeps the
-// production wiring, where 去报销 runs in the account's paired 本地执行器 (a `fakeExtension` in tests), and gives the
+// fill executor that 暂存s the bill (ERP 草稿已交接), as every 去报销 ends (ADR-0037). Any option overrides its default; `erpExecutor: 'paired'` keeps the
+// production wiring, where 去报销 runs in the account's paired 本地执行器 (a `fakeLocalExecutor` in tests), and gives the
 // server a key for the ERP 凭据 unless the test chose one.
-export type ScenarioServerOptions = Omit<TestServerOptions, 'erpExecutor'> & { erpExecutor?: TestServerOptions['erpExecutor'] | 'extension' };
+export type ScenarioServerOptions = Omit<TestServerOptions, 'erpExecutor'> & { erpExecutor?: TestServerOptions['erpExecutor'] | 'paired' };
 
 export async function scenarioServer(options: ScenarioServerOptions = {}): Promise<ScenarioServer> {
   const presets = options.parser ? null : presetParser();
   const erp = options.erpExecutor ? null : scripted(drafted);
   const { erpExecutor, ...rest } = options;
-  const key = 'erpCredentialKey' in rest ? (rest.erpCredentialKey ?? null) : erpExecutor === 'extension' ? randomBytes(32) : null;
+  const key = 'erpCredentialKey' in rest ? (rest.erpCredentialKey ?? null) : erpExecutor === 'paired' ? randomBytes(32) : null;
   const server = await createTestServer({
     ...rest,
     erpCredentialKey: key,
     parser: options.parser ?? presets!,
-    ...(erpExecutor === 'extension' ? {} : { erpExecutor: erpExecutor ?? erp! }),
+    ...(erpExecutor === 'paired' ? {} : { erpExecutor: erpExecutor ?? erp! }),
   });
   const authoriseErpCredentials = async (accountId: string, { account, password } = { account: 'zhangsan', password: 'erp-Pa55' }) => {
     if (!key) throw new Error('scenario: authorised ERP 凭据 need the server\'s erpCredentialKey');

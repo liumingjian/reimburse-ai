@@ -12,14 +12,14 @@ import {
   type PairingView,
 } from '@baox/contract';
 import { createTestServer, type TestClient, type TestServer } from '../test/harness';
-import { createExtensionChannel, type ChannelSocket, type ExtensionChannel } from './channel';
+import { createClientChannel, type ChannelSocket, type ClientChannel } from './channel';
 import { createPairingService } from './pairing';
 
-// The channel seam (spec #246 Testing Decisions): a fake extension client against the real channel the app wires up,
+// The channel seam (spec #246 Testing Decisions): a fake 本地执行器 client against the real channel the app wires up,
 // with a real database behind it. No port is opened — `websocket.ts` is the only thing that knows about sockets, and
 // what it hands over is exactly the two methods this fake provides.
 
-const PAIRING = '/api/extension/pairing';
+const PAIRING = '/api/pairing';
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const json = { 'content-type': 'application/json' };
 
@@ -45,8 +45,8 @@ async function pair(client: TestClient): Promise<string> {
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
-// The extension's end of the wire, minus the wire.
-function fakeExtension(channel: ExtensionChannel = server.app.extensionChannel) {
+// The 本地执行器's end of the wire, minus the wire.
+function fakeLocalExecutor(channel: ClientChannel = server.app.clientChannel) {
   const heard: ChannelMessage[] = [];
   let closedWith: { code: number; reason: string } | null = null;
   const socket: ChannelSocket = {
@@ -65,20 +65,20 @@ function fakeExtension(channel: ExtensionChannel = server.app.extensionChannel) 
   };
 }
 
-describe('the 浏览器扩展 channel', () => {
+describe('the 本地执行器 channel', () => {
   it('takes the pairing credential from the first message, with nothing in the address to leak', async () => {
     const token = await pair(alice);
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
 
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
 
     expect(extension.heard[0]).toMatchObject({ type: 'ready', accountId: alice.account.accountId });
-    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(true);
+    expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(true);
   });
 
-  it('answers a heartbeat so the service worker stays alive', async () => {
+  it('answers a heartbeat so the client knows the channel is alive', async () => {
     const token = await pair(alice);
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
 
     await extension.say({ type: 'request', id: 'e1', method: CHANNEL_PING_METHOD, payload: null });
@@ -88,12 +88,12 @@ describe('the 浏览器扩展 channel', () => {
 
   it('matches every answer to the request that asked for it', async () => {
     const token = await pair(alice);
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
 
     // Two in flight at once; only the id says which answer belongs to which.
-    const first = server.app.extensionChannel.request(alice.account.accountId, 'fill', { step: 1 });
-    const second = server.app.extensionChannel.request(alice.account.accountId, 'readback', { step: 2 });
+    const first = server.app.clientChannel.request(alice.account.accountId, 'fill', { step: 1 });
+    const second = server.app.clientChannel.request(alice.account.accountId, 'readback', { step: 2 });
     const asked = extension.heard.filter((message) => message.type === 'request');
     expect(asked).toHaveLength(2);
     const ids = asked.map((message) => ('id' in message ? message.id : ''));
@@ -105,9 +105,9 @@ describe('the 浏览器扩展 channel', () => {
     await expect(second).resolves.toEqual({ read: 'back' });
   });
 
-  it('refuses an extension below the minimum and tells it how to update, instead of running half a plan', async () => {
+  it('refuses a 本地执行器 below the minimum and tells it how to update, instead of running half a plan', async () => {
     const token = await pair(alice);
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
 
     await extension.say({ type: 'hello', token, version: '0.9.0' });
 
@@ -116,13 +116,13 @@ describe('the 浏览器扩展 channel', () => {
     expect(refusal && 'message' in refusal ? refusal.message : '').toContain(MINIMUM_CLIENT_VERSION);
     expect(refusal && 'message' in refusal ? refusal.message : '').toContain('重新下载');
     expect(extension.closedWith()).toEqual({ code: CHANNEL_CLOSE.versionTooOld, reason: 'version_too_old' });
-    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(false);
+    expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(false);
   });
 
   it('refuses a credential that no longer names a pairing', async () => {
     const token = await pair(alice);
     await alice.post(`${PAIRING}/revoke`, {});
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
 
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
 
@@ -131,7 +131,7 @@ describe('the 浏览器扩展 channel', () => {
   });
 
   it('acts on nothing a socket says before it has said who it is', async () => {
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
 
     await extension.say({ type: 'request', id: 'e1', method: 'fill', payload: null });
 
@@ -140,7 +140,7 @@ describe('the 浏览器扩展 channel', () => {
   });
 
   it('closes a socket that sends something it cannot read at all', async () => {
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
 
     await extension.raw('not json');
 
@@ -150,19 +150,19 @@ describe('the 浏览器扩展 channel', () => {
   it("tells whoever runs work over it that the account's connection went, and no other account's", async () => {
     const bob = await server.signIn('bob');
     const lost: string[] = [];
-    const channel = createExtensionChannel({ pairings: createPairingService(server.db, server.clock.now), now: server.clock.now, onLost: (accountId) => lost.push(accountId) });
+    const channel = createClientChannel({ pairings: createPairingService(server.db, server.clock.now), now: server.clock.now, onLost: (accountId) => lost.push(accountId) });
     const aliceToken = await pair(alice);
-    const aliceExtension = fakeExtension(channel);
-    const bobExtension = fakeExtension(channel);
-    await aliceExtension.say({ type: 'hello', token: aliceToken, version: CLIENT_VERSION });
-    await bobExtension.say({ type: 'hello', token: await pair(bob), version: CLIENT_VERSION });
+    const aliceExecutor = fakeLocalExecutor(channel);
+    const bobExecutor = fakeLocalExecutor(channel);
+    await aliceExecutor.say({ type: 'hello', token: aliceToken, version: CLIENT_VERSION });
+    await bobExecutor.say({ type: 'hello', token: await pair(bob), version: CLIENT_VERSION });
     // The lease is the job's, not the socket's (ADR-0020): the channel leaves it alone.
     server.erpLease.acquire({ accountId: alice.account.accountId, taskId: 't-a', jobId: 'j-a' });
 
-    aliceExtension.disconnect();
-    // The same extension dialling again over a socket the server never saw close: the older one is lost too.
-    await fakeExtension(channel).say({ type: 'hello', token: aliceToken, version: CLIENT_VERSION });
-    await fakeExtension(channel).say({ type: 'hello', token: aliceToken, version: CLIENT_VERSION });
+    aliceExecutor.disconnect();
+    // The same 本地执行器 dialling again over a socket the server never saw close: the older one is lost too.
+    await fakeLocalExecutor(channel).say({ type: 'hello', token: aliceToken, version: CLIENT_VERSION });
+    await fakeLocalExecutor(channel).say({ type: 'hello', token: aliceToken, version: CLIENT_VERSION });
 
     expect(lost).toEqual([alice.account.accountId, alice.account.accountId]);
     expect(server.erpLease.holder(alice.account.accountId)).toMatchObject({ jobId: 'j-a' });
@@ -170,11 +170,11 @@ describe('the 浏览器扩展 channel', () => {
     channel.close();
   });
 
-  it('tells the settings page whether the extension is listening right now', async () => {
+  it('tells the settings page whether the 本地执行器 is listening right now', async () => {
     const token = await pair(alice);
     expect(await view(alice)).toMatchObject({ status: 'paired', connected: false, version: CLIENT_VERSION });
 
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
     expect(await view(alice)).toMatchObject({ status: 'paired', connected: true });
 
@@ -182,14 +182,14 @@ describe('the 浏览器扩展 channel', () => {
     expect(await view(alice)).toMatchObject({ status: 'paired', connected: false });
   });
 
-  it('refuses to ask an extension that is not connected, rather than waiting for one', async () => {
+  it('refuses to ask a 本地执行器 that is not connected, rather than waiting for one', async () => {
     await pair(alice);
-    await expect(server.app.extensionChannel.request(alice.account.accountId, 'fill', null)).rejects.toThrow();
+    await expect(server.app.clientChannel.request(alice.account.accountId, 'fill', null)).rejects.toThrow();
   });
 });
 
 describe('版本协商 at the HTTP seam', () => {
-  it('refuses to pair with an extension below the minimum, and leaves the 配对码 unspent', async () => {
+  it('refuses to pair with a 本地执行器 below the minimum, and leaves the 配对码 unspent', async () => {
     const issued = await parse(await alice.post(`${PAIRING}/code`, {}));
     const code = issued.code ?? '';
 
@@ -206,7 +206,7 @@ describe('版本协商 at the HTTP seam', () => {
     expect(await view(alice)).toMatchObject({ status: 'paired', version: CLIENT_VERSION });
   });
 
-  it('refuses an extension too old to report a version at all', async () => {
+  it('refuses a 本地执行器 too old to report a version at all', async () => {
     const issued = await parse(await alice.post(`${PAIRING}/code`, {}));
 
     const refused = await redeem(issued.code ?? '', null);
@@ -238,12 +238,12 @@ describe('a socket that never says who it is', () => {
 
   // The same channel the app wires, over the same database, with only the timer swapped.
   const channelWith = (timers: ReturnType<typeof manualTimers>) =>
-    createExtensionChannel({ pairings: createPairingService(server.db, server.clock.now), now: server.clock.now, schedule: timers.schedule });
+    createClientChannel({ pairings: createPairingService(server.db, server.clock.now), now: server.clock.now, schedule: timers.schedule });
 
   it('is closed once the hello deadline passes, having been told nothing', () => {
     const timers = manualTimers();
     const channel = channelWith(timers);
-    const extension = fakeExtension(channel);
+    const extension = fakeLocalExecutor(channel);
 
     expect(timers.due.map((entry) => entry.ms)).toEqual([CHANNEL_HEARTBEAT_MS]);
     timers.elapse();
@@ -257,7 +257,7 @@ describe('a socket that never says who it is', () => {
     const token = await pair(alice);
     const timers = manualTimers();
     const channel = channelWith(timers);
-    const extension = fakeExtension(channel);
+    const extension = fakeLocalExecutor(channel);
 
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
     timers.elapse();
@@ -271,28 +271,28 @@ describe('a socket that never says who it is', () => {
 describe('a pairing that goes away takes its live socket with it', () => {
   // Stories 10 and 12: whichever way the pairing ends, the old extension is refused for good — the terminal `refused`
   // frame, not a close it would redial after — and the next 去报销 of the account is never sent to it.
-  async function connectedExtension() {
+  async function connectedExecutor() {
     const token = await pair(alice);
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
-    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(true);
+    expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(true);
     return { token, extension };
   }
 
-  function expectCutOff(extension: ReturnType<typeof fakeExtension>, accountId: string) {
+  function expectCutOff(extension: ReturnType<typeof fakeLocalExecutor>, accountId: string) {
     expect(extension.heard.at(-1)).toMatchObject({ type: 'refused', code: 'not_paired' });
     expect(extension.closedWith()).toEqual({ code: CHANNEL_CLOSE.notPaired, reason: 'not_paired' });
-    expect(server.app.extensionChannel.connected(accountId)).toBe(false);
+    expect(server.app.clientChannel.connected(accountId)).toBe(false);
   }
 
-  async function expectNoFillReaches(extension: ReturnType<typeof fakeExtension>, accountId: string) {
+  async function expectNoFillReaches(extension: ReturnType<typeof fakeLocalExecutor>, accountId: string) {
     const heard = extension.heard.length;
-    await expect(server.app.extensionChannel.request(accountId, 'erp.fill', {})).rejects.toMatchObject({ code: 'extension_offline' });
+    await expect(server.app.clientChannel.request(accountId, 'erp.fill', {})).rejects.toMatchObject({ code: 'executor_offline' });
     expect(extension.heard).toHaveLength(heard);
   }
 
   it('on 撤销配对 in the settings page', async () => {
-    const { extension } = await connectedExtension();
+    const { extension } = await connectedExecutor();
 
     expect((await alice.post(`${PAIRING}/revoke`, {})).status).toBe(200);
 
@@ -300,8 +300,8 @@ describe('a pairing that goes away takes its live socket with it', () => {
     await expectNoFillReaches(extension, alice.account.accountId);
   });
 
-  it('on a new 配对码, before the new extension has even paired', async () => {
-    const { extension } = await connectedExtension();
+  it('on a new 配对码, before the new 本地执行器 has even paired', async () => {
+    const { extension } = await connectedExecutor();
 
     expect((await alice.post(`${PAIRING}/code`, {})).status).toBe(200);
 
@@ -312,7 +312,7 @@ describe('a pairing that goes away takes its live socket with it', () => {
   it('on the account being deactivated', async () => {
     const bob = await server.signIn('bob');
     const token = await pair(bob);
-    const extension = fakeExtension();
+    const extension = fakeLocalExecutor();
     await extension.say({ type: 'hello', token, version: CLIENT_VERSION });
 
     expect((await alice.post(`/api/admin/accounts/${bob.account.accountId}`, { active: false })).status).toBe(200);
@@ -321,13 +321,13 @@ describe('a pairing that goes away takes its live socket with it', () => {
     await expectNoFillReaches(extension, bob.account.accountId);
   });
 
-  it('on 撤销配对 in the extension popup, authorised by its own token', async () => {
-    const { token, extension } = await connectedExtension();
+  it('on 撤销配对 from the 本地执行器 itself, authorised by its own token', async () => {
+    const { token, extension } = await connectedExecutor();
     const revokeWith = (bearer: string) =>
       server.app.request(PAIRING_PATH, { method: 'DELETE', headers: { authorization: `Bearer ${bearer}`, origin: EXTENSION_ORIGIN } });
 
     expect((await revokeWith('not-a-token')).status).toBe(401);
-    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(true);
+    expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(true);
 
     expect((await revokeWith(token)).status).toBe(200);
 
@@ -346,7 +346,7 @@ describe('a pairing that goes away takes its live socket with it', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const channel = createExtensionChannel({
+    const channel = createClientChannel({
       pairings: {
         ...pairings,
         lookup: async (value) => {
@@ -357,7 +357,7 @@ describe('a pairing that goes away takes its live socket with it', () => {
       },
       now: server.clock.now,
     });
-    const extension = fakeExtension(channel);
+    const extension = fakeLocalExecutor(channel);
 
     const hello = extension.say({ type: 'hello', token, version: CLIENT_VERSION });
     channel.disconnect(alice.account.accountId);

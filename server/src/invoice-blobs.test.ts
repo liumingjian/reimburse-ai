@@ -4,16 +4,16 @@ import type { FillPlan } from '@baox/erp-executor/protocol';
 import { RECONNECT_WINDOW_MS } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { notSignedIn } from './erp/testing/fake-executor';
-import { fakeExtension, type FakeExtension } from './erp/testing/fake-extension';
+import { fakeLocalExecutor, type FakeLocalExecutor } from './erp/testing/fake-local-executor';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { api, sample } from './test/api';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 import { manualTimers } from './test/timers';
 
-// #256 at seam 3: the route the extension fetches invoice originals from. It is authorised by the pairing token, not a
-// session, and serves only the originals named in the plan of the 去报销 running in that 应用账号's extension
-// (user story 25: a compromised extension must not be able to walk the employee's archive).
+// #256 at seam 3: the route the 本地执行器 fetches invoice originals from. It is authorised by the pairing token, not a
+// session, and serves only the originals named in the plan of the 去报销 running in that 应用账号's 本地执行器
+// (user story 25: a compromised 本地执行器 must not be able to walk the employee's archive).
 
 const EXTENSION_ORIGIN = 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih';
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -21,14 +21,14 @@ const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('he
 let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, autoRerun: false });
+  server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, autoRerun: false });
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());
 const client = api(() => alice);
 
 async function pair(owner: TestClient): Promise<string> {
-  const issued = PairingViewSchema.parse(await (await owner.post('/api/extension/pairing/code', {})).json());
+  const issued = PairingViewSchema.parse(await (await owner.post('/api/pairing/code', {})).json());
   const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
@@ -39,20 +39,20 @@ async function pair(owner: TestClient): Promise<string> {
   return PairingTokenSchema.parse(await redeemed.json()).token;
 }
 
-// As the extension asks: a GET from its own origin, the token as a bearer.
+// As the 本地执行器 asks: a GET from its own origin, the token as a bearer.
 const fetchBlob = (sha256: string, token: string | null) =>
   server.app.request(invoiceBlobPath(sha256), { headers: { origin: EXTENSION_ORIGIN, ...(token ? { authorization: `Bearer ${token}` } : {}) } });
 
 /**
- * A 去报销 held open in alice's extension until `finish` is called, so the test can fetch while it runs. The task is
+ * A 去报销 held open in alice's 本地执行器 until `finish` is called, so the test can fetch while it runs. The task is
  * the scenario default, a hotel invoice with its folio, confirmed: the plan names the invoice, not the folio.
  */
-async function running(token: string): Promise<{ plan: FillPlan; taskId: string; extension: FakeExtension; finish(): Promise<void> }> {
+async function running(token: string): Promise<{ plan: FillPlan; taskId: string; extension: FakeLocalExecutor; finish(): Promise<void> }> {
   let finish!: () => void;
   const gate = new Promise<void>((resolve) => { finish = resolve; });
   let started!: (plan: FillPlan) => void;
   const planned = new Promise<FillPlan>((resolve) => { started = resolve; });
-  const extension = fakeExtension(server.app.extensionChannel, token, {
+  const extension = fakeLocalExecutor(server.app.clientChannel, token, {
     fill: async (plan, channel) => {
       started(plan);
       await gate;
@@ -72,8 +72,8 @@ async function running(token: string): Promise<{ plan: FillPlan; taskId: string;
   };
 }
 
-describe('the extension\'s invoice originals', () => {
-  it('serves the running job\'s invoices to its own extension, by content, and nothing it could cache', async () => {
+describe('the 本地执行器\'s invoice originals', () => {
+  it('serves the running job\'s invoices to its own 本地执行器, by content, and nothing it could cache', async () => {
     const token = await pair(alice);
     const job = await running(token);
     const invoice = sample('m01');
@@ -117,7 +117,7 @@ describe('the extension\'s invoice originals', () => {
     expect((await fetchBlob(invoice, token)).status).toBe(404);
   });
 
-  it('serves another 应用账号\'s extension nothing of this account\'s running job', async () => {
+  it('serves another 应用账号\'s 本地执行器 nothing of this account\'s running job', async () => {
     const job = await running(await pair(alice));
     const bob = await server.signIn('bob');
     const bobs = await pair(bob);
@@ -133,7 +133,7 @@ describe('the extension\'s invoice originals', () => {
 
     expect((await fetchBlob(invoice, null)).status).toBe(401);
     expect((await fetchBlob(invoice, 'not-a-token')).status).toBe(401);
-    // A session cookie is not the extension's credential.
+    // A session cookie is not the 本地执行器's credential.
     expect((await alice.request(invoiceBlobPath(invoice))).status).toBe(401);
     await job.finish();
   });
@@ -151,12 +151,12 @@ describe('the extension\'s invoice originals', () => {
 
 // An interrupted job (ADR-0020) has not ended: it may still need its invoices when it resumes. It stops serving only
 // once the server has ended it, here by letting the reconnection window close.
-describe('the extension\'s invoice originals across an interruption', () => {
+describe('the 本地执行器\'s invoice originals across an interruption', () => {
   let timers: ReturnType<typeof manualTimers>;
   beforeEach(async () => {
     await server.close();
     timers = manualTimers();
-    server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
+    server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, schedule: timers.schedule });
     alice = await server.signIn('alice');
   });
 
@@ -182,10 +182,10 @@ describe('the extension\'s invoice originals across an interruption', () => {
     const job = await running(token);
     const invoice = job.plan.invoices[0]!.sha256;
 
-    expect((await alice.post('/api/extension/pairing/revoke', {})).status).toBe(200);
+    expect((await alice.post('/api/pairing/revoke', {})).status).toBe(200);
 
     // Revoking closed the socket, so the job is interrupted like any lost connection; the token serves nothing.
-    expect(server.app.extensionChannel.connected(alice.account.accountId)).toBe(false);
+    expect(server.app.clientChannel.connected(alice.account.accountId)).toBe(false);
     expect(timers.pending(RECONNECT_WINDOW_MS)).toBe(1);
     expect((await fetchBlob(invoice, token)).status).toBe(401);
 

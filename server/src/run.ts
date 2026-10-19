@@ -37,7 +37,7 @@ const LOCAL_EXECUTOR = {
   runtimes: process.env['BAOX_LOCAL_EXECUTOR_RUNTIMES'] ?? fileURLToPath(new URL('../../local-executor/runtime', import.meta.url)),
 };
 
-// Where ERP jobs run. Absent, they run in each task owner's paired 浏览器扩展 (`erp/remote-executor.ts`), which is the
+// Where ERP jobs run. Absent, they run in each task owner's paired 本地执行器 (`erp/remote-executor.ts`), which is the
 // only choice the production entry has: the CDP executor is passed in by the development and e2e entries alone, so it
 // never reaches a bundle users run (`production-entry.test.ts`).
 export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; parser?: ParseExecutor };

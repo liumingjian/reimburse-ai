@@ -97,10 +97,10 @@ describe('设置页：这台电脑上已有本地执行器在应答', () => {
     fireEvent.click(await screen.findByRole('button', { name: LOCAL_EXECUTOR_COPY.connectHere }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(LOCAL_EXECUTOR_COPY.otherAccountBody)).toBeTruthy();
-    expect((await adapter.getExtensionPairing()).status).toBe('none');
+    expect((await adapter.getPairing()).status).toBe('none');
     fireEvent.click(within(dialog).getByRole('button', { name: LOCAL_EXECUTOR_COPY.otherAccountConfirm }));
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
-    expect((await adapter.getExtensionPairing()).status).toBe('paired');
+    expect((await adapter.getPairing()).status).toBe('paired');
   });
 
   test('另一个账号的执行器，取消就什么都不变', async () => {
@@ -108,7 +108,7 @@ describe('设置页：这台电脑上已有本地执行器在应答', () => {
     fireEvent.click(await screen.findByRole('button', { name: LOCAL_EXECUTOR_COPY.connectHere }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect((await adapter.getExtensionPairing()).status).toBe('none');
+    expect((await adapter.getPairing()).status).toBe('none');
   });
 });
 
@@ -160,7 +160,7 @@ describe('设置页：撤销本地执行器的配对', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: LOCAL_EXECUTOR_COPY.revokeConfirm }));
     expect(await section().findByRole('button', { name: LOCAL_EXECUTOR_COPY.connectHere })).toBeTruthy();
     expect(section().queryByText(LOCAL_EXECUTOR_COPY.connected)).toBeNull();
-    expect((await adapter.getExtensionPairing()).status).toBe('none');
+    expect((await adapter.getPairing()).status).toBe('none');
   });
 
   test('这台电脑没有执行器应答：撤销后给出「生成安装命令」', async () => {
@@ -171,7 +171,7 @@ describe('设置页：撤销本地执行器的配对', () => {
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: LOCAL_EXECUTOR_COPY.revokeConfirm }));
     await waitFor(() => expect(section().queryByText(LOCAL_EXECUTOR_COPY.connected)).toBeNull());
     expect(insideTrouble(section().getByRole('button', { name: LOCAL_EXECUTOR_COPY.generate }))).toBe(false);
-    expect((await adapter.getExtensionPairing()).status).toBe('none');
+    expect((await adapter.getPairing()).status).toBe('none');
   });
 
   test('取消撤销就什么都不变', async () => {
@@ -180,7 +180,7 @@ describe('设置页：撤销本地执行器的配对', () => {
     fireEvent.click(await section().findByRole('button', { name: LOCAL_EXECUTOR_COPY.revoke }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect((await adapter.getExtensionPairing()).status).toBe('paired');
+    expect((await adapter.getPairing()).status).toBe('paired');
     expect(section().getByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
   });
 });
@@ -197,7 +197,7 @@ describe('设置页：已连接时不会一点就断开', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(LOCAL_EXECUTOR_COPY.reinstallBody)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
-    expect((await adapter.getExtensionPairing()).status).toBe('paired');
+    expect((await adapter.getPairing()).status).toBe('paired');
   });
 
   test('确认重新生成：给出新的安装命令', async () => {
@@ -215,10 +215,10 @@ describe('设置页：安装命令的配对码过期、离开再回来', () => {
   test('配对码失效后不再显示旧命令，说清楚要重新生成，也不再读配对', async () => {
     const { adapter, section } = renderSection({ localExecutorInstallMs: 60_000 });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
-    const reads = vi.spyOn(adapter, 'getExtensionPairing');
+    const reads = vi.spyOn(adapter, 'getPairing');
     await generateMac(section);
     // The server forgets an expired code: the pairing reads as none from then on.
-    await adapter.revokeExtensionPairing();
+    await adapter.revokePairing();
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.expired)).toBeTruthy();
     expect(section().queryByText(MAC_COMMAND)).toBeNull();
     const after = reads.mock.calls.length;
@@ -229,7 +229,7 @@ describe('设置页：安装命令的配对码过期、离开再回来', () => {
   test('离开设置页后不再读配对', async () => {
     const { adapter, section } = renderSection({ localExecutorInstallMs: 60_000 });
     await screen.findByRole('region', { name: LOCAL_EXECUTOR_COPY.title });
-    const reads = vi.spyOn(adapter, 'getExtensionPairing');
+    const reads = vi.spyOn(adapter, 'getPairing');
     await generateMac(section);
     cleanup();
     const after = reads.mock.calls.length;
@@ -324,7 +324,7 @@ describe('设置页：账号连着另一台电脑的执行器', () => {
     expect(within(dialog).getByText(LOCAL_EXECUTOR_COPY.otherPcBody)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: LOCAL_EXECUTOR_COPY.otherPcConfirm }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect((await adapter.getExtensionPairing()).status).toBe('paired');
+    expect((await adapter.getPairing()).status).toBe('paired');
     expect(await section().findByText(LOCAL_EXECUTOR_COPY.connected)).toBeTruthy();
   });
 });

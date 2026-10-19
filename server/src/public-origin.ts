@@ -45,7 +45,7 @@ export function parsePublicOrigin(value: string): PublicOrigin {
 }
 
 // The public configuration wins when it exists. A loopback-only run has no configured public address, so its request
-// URL is also the address used to stamp the extension package.
+// URL is also the address used to stamp the 本地执行器 package.
 export function activeOrigin(publicOrigin: PublicOrigin | null, requestUrl: string): string {
   return publicOrigin?.origin ?? new URL(requestUrl).origin;
 }
@@ -66,7 +66,7 @@ function isPrivateAddress(hostname: string): boolean {
 
 // Who may talk to the app, judged from what the browser wrote. With a public origin configured, exactly that origin;
 // without one, only the loopback names, since anything else is another host's name pointed at this machine (DNS
-// rebinding). Two doors use these: the Hono guard in `app.ts`, and the WebSocket upgrade in `extension/websocket.ts`,
+// rebinding). Two doors use these: the Hono guard in `app.ts`, and the WebSocket upgrade in `channel/websocket.ts`,
 // which never reaches Hono. They share this code so neither can quietly admit what the other refuses.
 const LOCAL_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
 

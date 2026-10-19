@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 const issue = async (body: unknown = { system: 'mac' }) => {
-  const answer = await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, body);
+  const answer = await alice.post(HTTP_ENDPOINTS.createPairingCode.path, body);
   expect(answer.status).toBe(200);
   return PairingViewSchema.parse(await answer.json()).code!;
 };
@@ -58,12 +58,12 @@ describe('generating a 配对码 for an install', () => {
   });
 
   it('refuses a system it does not know', async () => {
-    const answer = await alice.post(HTTP_ENDPOINTS.createExtensionPairingCode.path, { system: 'linux' });
+    const answer = await alice.post(HTTP_ENDPOINTS.createPairingCode.path, { system: 'linux' });
     expect(answer.status).toBe(400);
   });
 
-  it('still issues a code without a system, as the 浏览器扩展 asks for one, and that code installs nothing', async () => {
-    const answer = await alice.request(HTTP_ENDPOINTS.createExtensionPairingCode.path, { method: 'POST' });
+  it('still issues a code without a system, as re-pairing a running 本地执行器 asks for one, and that code installs nothing', async () => {
+    const answer = await alice.request(HTTP_ENDPOINTS.createPairingCode.path, { method: 'POST' });
     expect(answer.status).toBe(200);
     const code = PairingViewSchema.parse(await answer.json()).code!;
     expiredScript(await (await fetchScript(code)).text());

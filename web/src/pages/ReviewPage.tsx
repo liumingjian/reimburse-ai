@@ -46,8 +46,8 @@ import { DeadlineWarningList } from './DeadlineWarningList';
 // 只能确认，不在表内修改：有不对的地方回到对应步骤修改。确认绑定项目归属，改派项目会使确认失效（提示由服务端给出）。
 // 提交项目归属后服务端自动做报销信息核对与材料准备（进度照内核话术）：核对不匹配时显示不匹配表，唯一处置是回到项目归属改派；
 // 材料包有缺项时显示缺项表，「确认」不可用，可排除服务端标明的相关材料。
-// The server starts 去报销 after confirmation. The paired extension opens the task's ERP tab; filling ends at an
-// attended handoff, where the employee saves and submits the form.
+// The server starts 去报销 after confirmation. The paired 本地执行器 signs in, fills and 暂存s the bill (ADR-0037); the employee then checks and
+// submits the draft in ERP.
 // 「追加材料」先二次确认，再请服务端使确认失效并回到上传页。支付截图在待确认项里上传，不在这里。
 
 // 常驻城市：到第一次写入报销系统之前都可以改；改了会重新划分本地与外地市内交通，确认随之失效（服务端判定）。

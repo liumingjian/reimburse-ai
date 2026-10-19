@@ -5,7 +5,7 @@ import { redeemPairingCode, revokePairing } from './pairing';
 const jsonResponse = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('redeeming the 配对码 the employee typed', () => {
-  it('posts the code and this extension version to the address baked into the build', async () => {
+  it('posts the code and this 本地执行器 version to the address baked into the build', async () => {
     let seen: { url: string; body: unknown } | null = null;
     const outcome = await redeemPairingCode({
       origin: 'http://10.250.0.222',
@@ -25,10 +25,10 @@ describe('redeeming the 配对码 the employee typed', () => {
     const outcome = await redeemPairingCode({
       origin: 'http://10.250.0.222',
       code: 'K7MQ2PXD',
-      fetchImpl: async () => jsonResponse(403, { error: { code: 'version_too_old', message: '这台服务器要求浏览器扩展 2.0.0 或更新的版本，请回到设置页重新下载扩展包。' } }),
+      fetchImpl: async () => jsonResponse(403, { error: { code: 'version_too_old', message: '这台服务器要求 baox 本地执行器 2.0.0 或更新的版本，请回到设置页生成安装命令。' } }),
     });
 
-    expect(outcome).toEqual({ ok: false, code: 'version_too_old', message: '这台服务器要求浏览器扩展 2.0.0 或更新的版本，请回到设置页重新下载扩展包。' });
+    expect(outcome).toEqual({ ok: false, code: 'version_too_old', message: '这台服务器要求 baox 本地执行器 2.0.0 或更新的版本，请回到设置页生成安装命令。' });
   });
 
   it('says the app is unreachable rather than that the code was wrong', async () => {
@@ -43,7 +43,7 @@ describe('redeeming the 配对码 the employee typed', () => {
   });
 });
 
-describe('撤销配对 from the popup', () => {
+describe('撤销配对 from the 本地执行器', () => {
   it('revokes on the app with the token being given up, so the pairing does not outlive this browser', async () => {
     let seen: { url: string; method: string | undefined; authorization: string | null } | null = null;
     const revoked = await revokePairing({

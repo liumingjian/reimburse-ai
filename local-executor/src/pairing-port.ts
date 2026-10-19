@@ -2,7 +2,7 @@
 // click, after an account switch or a revoke, without a terminal.
 //
 // The holder owns the executor's pairing while it runs. A pairing that is gone (the app says `not_paired`: revoked, or
-// the account switched to the 浏览器扩展) stops the job loop and is forgotten, and the executor stays up, unpaired. A
+// replaced by a newer pairing) stops the job loop and is forgotten, and the executor stays up, unpaired. A
 // 配对码 handed over by the page is redeemed exactly as the install redeems one; on success the job loop starts again
 // on the new pairing, replacing the old one if there was one.
 //
