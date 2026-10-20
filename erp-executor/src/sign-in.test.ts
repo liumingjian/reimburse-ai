@@ -95,6 +95,30 @@ describe('signing in to ERP', () => {
     expect(page.t).toBeLessThanOrEqual(SIGN_IN_TIMING.formMs + SIGN_IN_TIMING.pollMs);
   });
 
+  // Live 2026-10-20: an entry page loaded again brought its form 29.5 s later, and a sign-in that loaded it again every
+  // 20 s cut every such load short and stopped on erp_sign_in_no_form.
+  it('gives an entry page loaded again the time a slow load takes before loading it once more', async () => {
+    let t = 0;
+    let formAt: number | null = null;
+    const log: string[] = [];
+    let page: LoginLook = loginPage({ verdict: 'unknown', form: false, dataCentreReady: false });
+    const ports: SignInPorts = {
+      look: async () => {
+        if (formAt !== null && t >= formAt && page.verdict === 'unknown') page = loginPage();
+        return page;
+      },
+      submit: async () => { log.push('submit'); page = console_; return true; },
+      confirm: async () => {},
+      // Every load starts over: the form comes 30 s after the latest one.
+      reload: async () => { log.push('reload'); formAt = t + 30_000; },
+      prefetch: async () => {},
+      now: () => t,
+      sleep: async (ms) => { t += ms; },
+    };
+    expect(await signInWith(ports)).toMatchObject({ ok: true, submitted: true });
+    expect(log.filter((l) => l === 'reload')).toHaveLength(1);
+  });
+
   // Live 2026-10-20 2 of 21 sign-ins met an entry page whose body stayed empty for 90 s (once a timed-out load);
   // loading the entry page again brought the form in 2-30 s.
   it('loads the entry page again when no login form has come, and signs in on the one that comes', async () => {

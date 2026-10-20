@@ -76,8 +76,10 @@ export type SignInTiming = {
   pollMs: number;
 };
 
+// formMs / formReloadMs: live 2026-10-20 an entry page loaded again showed its form after 2.3 s once and 29.5 s once,
+// and a load cut short at 20 s showed none; so the entry page is loaded again every 40 s, three loads in all.
 export const SIGN_IN_TIMING: SignInTiming = {
-  formMs: 60_000, readyMs: 120_000, quietMs: 1500, consoleMs: 300_000, noEffectMs: 20_000, stuckMs: 10_000, pollMs: 1000,
+  formMs: 120_000, formReloadMs: 40_000, readyMs: 120_000, quietMs: 1500, consoleMs: 300_000, noEffectMs: 20_000, stuckMs: 10_000, pollMs: 1000,
 };
 
 /** Resubmits after 「语言未加载」 or a click that did nothing. A refusal is never resubmitted. */
