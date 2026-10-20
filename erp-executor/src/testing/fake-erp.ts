@@ -303,6 +303,19 @@ export type FakeErpOptions = {
    */
   newRowClicksLost?: number;
   /**
+   * The first N commits of a lookup cell (项目, 费用项目) leave it empty: the Enter came before ERP had resolved the
+   * typed code, and ERP dropped it. Live 2026-10-20 3 of 10 first fills (runs 7, 8, 10) read 「」 or 「select」 back
+   * on a slow ERP, and the same field written again on the re-run's form took.
+   * @unverified: a lookup committed before ERP resolved the code ends empty [transient]
+   */
+  lookupCommitsLost?: number;
+  /**
+   * For N page ticks after 新增行 the new row's cells are under a cover. Live 2026-10-20 run 9 stopped on
+   * 「「项目」的落点…上盖着DIV」 right after 新增行, while ERP was still re-rendering the grid.
+   * @unverified: a cover sits over a freshly added 费用明细行 for a moment [transient]
+   */
+  newRowCoverTicks?: number;
+  /**
    * How many ERP-page evaluations a committed row keeps its `k-grid-edit-row` class — the grid still reporting
    * the row as being edited for a render or two after the value has been taken. `leaveEdit` reads that state
    * once, and `draft-flow.ts` turns `stillEditing: true` into `leave_edit_failed`.
@@ -802,6 +815,10 @@ const kendoDate = (raw: string) => {
     // The commit reads Kendo's model, not the DOM input. Inside the settle window the model still holds `before`.
     const settle = options.editorSettleTicks ?? 0;
     if (settle > 0 && mainTicks - lastTypedAt < settle) input.value = before;
+    if ((column === '项目' || column === '费用项目') && lostLookupCommits < (options.lookupCommitsLost ?? 0)) {
+      lostLookupCommits += 1;
+      input.value = '';
+    }
     // A date column is not read as text: the datepicker parses what it holds, and what it cannot parse it
     // refuses, keeping its previous value — which is how a typed date silently became today's.
     const text = DATE_COLUMNS.has(column)
@@ -902,8 +919,20 @@ const kendoDate = (raw: string) => {
   /** Append one blank 费用明细行 above the footer, and log the click that asked for it. */
   function insertDetailRow() {
     const tbody = grid('detail').querySelector('tbody');
-    tbody.insertBefore(defaultRow(), tbody.querySelector('tr.k-footer-template'));
+    const added = defaultRow();
+    tbody.insertBefore(added, tbody.querySelector('tr.k-footer-template'));
+    if (options.newRowCoverTicks) {
+      for (const td of added.querySelectorAll('td')) td.setAttribute('data-covered-by', '#form-blocker');
+      newRowCover = { tr: added, until: mainTicks + options.newRowCoverTicks };
+    }
     mutate('addRow', String(dataRows('detail').length));
+  }
+
+  /** The cover over a freshly added row lifting, `newRowCoverTicks` reads after 新增行. */
+  function uncoverNewRow() {
+    if (!newRowCover || mainTicks < newRowCover.until) return;
+    for (const td of newRowCover.tr.querySelectorAll('td')) td.removeAttribute('data-covered-by');
+    newRowCover = null;
   }
 
   /** Drop the edit class, or let it linger for a few reads when the test asks for the lingering shape. */
@@ -1158,6 +1187,8 @@ const kendoDate = (raw: string) => {
 
   let deadNewFormClicks = 0;
   let lostNewRowClicks = 0;
+  let lostLookupCommits = 0;
+  let newRowCover: { tr: any; until: number } | null = null;
   let deadOpenListClicks = 0;
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
@@ -1476,7 +1507,7 @@ const kendoDate = (raw: string) => {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; if (!blockerShown()) show(q('#console-blocker'), false); syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
+      else { mainTicks += 1; if (!blockerShown()) show(q('#console-blocker'), false); syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); uncoverNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':

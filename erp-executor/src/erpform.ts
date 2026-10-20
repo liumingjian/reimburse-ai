@@ -337,13 +337,30 @@ export type CellWrite = {
  * their sum. Where ERP computes something from what was written, that computed value is the witness:
  * `computedTotalProblem` in draft-flow.ts checks it row by row.
  */
-export async function writeCell(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
+export async function writeCell(session: CdpSession, write: CellWrite) {
+  const first = await writeCellOnce(session, write);
+  const dropped = !first.ok && 'after' in first && (first.after === '' || first.after === 'select');
+  if (!LOOKUP_COLUMNS.has(write.column) || !dropped) return first;
+  // A lookup cell read back empty after the commit — or as 「select」, its dropdown icon's text with the editor still
+  // open and empty — is written once more, from an emptied editor. Live 2026-10-20 3 of 10
+  // first fills on a slow ERP read 「」 or 「select」 back from 项目 / 费用项目 — the Enter came before ERP resolved
+  // the code, or ERP replaced the editor after the typing was witnessed — and the same field written on the re-run's
+  // form took. Nothing is saved before 暂存, and the editor is emptied first, so a second write appends nothing.
+  return writeCellOnce(session, write);
+}
+
+// The 选择类 (F7) columns ERP resolves from a typed code.
+const LOOKUP_COLUMNS = new Set(['项目', '费用项目']);
+
+async function writeCellOnce(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
   commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, holdMs = 2500, typeTries = 3, settleFirst = true,
   pace = DEFAULT_PACE }: CellWrite) {
   // Wait for the previous cell's recalculation first: a click during it is swallowed or its editor is taken away.
   if (settleFirst) await settleGrid(session, which, { quietMs: pace.quietMs, maxMs: pace.quietMs * 10 });
   const at = () => cellTarget(session, { which, row, column, scroll: false });
-  const before = await cellTarget(session, { which, row, column });
+  // Polled, not read once, as `selectOption` does: live 2026-10-20 a 去报销 stopped on 「「项目」的落点…上盖着DIV」
+  // right after 新增行, while ERP was still re-rendering the grid. A cover still there at the end is refused below.
+  const before = await waitFor(() => cellTarget(session, { which, row, column }), (c) => !c.ok || c.onTarget !== false, readyMs, pace.pollMs);
   if (!before.ok) return { ...before, ok: false, column };
   const blocked = reachProblem(`「${column}」`, before);
   if (blocked) return { ok: false, column, target: before, reason: blocked };

@@ -654,6 +654,19 @@ describe('adding a 费用明细行', () => {
     expect(added).toMatchObject({ ok: true, rowCount: before + 1 });
   });
 
+  // Live 2026-10-20 runs 7, 8, 10: 「费用项目」/「项目」 read back 「」 or 「select」 after the code was typed and Enter
+  // pressed on a slow ERP, and the first fill went to 写入结果未知 for a field that took on the re-run's form.
+  it('writes a lookup cell again when ERP dropped the code it had not resolved yet', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ lookupCommitsLost: 1 }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted', code: null });
+  });
+
+  // Live 2026-10-20 run 9: 「「项目」的落点…上盖着DIV」 right after 新增行, while ERP re-rendered the grid.
+  it('outwaits a cover over a freshly added row instead of refusing on one read', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowCoverTicks: 50 }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted', code: null, message: null });
+  });
+
   it('carries a whole fill through an ERP that paints the row late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
     // The whole fill goes through: the late row is waited for rather than turned into a failure.
