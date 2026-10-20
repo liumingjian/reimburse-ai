@@ -30,7 +30,8 @@ const WHY_NO_RECORDING = {
 // Raised 54 → 55 for the same overlay taking a 新增行 click (QA 2026-10-19, 1 of 13 live): a moment no recording holds.
 // Raised 55 → 56 for the entry page that loads blank until it is loaded again (live 2026-10-20, 2 of 21 sign-ins).
 // Raised 56 → 58 for a lookup ERP dropped unresolved and a cover over a fresh row (live 2026-10-20, 4 of 10 fills).
-const UNVERIFIED_CEILING = 58;
+// Raised 58 → 59 for a lookup that resolves after its commit under the overlay (live 2026-10-20, 20 writes timed).
+const UNVERIFIED_CEILING = 59;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

@@ -661,6 +661,13 @@ describe('adding a 费用明细行', () => {
     expect(await run(fake)).toMatchObject({ status: 'drafted', code: null });
   });
 
+  // Live 2026-10-20: lookups resolved up to 6.2 s after the commit under ERP's overlay, past which a read-back after
+  // 8 s called a lookup still resolving 「」 and wrote into ERP's own work again.
+  it('waits out a lookup ERP is still resolving, and writes nothing into it again', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ lookupResolveMs: 10_000 }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted', code: null, message: null });
+  });
+
   // Live 2026-10-20 run 9: 「「项目」的落点…上盖着DIV」 right after 新增行, while ERP re-rendered the grid.
   it('outwaits a cover over a freshly added row instead of refusing on one read', async () => {
     const fake = await createFakeErp(fakeErpOptions({ newRowCoverTicks: 50 }));

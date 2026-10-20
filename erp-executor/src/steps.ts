@@ -7,7 +7,7 @@
 
 import { autoAttach, evalIn, screenshot, type CdpSession, type ChildTargets } from './cdp';
 import { ExecutorError } from './page';
-import { readGridByColumn, showSection } from './erpform';
+import { OVERLAY_SHOWN, readGridByColumn, showSection } from './erpform';
 import { HIT_JS, clickReach, reachProblem, type Reach } from './hit';
 import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-grid';
 import type { PutInvoiceFiles } from './invoice-files';
@@ -130,7 +130,7 @@ const waitVisibleText = async (page: WritePage, session: CdpSession, text: strin
 
 // The main menu card and ERP's loading overlay, as measured live 2026-10-19 (QA of the 本地执行器's 去报销).
 const MAIN_MENU = '[data-kdformid="BOS_MainSystemMenuCard"]';
-const BLOCKER_SHOWN = `[...document.querySelectorAll('.kd-ui-blockingExtention-item')].some(${visible})`;
+const BLOCKER_SHOWN = OVERLAY_SHOWN;
 // Is the menu's 员工服务 row expanded? A click on the row toggles it, so it is clicked only while it is shut.
 const SERVICES_EXPANDED = `(() => {
   const caption = [...document.querySelectorAll(${JSON.stringify(`${MAIN_MENU} .kd-tabnewstyle-content`)})]

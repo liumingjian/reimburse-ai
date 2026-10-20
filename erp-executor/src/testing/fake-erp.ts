@@ -310,6 +310,14 @@ export type FakeErpOptions = {
    */
   lookupCommitsLost?: number;
   /**
+   * The first committed lookup cell (项目, 费用项目) shows 「」 under the loading overlay for N ms of wall-clock time
+   * (ERP's server call, not page reads), then its name; later lookups resolve at once.
+   * Live 2026-10-20 20 lookup writes resolved in 0.25-6.2 s (median 0.55 s), the slow ones behind one long
+   * DynamicFormService.Call with `.kd-ui-blockingExtention-item` up the whole time; 「」 always turned into the name.
+   * @unverified: a lookup resolves after the commit, under the loading overlay [transient]
+   */
+  lookupResolveMs?: number;
+  /**
    * For N page ticks after 新增行 the new row's cells are under a cover. Live 2026-10-20 run 9 stopped on
    * 「「项目」的落点…上盖着DIV」 right after 新增行, while ERP was still re-rendering the grid.
    * @unverified: a cover sits over a freshly added 费用明细行 for a moment [transient]
@@ -825,6 +833,17 @@ const kendoDate = (raw: string) => {
       ? kendoDate(String(input.value)) ?? before
       : display(column, String(input.value).trim());
     td.textContent = text;
+    // Written again while ERP is still resolving it: the edit and ERP's own work race, and the cell ends empty.
+    const resolving = pendingLookups.findIndex((pending) => pending.td === td);
+    if (resolving >= 0) {
+      pendingLookups.splice(resolving, 1);
+      td.textContent = '';
+    } else if ((column === '项目' || column === '费用项目') && options.lookupResolveMs && text !== '' && !slowLookupDone) {
+      slowLookupDone = true;
+      td.textContent = '';
+      show(q('#form-blocker'), true);
+      pendingLookups.push({ td, text, due: Date.now() + options.lookupResolveMs });
+    }
     // A write ERP does not take: the cell keeps the typed value, ERP's model keeps 0.00 (`moneyWritesNotTaken`).
     const rowIndex = dataRows('detail').indexOf(tr);
     if ((options.moneyWritesNotTaken ?? []).some((drop) => drop.row === rowIndex && drop.column === column)) notTaken.set(td, '0.00');
@@ -928,6 +947,16 @@ const kendoDate = (raw: string) => {
     mutate('addRow', String(dataRows('detail').length));
   }
 
+  /** A lookup ERP has resolved by now (`lookupResolveMs`): its name shows and the overlay lifts. */
+  function flushLookups() {
+    for (const pending of [...pendingLookups]) {
+      if (Date.now() < pending.due) continue;
+      pending.td.textContent = pending.text;
+      pendingLookups.splice(pendingLookups.indexOf(pending), 1);
+    }
+    if (options.lookupResolveMs && pendingLookups.length === 0 && blockerUntil === null) show(q('#form-blocker'), false);
+  }
+
   /** The cover over a freshly added row lifting, `newRowCoverTicks` reads after 新增行. */
   function uncoverNewRow() {
     if (!newRowCover || mainTicks < newRowCover.until) return;
@@ -945,7 +974,7 @@ const kendoDate = (raw: string) => {
   /** Rows the grid still paints as being edited, after the value was taken. */
   function flushEditClass() {
     for (const pending of [...lingeringEditRows]) {
-      if (mainTicks < pending.due) continue;
+      if (Date.now() < pending.due) continue;
       pending.tr.classList.remove('k-grid-edit-row');
       lingeringEditRows.splice(lingeringEditRows.indexOf(pending), 1);
     }
@@ -955,7 +984,7 @@ const kendoDate = (raw: string) => {
   function flushMoneyModel() {
     let flushed = false;
     for (const [tr, pending] of [...pendingMoney]) {
-      if (mainTicks < pending.due) continue;
+      if (Date.now() < pending.due) continue;
       pendingMoney.delete(tr);
       notTaken.delete(pending.td);
       recalc(tr);
@@ -1189,6 +1218,8 @@ const kendoDate = (raw: string) => {
   let lostNewRowClicks = 0;
   let lostLookupCommits = 0;
   let newRowCover: { tr: any; until: number } | null = null;
+  const pendingLookups: Array<{ td: any; text: string; due: number }> = [];
+  let slowLookupDone = false;
   let deadOpenListClicks = 0;
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
@@ -1507,7 +1538,7 @@ const kendoDate = (raw: string) => {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; if (!blockerShown()) show(q('#console-blocker'), false); syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); uncoverNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
+      else { mainTicks += 1; if (!blockerShown()) show(q('#console-blocker'), false); syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); uncoverNewRow(); flushLookups(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':
