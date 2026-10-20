@@ -119,8 +119,12 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       evaluate: async (page, expression) => evalIn((await attach(page as ChromiumPage)).session, expression, { timeout: 10_000 }),
     });
     let probe = await probeLogin(pages);
-    if (probe.status === 'not_logged_in' && probe.page && ports.signIn) {
+    // A page that is neither console nor login is given to the sign-in too, which loads the entry page again while
+    // no form comes: live it was a blank entry page (2026-10-13 2 of 10, 2026-10-19, 2026-10-20 2 of 21). Should no
+    // form come of it either, the job stops saying what the page showed, not that no form came.
+    if ((probe.status === 'not_logged_in' || probe.status === 'unknown') && probe.page && ports.signIn) {
       const signedIn = await ports.signIn((await attach(probe.page as ChromiumPage)).session);
+      if (!signedIn.ok && probe.status === 'unknown' && signedIn.code === 'erp_sign_in_no_form') return await finish('aborted', 'erp_login_unknown', probe.hint ?? null);
       if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
       probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
     }

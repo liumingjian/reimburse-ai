@@ -28,7 +28,8 @@ const WHY_NO_RECORDING = {
 // loading overlay that takes clicks after sign-in. Both measured live that day; the recordings start on a console
 // whose shortcut skips the menu, and the overlay is a moment no recording holds.
 // Raised 54 → 55 for the same overlay taking a 新增行 click (QA 2026-10-19, 1 of 13 live): a moment no recording holds.
-const UNVERIFIED_CEILING = 55;
+// Raised 55 → 56 for the entry page that loads blank until it is loaded again (live 2026-10-20, 2 of 21 sign-ins).
+const UNVERIFIED_CEILING = 56;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

@@ -14,7 +14,7 @@
 import { evalIn, type CdpSession } from './cdp';
 import { HIT_JS, clickReach, type Reach } from './hit';
 import { sleep, waitFor } from './pace';
-import { identityFromObservation, READ_ONLY_SNIPPET, type Observation } from './probe';
+import { erpEntryOf, identityFromObservation, READ_ONLY_SNIPPET, type Observation } from './probe';
 import { signInSnippet } from './recording/sign-in';
 
 export type ErpCredentials = { account: string; password: string };
@@ -61,6 +61,8 @@ export type SignInPorts = {
 export type SignInTiming = {
   /** For the login form to appear. */
   formMs: number;
+  /** Without a form for this long, the entry page is loaded again (default: a third of `formMs`). */
+  formReloadMs?: number;
   /** For the login page to set itself up; once more after a reload. Over the Mac's link kendo alone took ~48 s. */
   readyMs: number;
   /** How long no new request must complete before the page counts as set up. */
@@ -93,8 +95,17 @@ export async function signInWith(ports: SignInPorts, timing: SignInTiming = SIGN
   const first = await ports.look();
   if (signedIn(first)) return { ok: true, submitted: false, ms: now() - started };
 
-  // 1. The form itself, not readyState.
-  let look = first?.form ? first : await poll(ports, (l) => l?.form === true || signedIn(l), timing.formMs, timing.pollMs, now, pause);
+  // 1. The form itself, not readyState. Live 2026-10-20 2 of 21 entry pages never showed it (a body left empty for
+  //    90 s; a load that timed out) and loading the entry page again brought it in 2-30 s, so that is done every
+  //    `formReloadMs` within `formMs`.
+  const formDeadline = now() + timing.formMs;
+  const reloadEvery = timing.formReloadMs ?? timing.formMs / 3;
+  let look = first;
+  while (!look?.form && !signedIn(look)) {
+    look = await poll(ports, (l) => l?.form === true || signedIn(l), Math.min(reloadEvery, formDeadline - now()), timing.pollMs, now, pause);
+    if (look?.form || signedIn(look) || now() >= formDeadline) break;
+    await ports.reload();
+  }
   if (signedIn(look)) return { ok: true, submitted: false, ms: now() - started };
   if (!look?.form) return fail('erp_sign_in_no_form', `${Math.round(timing.formMs / 1000)} 秒内没有出现报销系统登录表单。`);
 
@@ -259,7 +270,9 @@ export function signIn(session: CdpSession, { origin, credentials, timing }: { o
     look: () => lookAt(session, origin),
     submit: async () => (await evalIn<{ ok: boolean }>(session, signInSnippet(credentials.account, credentials.password)).catch(() => null))?.ok === true,
     confirm: async (reach, label) => { await clickReach(session, reach, label); },
-    reload: async () => { await session.send('Page.reload', { ignoreCache: false }).catch(() => null); await sleep(2000); },
+    // The entry page loaded again, not a Page.reload: live 2026-10-20 a reload left a timed-out load where it was, and
+    // navigating brought the form.
+    reload: async () => { await session.send('Page.navigate', { url: erpEntryOf(origin) }).catch(() => null); await sleep(2000); },
     prefetch: async () => { await evalIn(session, PREFETCH, { timeout: 240_000 }).catch(() => null); },
   }, timing);
 }

@@ -335,6 +335,29 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(signIns).toBe(1);
   });
 
+  // Live 2026-10-19 09:25 and 2026-10-13 (2 of 10): the entry page loaded blank, neither console nor login, and the job
+  // stopped on erp_login_unknown instead of letting the sign-in load it again.
+  it('hands a blank entry page to the sign-in, which loads it again, instead of stopping on it', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false, entryPageBlank: true }));
+    let signIns = 0;
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => { signIns += 1; await fake.login(); return { ok: true }; },
+    });
+    expect(result).toMatchObject({ status: 'drafted', code: null });
+    expect(signIns).toBe(1);
+  });
+
+  it('says what the page shows when the sign-in found no login form on it either', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false, entryPageBlank: true }));
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => ({ ok: false, code: 'erp_sign_in_no_form', message: '60 秒内没有出现报销系统登录表单。' }),
+    });
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login_unknown', message: expect.stringContaining('页面是空白的') });
+    expect(server.attempts).toEqual([]);
+  });
+
   it('aborts with the sign-in\'s own reason, before any attempt or input, when ERP refuses the login', async () => {
     const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
     const result = await runFillJob(fillPlan(taskId), {

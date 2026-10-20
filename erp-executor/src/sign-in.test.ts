@@ -14,7 +14,7 @@ const console_: LoginLook = { ...loginPage(), verdict: 'matched', onMainConsole:
  * A login page on a virtual clock. `afterSubmit(n)` says what the page shows after the n-th submit (1-based); the
  * page stays on it until something else changes it.
  */
-function scriptedPage(start: LoginLook | null, afterSubmit: (n: number, page: LoginLook | null) => LoginLook | null) {
+function scriptedPage(start: LoginLook | null, afterSubmit: (n: number, page: LoginLook | null) => LoginLook | null, afterReload: (n: number, page: LoginLook | null) => LoginLook | null = (_n, p) => p) {
   let t = 0;
   let page = start;
   const log: string[] = [];
@@ -33,7 +33,7 @@ function scriptedPage(start: LoginLook | null, afterSubmit: (n: number, page: Lo
       if (label.includes('语言未加载')) page = loginPage({ requests: (page?.requests ?? 0) + 5 });
       if (label.includes('已登录在线')) page = console_;
     },
-    reload: async () => { log.push('reload'); },
+    reload: async () => { log.push('reload'); page = afterReload(log.filter((l) => l === 'reload').length, page); },
     prefetch: async () => { log.push('prefetch'); },
     now: () => t,
     sleep: async (ms) => { t += ms; },
@@ -87,9 +87,20 @@ describe('signing in to ERP', () => {
     expect(page.submits).toBe(1);
   });
 
-  it('stops when the login form never appears', async () => {
+  it('stops when the login form never appears, having loaded the entry page again twice', async () => {
     const page = scriptedPage(loginPage({ form: false }), (_n, p) => p);
     expect(await signInWith(page.ports)).toMatchObject({ ok: false, code: 'erp_sign_in_no_form' });
     expect(page.submits).toBe(0);
+    expect(page.log).toEqual(['reload', 'reload']);
+    expect(page.t).toBeLessThanOrEqual(SIGN_IN_TIMING.formMs + SIGN_IN_TIMING.pollMs);
+  });
+
+  // Live 2026-10-20 2 of 21 sign-ins met an entry page whose body stayed empty for 90 s (once a timed-out load);
+  // loading the entry page again brought the form in 2-30 s.
+  it('loads the entry page again when no login form has come, and signs in on the one that comes', async () => {
+    const blank = loginPage({ verdict: 'unknown', form: false, dataCentreReady: false });
+    const page = scriptedPage(blank, () => console_, () => loginPage());
+    expect(await signInWith(page.ports)).toMatchObject({ ok: true, submitted: true });
+    expect(page.log).toEqual(['reload', 'prefetch', 'submit 1']);
   });
 });

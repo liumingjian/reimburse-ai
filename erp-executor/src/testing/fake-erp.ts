@@ -61,6 +61,13 @@ export type FakeErpOptions = {
   origin?: string;
   loggedIn?: boolean;
   /**
+   * The ERP entry page loads logged out with an empty body: no login form, no console, until it is loaded again.
+   * Live 2026-10-20 2 of 21 sign-ins met it (scripts loaded, body empty for 90 s); loading the entry page again brought
+   * the form in 2-30 s.
+   * @unverified: the entry page stays blank until it is loaded again [transient]
+   */
+  entryPageBlank?: boolean;
+  /**
    * Serve a recording (./recordings/<name>, see recordings.ts) instead of the hand-written fixtures: its login page
    * while logged out, and its pages in order while logged in, moving on when a click lands where the live click
    * did; a page's recorded child frame (the 发票无忧助手) is the child target. Keys are ignored. None of the
@@ -658,7 +665,9 @@ export async function createFakeErp(options: FakeErpOptions) {
   async function render() {
     const page = recordedPage();
     if (page) return renderRecorded(page);
-    const html = erpFixtureHtml(loggedIn, { uuid: formUuid, displayName: account.displayName, erpBuild, formId, today });
+    const html = !loggedIn && options.entryPageBlank
+      ? '<!doctype html><html><head><title>金蝶云星空</title></head><body></body></html>'
+      : erpFixtureHtml(loggedIn, { uuid: formUuid, displayName: account.displayName, erpBuild, formId, today });
     const doc = new FakeDocument(html, url);
     // K3Cloud states its front-end resource version nowhere in the DOM, only on this global, which is where the
     // compatibility fingerprint reads it. jsdom runs no inline script, so the fake sets it directly.
