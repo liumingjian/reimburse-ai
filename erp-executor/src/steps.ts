@@ -166,18 +166,35 @@ async function outwaitBlocker(page: WritePage, session: CdpSession) {
   }
 }
 
+// A blank assistant window closes on its × in this long, or the × is pressed once more.
+const CLOSE_MS = 10_000;
+
 // The assistant's window as recorded (recordings/invoice-assistant, 06): a Kendo window titled 发票无忧助手 around
 // the piaozone iframe. It is on screen before that iframe is a CDP target.
 const ASSISTANT_SHOWN = `(() => [...document.querySelectorAll('.k-window')]
   .some((w) => (${visible})(w) && String(w.querySelector('.k-window-title')?.textContent || '').includes('发票无忧助手')))()`;
 
-/** Load the ERP entry page again and wait for the console it comes back to, its overlay gone. Opens nothing. */
-async function reloadConsole(page: WritePage) {
+/** The page a load of the entry page comes back to: the console, or ERP's login form. */
+const LANDED = `(() => {
+  const vis = ${visible};
+  if (document.querySelector('.kd_SystemMenu')) return 'console';
+  return [...document.querySelectorAll('input[type=password]')].some(vis) ? 'login' : null;
+})()`;
+
+/**
+ * Load the ERP entry page again and wait for the console, its overlay gone. Opens nothing. Live 2026-10-21 the
+ * load came back to ERP's login form, the session gone with it, so a login form is signed in on with `signIn`.
+ */
+async function reloadConsole(page: WritePage, signIn?: () => Promise<boolean>) {
   const { session } = page;
+  const { pollMs } = paceOf(page);
   const { origin } = new URL(await pageUrl(session));
   await session.send('Page.navigate', { url: erpEntryOf(origin) }).catch(() => null);
   await sleep(paceOf(page).settleMs);
-  await waitFor(() => evalIn<boolean>(session, `!!document.querySelector('.kd_SystemMenu')`), Boolean, cap(page, CONSOLE_BACK_MS), paceOf(page).pollMs);
+  const landed = await waitFor(() => evalIn<string | null>(session, LANDED), Boolean, cap(page, CONSOLE_BACK_MS), pollMs);
+  if (landed === 'login' && signIn && (await signIn())) {
+    await waitFor(() => evalIn<string | null>(session, LANDED), (at) => at === 'console', cap(page, CONSOLE_BACK_MS), pollMs);
+  }
   await outwaitBlocker(page, session);
 }
 
@@ -197,7 +214,7 @@ async function assistantSession(page: WritePage, timeoutMs = 45_000): Promise<Cd
  * (`replaceNewForms`): the 新增 it finds is the unsaved bill it was offered to replace, so that tab is closed first
  * and a fresh one opened — see `closeNewFormTabs`.
  */
-export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000, replaceNewForms = false } = {}) {
+export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000, replaceNewForms = false, signIn }: { timeoutMs?: number; replaceNewForms?: boolean; signIn?: () => Promise<boolean> } = {}) {
   const { session } = page;
   if (replaceNewForms) {
     const cleared = await closeNewFormTabs(tabActions(session), { confirmMs: cap(page, CONFIRM_MS), closedMs: cap(page, CLOSED_MS), reachMs: cap(page, REACH_MS) });
@@ -247,7 +264,7 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
       // A menu that stays empty is loaded again, as the entry page is at sign-in: live 2026-10-21 the card stayed open
       // and empty for 45 s of clicks, where it otherwise fills in under 5 s and a second click leaves it as it is.
       if (!(await menuShows(cap(page, MENU_FILL_MS)))) {
-        await reloadConsole(page);
+        await reloadConsole(page, signIn);
         if (!(await menuShows(budget))) {
           throw notOpened(`点过 ERP 主菜单之后菜单里一直没有出现「员工服务」，重新载入报销系统主页之后 ${seconds} 秒内也没有`);
         }
@@ -360,8 +377,14 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
       if (Date.now() >= deadline) {
         throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND', `发票无忧助手的窗口打开了 ${blank} 次，里面的页面都没有加载出来（${seconds} 秒）`);
       }
-      await closeInvoiceAssistant(page);
-      await waitFor(() => evalIn<boolean>(session, ASSISTANT_SHOWN), (up) => up === false, left(), paceOf(page).pollMs);
+      // Its own ×, twice at most: live 2026-10-21 one blank window took the click and stayed up, its overlay over the
+      // 选择发票 button the next try needs.
+      let shut = false;
+      for (let press = 0; press < 2 && !shut; press += 1) {
+        await closeInvoiceAssistant(page);
+        shut = (await waitFor(() => evalIn<boolean>(session, ASSISTANT_SHOWN), (up) => up === false, left(CLOSE_MS), paceOf(page).pollMs)) === false;
+      }
+      if (!shut) throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND', '发票无忧助手的窗口打开后一直是空白，点了关闭也没有关掉');
     } else if (Date.now() >= deadline) {
       throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND', `点过「${modeName}」${clicks} 次，${seconds} 秒内发票无忧助手都没有打开`);
     }

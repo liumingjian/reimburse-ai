@@ -107,6 +107,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     ]);
   });
 
+  // One whole job per ERP invoice type: 20 s alone on the Mac, past 60 s inside the full suite (2026-10-21).
   it('writes every confirmed ERP invoice type through the simulated ERP dropdown and reads it back', async () => {
     for (const invoiceType of ERP_INVOICE_TYPES) {
       const selected = erpInvoiceTypeOf('定额发票', invoiceType);
@@ -119,7 +120,7 @@ describe('fill job through the protocol on the fake ERP', () => {
       expect(result, `${invoiceType}: ${JSON.stringify(result)}`).toMatchObject({ type: 'result', status: 'drafted' });
       expect(column(fake, 'detail', 3)).toEqual([invoiceType, invoiceType]);
     }
-  });
+  }, 120_000);
 
   // A write is not verified by reading back the cell it was typed into. Live 2026-09-20 three of eleven rows read
   // back both money cells correctly and still carried a 申请报销金额 that was not 费用金额 + 税额, so the bill was
@@ -614,8 +615,13 @@ describe('opening a new 费用报销单', () => {
   // and the run stopped on 「点过 ERP 主菜单之后 45 秒内菜单里没有出现「员工服务」」.
   it('loads the console again when the main menu stays empty, and goes on through the menu it brings', async () => {
     const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' }, menuEmptyUntilReload: true }));
-    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+    let signIns = 0;
+    const signIn = async () => { signIns += 1; await fake.login(); return true; };
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000, signIn })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
     expect(fake.pageLoads).toBe(1);
+    // Live 2026-10-21, the next round: the reload came back to ERP's login form, and the run stopped 132 s in on
+    // 「ERP 主菜单不可唯一定位（匹配 0 个）」.
+    expect(signIns).toBe(1);
   });
 
   it('does not load the console again for a menu that fills', async () => {
@@ -789,6 +795,14 @@ describe('choosing the import mode on the 选择发票 menu', () => {
     await expect(openInvoiceAssistant(page, { timeoutMs: 600 }))
       .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringContaining('里面的页面都没有加载出来') });
     expect(fake.assistantOpens).toBeGreaterThan(1);
+  });
+
+  it('says so when a blank assistant window will not close, rather than naming what its overlay covers', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assistantBlankOpens: 1, assistantBlankWontClose: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 2000 }))
+      .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringContaining('点了关闭也没有关掉') });
   });
 
   it('names the clicks when no assistant ever opened', async () => {

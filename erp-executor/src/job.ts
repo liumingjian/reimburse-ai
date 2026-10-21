@@ -197,7 +197,10 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('navigate', 'running');
     await prepareErpWrite({
       page: write,
-      navigate: (p) => openNewReimbursement(p, { timeoutMs: 45_000, replaceNewForms: plan.replaceAbandonedForm === true }),
+      navigate: (p) => openNewReimbursement(p, {
+        timeoutMs: 45_000, replaceNewForms: plan.replaceAbandonedForm === true,
+        ...(ports.signIn ? { signIn: async () => (await ports.signIn!(session)).ok } : {}),
+      }),
       read: async () => {
         const readings = await readForm(session);
         await step('compatibility', 'running');

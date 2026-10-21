@@ -172,6 +172,12 @@ export type FakeErpOptions = {
    */
   assistantBlankOpens?: number;
   /**
+   * A blank assistant window (`assistantBlankOpens`) does not close on its ×. Live 2026-10-21 one took the click, its
+   * × left pressed, and stayed up with its overlay over the 选择发票 button.
+   * @unverified: a blank assistant window can stay up when its × is clicked [transient]
+   */
+  assistantBlankWontClose?: boolean;
+  /**
    * Clicking an invoice kind (票种) tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach.
    * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged [upload]
    */
@@ -1335,6 +1341,7 @@ const kendoDate = (raw: string) => {
         // A 处理结果 whose 退出 does nothing: the click lands, the window stays, and everything under it is
         // unreachable from then on.
         if (options.importReportStaysOpen && win.id === 'result-window') return undefined;
+        if (options.assistantBlankWontClose && win.id === 'assistant-window' && !child) return undefined;
         return show(win, false);
       }
       default:
@@ -1595,9 +1602,10 @@ const kendoDate = (raw: string) => {
         case 'DOM.getDocument': return { root: { nodeId: 1 } };
         case 'DOM.querySelector': return { nodeId: doc.document.querySelector(params.selector) ? 2 : 0 };
         case 'DOM.setFileInputFiles': setFiles((params.files as string[]).map((path) => readFileSync(path))); return {};
-        // Loading the entry page again while signed in brings the console back, as a fresh page.
+        // Loading the entry page again ends the session: live 2026-10-21 it came back to the login form.
+        // @unverified: loading the entry page again signs the session out [transient]
         case 'Page.navigate':
-          if (doc === main && !recorded) { pageLoads += 1; main = await render(); }
+          if (doc === main && !recorded) { pageLoads += 1; loggedIn = false; main = await render(); }
           return { frameId: 'main' };
         case 'Page.captureScreenshot': return { data: Buffer.from(`fake-screenshot ${JSON.stringify(params.clip ?? null)}`).toString('base64') };
         default: return {};
