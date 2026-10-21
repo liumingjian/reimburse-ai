@@ -146,6 +146,18 @@ export type FakeErpOptions = {
    */
   notFillEntryHitsNeighbour?: boolean;
   /**
+   * The first N clicks on 不生成费用明细 close the 选择发票 menu and open nothing. Live 2026-10-21 (1 of 10 runs) the
+   * click passed its hit test, the menu shut, and no 发票无忧助手 window came in the 90 s after it.
+   * @unverified: a click on 不生成费用明细 can shut the menu and open no assistant [transient]
+   */
+  notFillEntryClicksLost?: number;
+  /**
+   * The assistant's window shows at once, and its piaozone iframe attaches as a CDP target this many ms (wall clock)
+   * later: a slow assistant, which a second click on 不生成费用明细 must not open twice.
+   * @unverified: the assistant's window can show before its iframe attaches [transient]
+   */
+  assistantAttachDelayMs?: number;
+  /**
    * Clicking an invoice kind (票种) tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach.
    * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged [upload]
    */
@@ -1090,7 +1102,7 @@ const kendoDate = (raw: string) => {
       setTimeout(() => {
         emitEvent('Target.attachedToTarget', { sessionId, targetInfo: { targetId, type: 'iframe', url: 'about:blank' } });
         emitEvent('Target.targetInfoChanged', { targetInfo: { targetId, type: 'iframe', url: doc.window.location.href } });
-      }, 0);
+      }, options.assistantAttachDelayMs ?? 0);
     }
   }
 
@@ -1216,6 +1228,7 @@ const kendoDate = (raw: string) => {
 
   let deadNewFormClicks = 0;
   let lostNewRowClicks = 0;
+  let fillEntryClicks = 0;
   let lostLookupCommits = 0;
   let newRowCover: { tr: any; until: number } | null = null;
   const pendingLookups: Array<{ td: any; text: string; due: number }> = [];
@@ -1282,8 +1295,10 @@ const kendoDate = (raw: string) => {
         for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, true);
         return undefined;
       case 'fill-entry': {
-        importMode = el.closest('[data-mode]').getAttribute('data-mode');
+        fillEntryClicks += 1;
         for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, false);
+        if (fillEntryClicks <= (options.notFillEntryClicksLost ?? 0)) return undefined;
+        importMode = el.closest('[data-mode]').getAttribute('data-mode');
         return openAssistant();
       }
       case 'new-row': {
@@ -1585,6 +1600,8 @@ const kendoDate = (raw: string) => {
     get recordedPage() { return recordedPage()?.name ?? null; },
     /** Which 选择发票 menu item the clicks actually landed on, null until one of them is clicked. */
     get importMode() { return importMode; },
+    /** Clicks on a 选择发票 menu item, landed or lost (`notFillEntryClicksLost`). */
+    get fillEntryClicks() { return fillEntryClicks; },
     /** Clicks the loading overlay took (`consoleBlockerTicks`, `newRowClicksLost`). */
     get swallowedClicks() { return swallowedClicks; },
     /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */

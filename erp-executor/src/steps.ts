@@ -161,6 +161,11 @@ async function outwaitBlocker(page: WritePage, session: CdpSession) {
   }
 }
 
+// The assistant's window as recorded (recordings/invoice-assistant, 06): a Kendo window titled 发票无忧助手 around
+// the piaozone iframe. It is on screen before that iframe is a CDP target.
+const ASSISTANT_SHOWN = `(() => [...document.querySelectorAll('.k-window')]
+  .some((w) => (${visible})(w) && String(w.querySelector('.k-window-title')?.textContent || '').includes('发票无忧助手')))()`;
+
 /** The piaozone invoice assistant (发票无忧助手) lives in a cross-origin iframe: its own CDP target. */
 async function assistantSession(page: WritePage, timeoutMs = 45_000): Promise<CdpSession> {
   page.children ??= await autoAttach(page.session);
@@ -313,6 +318,33 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
   page.children ??= await autoAttach(session);
   const section = await showSection(session, '收票信息', { settleMs: paceOf(page).settleMs, pace: paceOf(page) });
   if (!section.ok) throw new ExecutorError('INVOICE_ASSISTANT_ENTRY_NOT_FOUND', section.reason);
+  // The item is clicked again when no assistant window comes of the click: live 2026-10-21 one click shut the menu
+  // and opened nothing. Only while no 发票无忧助手 window is up, so a slow assistant is waited for, never opened twice.
+  const budget = cap(page, timeoutMs);
+  const deadline = Date.now() + budget;
+  const opens = async () => Boolean(await waitFor(() => evalIn<boolean>(session, ASSISTANT_SHOWN), Boolean,
+    Math.min(budget / 3, Math.max(0, deadline - Date.now())), paceOf(page).pollMs));
+  let clicks = 1;
+  let chosen = await chooseImportMode(page, modeId, modeName, timeoutMs);
+  while (!(await opens())) {
+    if (Date.now() >= deadline) {
+      throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND',
+        `点过「${modeName}」${clicks} 次，${Math.round(budget / 1000)} 秒内发票无忧助手都没有打开`);
+    }
+    chosen = await chooseImportMode(page, modeId, modeName, timeoutMs);
+    clicks += 1;
+  }
+  await assistantSession(page, Math.max(budget / 3, deadline - Date.now()));
+  const { target, after } = chosen;
+  return {
+    ok: true, mode: modeName, selectedId: target.wantedId ?? target.hitId ?? null,
+    menuItemIds: target.items ?? [], hitBefore: target.hitId ?? null, hitAfter: after?.id ?? null, menuOpenAfter: after?.menuOpen ?? null,
+  };
+}
+
+/** Open the 选择发票 menu and click the one item `modeId`, proven by element id to be what is at the point. */
+async function chooseImportMode(page: WritePage, modeId: string, modeName: string, timeoutMs: number) {
+  const { session } = page;
   await clickCss(page, session, 'div[id*="FRECINVINFO_ENTRYBAR-tbReceiveInv_wrapper"] > a.k-split-button-arrow', '选择发票下拉按钮');
   await sleep(paceOf(page).settleMs);
   const menuVisible = await evalIn<boolean>(session, `(() => {
@@ -346,11 +378,7 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
   // The same point, read again: with the menu closed it no longer answers the item, which is the evidence that the
   // click went to the item that was there and not to something that is still sitting under the cursor.
   const after = await evalIn<{ id: string | null; tag: string | null; menuOpen: boolean }>(session, hitAt(target.x!, target.y!, modeId));
-  await assistantSession(page, timeoutMs);
-  return {
-    ok: true, mode: modeName, selectedId: target.wantedId ?? target.hitId ?? null,
-    menuItemIds: target.items ?? [], hitBefore: target.hitId ?? null, hitAfter: after?.id ?? null, menuOpenAfter: after?.menuOpen ?? null,
-  };
+  return { target, after };
 }
 
 /** The local-path route (`invoice-files.ts`): the node executor's staged files, set on the input by path. */

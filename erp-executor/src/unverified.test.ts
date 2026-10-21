@@ -31,7 +31,9 @@ const WHY_NO_RECORDING = {
 // Raised 55 → 56 for the entry page that loads blank until it is loaded again (live 2026-10-20, 2 of 21 sign-ins).
 // Raised 56 → 58 for a lookup ERP dropped unresolved and a cover over a fresh row (live 2026-10-20, 4 of 10 fills).
 // Raised 58 → 59 for a lookup that resolves after its commit under the overlay (live 2026-10-20, 20 writes timed).
-const UNVERIFIED_CEILING = 59;
+// Raised 59 → 61 for a click on 不生成费用明细 that opened no assistant, and an assistant window up before its iframe
+// attaches (live 2026-10-21, 1 of 10 runs): moments no recording holds.
+const UNVERIFIED_CEILING = 61;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

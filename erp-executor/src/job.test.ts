@@ -738,6 +738,33 @@ describe('choosing the import mode on the 选择发票 menu', () => {
     expect(fake.commands.filter((c) => c.method === 'Emulation.setFocusEmulationEnabled').map((c) => c.sessionId))
       .toContain('piaozone-session-1');
   });
+
+  // Live 2026-10-21 (1 of 10 runs): the click on 不生成费用明细 shut the menu and opened no assistant, and the run
+  // waited out 90 s for an iframe that was never coming, then stopped on INVOICE_ASSISTANT_NOT_FOUND.
+  it('opens the menu and clicks 不生成费用明细 again when the click opened no assistant', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, notFillEntryClicksLost: 1 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
+    expect(fake.fillEntryClicks).toBe(2);
+    expect(fake.importMode).toBe('不生成费用明细');
+  });
+
+  it('does not click again while the assistant\'s window is up and only its iframe is slow to attach', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assistantAttachDelayMs: 1500 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await openInvoiceAssistant(page, { timeoutMs: 2000 });
+    expect(fake.fillEntryClicks).toBe(1);
+  });
+
+  it('names the clicks when no assistant ever opened', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ notFillEntryClicksLost: 100 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 600 }))
+      .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringMatching(/点过「不生成费用明细」\d 次/) });
+    expect(fake.fillEntryClicks).toBeGreaterThan(1);
+  });
 });
 
 describe('the 发票导入单据 click', () => {
