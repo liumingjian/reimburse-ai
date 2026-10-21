@@ -33,7 +33,8 @@ const WHY_NO_RECORDING = {
 // Raised 58 → 59 for a lookup that resolves after its commit under the overlay (live 2026-10-20, 20 writes timed).
 // Raised 59 → 61 for a click on 不生成费用明细 that opened no assistant, and an assistant window up before its iframe
 // attaches (live 2026-10-21, 1 of 10 runs): moments no recording holds.
-const UNVERIFIED_CEILING = 61;
+// Raised 61 → 62 for a main menu card that stays empty until the page is loaded again (live 2026-10-21, 1 of 10 runs).
+const UNVERIFIED_CEILING = 62;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

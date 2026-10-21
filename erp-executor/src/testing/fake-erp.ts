@@ -68,6 +68,13 @@ export type FakeErpOptions = {
    */
   entryPageBlank?: boolean;
   /**
+   * The main menu card opens on a click and stays empty — no 员工服务, no row at all — until the page is loaded
+   * again. Live 2026-10-21 (1 of 10 runs) the card stayed open and empty for the 45 s a run clicked it every 5 s,
+   * where 6 sign-ins measured that day filled it 0.9-4.8 s after the click, and a second click left it as it was.
+   * @unverified: the main menu card can stay empty until the page is loaded again [transient]
+   */
+  menuEmptyUntilReload?: boolean;
+  /**
    * Serve a recording (./recordings/<name>, see recordings.ts) instead of the hand-written fixtures: its login page
    * while logged out, and its pages in order while logged in, moving on when a click lands where the live click
    * did; a page's recorded child frame (the 发票无忧助手) is the child target. Keys are ignored. None of the
@@ -1228,6 +1235,7 @@ const kendoDate = (raw: string) => {
 
   let deadNewFormClicks = 0;
   let lostNewRowClicks = 0;
+  let pageLoads = 0;
   let fillEntryClicks = 0;
   let lostLookupCommits = 0;
   let newRowCover: { tr: any; until: number } | null = null;
@@ -1256,7 +1264,9 @@ const kendoDate = (raw: string) => {
     if (td && !td.parentElement.classList.contains('k-footer-template')) return editCell(td);
     commitEditor();
     switch (action) {
-      case 'system-menu': return show(q('#system-menu'), true);
+      case 'system-menu':
+        show(q('#system-menu .kd-site-accordion'), !(options.menuEmptyUntilReload && pageLoads === 0));
+        return show(q('#system-menu'), true);
       case 'menu-parent': return toggleMenuRow(el.closest('li'));
       case 'menu-child': return selectMenuNode(main.document, el.getAttribute('data-node'));
       case 'open-list':
@@ -1575,6 +1585,10 @@ const kendoDate = (raw: string) => {
         case 'DOM.getDocument': return { root: { nodeId: 1 } };
         case 'DOM.querySelector': return { nodeId: doc.document.querySelector(params.selector) ? 2 : 0 };
         case 'DOM.setFileInputFiles': setFiles((params.files as string[]).map((path) => readFileSync(path))); return {};
+        // Loading the entry page again while signed in brings the console back, as a fresh page.
+        case 'Page.navigate':
+          if (doc === main && !recorded) { pageLoads += 1; main = await render(); }
+          return { frameId: 'main' };
         case 'Page.captureScreenshot': return { data: Buffer.from(`fake-screenshot ${JSON.stringify(params.clip ?? null)}`).toString('base64') };
         default: return {};
       }
@@ -1602,6 +1616,8 @@ const kendoDate = (raw: string) => {
     get importMode() { return importMode; },
     /** Clicks on a 选择发票 menu item, landed or lost (`notFillEntryClicksLost`). */
     get fillEntryClicks() { return fillEntryClicks; },
+    /** Times the page was loaded again (`Page.navigate`). */
+    get pageLoads() { return pageLoads; },
     /** Clicks the loading overlay took (`consoleBlockerTicks`, `newRowClicksLost`). */
     get swallowedClicks() { return swallowedClicks; },
     /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */

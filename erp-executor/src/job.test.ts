@@ -610,6 +610,20 @@ describe('opening a new 费用报销单', () => {
     expect(fake.swallowedClicks).toBe(0);
   });
 
+  // Live 2026-10-21 (1 of 10 runs): the menu card opened and stayed empty for the 45 s the run clicked it every 5 s,
+  // and the run stopped on 「点过 ERP 主菜单之后 45 秒内菜单里没有出现「员工服务」」.
+  it('loads the console again when the main menu stays empty, and goes on through the menu it brings', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' }, menuEmptyUntilReload: true }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+    expect(fake.pageLoads).toBe(1);
+  });
+
+  it('does not load the console again for a menu that fills', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' } }));
+    await openNewReimbursement(writePage(fake), { timeoutMs: 2000 });
+    expect(fake.pageLoads).toBe(0);
+  });
+
   it('stops at the step that achieved nothing, naming it', async () => {
     const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'ERX' }, openListDeadClicks: 1_000 }));
     await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))

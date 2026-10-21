@@ -13,7 +13,8 @@ import { readPane, recognisedTotal, selectRecognisedInvoices } from './invoice-g
 import type { PutInvoiceFiles } from './invoice-files';
 import { dismissNotice } from './notices';
 import { DEFAULT_PACE, sleep, waitFor, type Pace } from './pace';
-import { DETAIL_COLUMN, RECEIPTS_COLUMN } from './reader';
+import { erpEntryOf } from './probe';
+import { DETAIL_COLUMN, RECEIPTS_COLUMN, pageUrl } from './reader';
 import { CLOSED_MS, CONFIRM_MS, REACH_MS, closeNewFormTabs, dialogsSnippet, dismissPoint, tabActions } from './tabs';
 
 export type WritePage = { session: CdpSession; children?: ChildTargets; pace?: Pace };
@@ -140,6 +141,10 @@ const SERVICES_EXPANDED = `(() => {
 })()`;
 // The menu opens in under 4 s once its click lands (live 2026-10-19), so a lost click is retried after this, not 15 s.
 const MENU_CONFIRM_MS = 5_000;
+// The menu fills 0.9-4.8 s after the click (6 sign-ins, live 2026-10-21); still empty after this, the page is loaded again.
+const MENU_FILL_MS = 20_000;
+// Loaded again while signed in, the entry page comes back to the console; sign-in gives a slow one 120 s.
+const CONSOLE_BACK_MS = 120_000;
 const BLOCKER_WAIT_MS = 15_000;
 // A 新增行 that lands shows its row in under 2 s (live 2026-10-19), so a lost one is clicked again after this.
 const ROW_CONFIRM_MS = 4_000;
@@ -165,6 +170,16 @@ async function outwaitBlocker(page: WritePage, session: CdpSession) {
 // the piaozone iframe. It is on screen before that iframe is a CDP target.
 const ASSISTANT_SHOWN = `(() => [...document.querySelectorAll('.k-window')]
   .some((w) => (${visible})(w) && String(w.querySelector('.k-window-title')?.textContent || '').includes('发票无忧助手')))()`;
+
+/** Load the ERP entry page again and wait for the console it comes back to, its overlay gone. Opens nothing. */
+async function reloadConsole(page: WritePage) {
+  const { session } = page;
+  const { origin } = new URL(await pageUrl(session));
+  await session.send('Page.navigate', { url: erpEntryOf(origin) }).catch(() => null);
+  await sleep(paceOf(page).settleMs);
+  await waitFor(() => evalIn<boolean>(session, `!!document.querySelector('.kd_SystemMenu')`), Boolean, cap(page, CONSOLE_BACK_MS), paceOf(page).pollMs);
+  await outwaitBlocker(page, session);
+}
 
 /** The piaozone invoice assistant (发票无忧助手) lives in a cross-origin iframe: its own CDP target. */
 async function assistantSession(page: WritePage, timeoutMs = 45_000): Promise<CdpSession> {
@@ -200,8 +215,8 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
   // form writes nothing.
   const budget = cap(page, timeoutMs);
   const seconds = Math.round(budget / 1000);
-  const until = async (click: () => Promise<unknown>, effect: string, { windowMs = budget / 3, scope }: { windowMs?: number; scope?: string } = {}) => {
-    const deadline = Date.now() + budget;
+  const until = async (click: () => Promise<unknown>, effect: string, { windowMs = budget / 3, scope, withinMs = budget }: { windowMs?: number; scope?: string; withinMs?: number } = {}) => {
+    const deadline = Date.now() + withinMs;
     for (;;) {
       await outwaitBlocker(page, session);
       await click();
@@ -228,8 +243,14 @@ export async function openNewReimbursement(page: WritePage, { timeoutMs = 45_000
     } else {
       // The main menu reopens on the second-level node this ERP user last chose, kept by ERP (live 2026-10-19), and
       // only 员工服务 › 人人报销 shows 我的费用报销: from anywhere else, a click on 员工服务 just expands its row.
-      if (!(await until(() => clickCss(page, session, '.kd_SystemMenu', 'ERP 主菜单'), '员工服务', { windowMs: MENU_CONFIRM_MS, scope: MAIN_MENU }))) {
-        throw notOpened(`点过 ERP 主菜单之后 ${seconds} 秒内菜单里没有出现「员工服务」`);
+      const menuShows = (withinMs: number) => until(() => clickCss(page, session, '.kd_SystemMenu', 'ERP 主菜单'), '员工服务', { windowMs: MENU_CONFIRM_MS, scope: MAIN_MENU, withinMs });
+      // A menu that stays empty is loaded again, as the entry page is at sign-in: live 2026-10-21 the card stayed open
+      // and empty for 45 s of clicks, where it otherwise fills in under 5 s and a second click leaves it as it is.
+      if (!(await menuShows(cap(page, MENU_FILL_MS)))) {
+        await reloadConsole(page);
+        if (!(await menuShows(budget))) {
+          throw notOpened(`点过 ERP 主菜单之后菜单里一直没有出现「员工服务」，重新载入报销系统主页之后 ${seconds} 秒内也没有`);
+        }
       }
       if (!(await has('我的费用报销', MAIN_MENU))) {
         if (!(await evalIn<boolean>(session, SERVICES_EXPANDED))) {
