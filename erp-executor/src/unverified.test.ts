@@ -37,7 +37,8 @@ const WHY_NO_RECORDING = {
 // Raised 62 → 63 for a 发票无忧助手 window that opens blank (live 2026-10-21, 1 of 10 runs).
 // Raised 63 → 64 for loading the entry page again signing the session out (live 2026-10-21, once).
 // Raised 64 → 65 for a blank assistant window that stays up on its × (live 2026-10-21, once).
-const UNVERIFIED_CEILING = 65;
+// Raised 65 → 66 for ERP's computed 申请报销金额 trailing a money cell by seconds (live 2026-10-21, 1 of 10 runs).
+const UNVERIFIED_CEILING = 66;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

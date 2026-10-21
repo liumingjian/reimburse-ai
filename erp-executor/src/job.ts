@@ -18,7 +18,7 @@ import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './page';
 import { compareDraft, findDrafts, pressDraft, viewDraft, waitDrafted } from './draft';
-import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
+import { MONEY_SETTLE_MS, fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
 import { checkRerun, RECEIPT_INVOICE_NO, rerunRefusal } from './occupancy';
 import { DEFAULT_PACE, waitFor, type Pace } from './pace';
@@ -315,7 +315,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     const causa = markedPurpose(preview.purpose, plan.draft.mark);
     const filled = await fillApprovedPreview(write, {
       approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'), causa,
-      addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs,
+      addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs, settleMs: Math.min(MONEY_SETTLE_MS, pace.longMs),
       onRowWritten: (done, total) => step('fill', 'running', { done, total }),
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));

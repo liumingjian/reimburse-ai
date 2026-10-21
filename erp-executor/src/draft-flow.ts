@@ -274,9 +274,16 @@ export type FillResult =
  * Fill an approved preview. The first read is a no-write preflight: one new tab, empty bill number, exact receipt
  * identities, no unlocated detail row. A missing addRow adapter is a visible blocker, never a guessed click.
  */
+// ERP's computed 申请报销金额 after a money write: ~260ms when ERP is fast (V-59). Live 2026-10-21 one row's was still
+// empty past the ~3 s this gate used to allow, on a run whose lookups took up to 6 s; the gate returns as soon as
+// ERP agrees, so the ceiling costs a fast ERP nothing.
+export const MONEY_SETTLE_MS = 30_000;
+// And never fewer reads than the gate always made, however short `settleMs` is.
+const MONEY_SETTLE_READS = 12;
+
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {}, causa = null,
-  witnessReads = 8, witnessDelayMs = 900, settleReads = 12, settleDelayMs = 250, onRowWritten = null,
+  witnessReads = 8, witnessDelayMs = 900, settleMs = MONEY_SETTLE_MS, settleDelayMs = 250, onRowWritten = null,
 }: {
   /** Told after each 明细 row is written and witnessed: how many rows are done out of the preview's (去报销进度). */
   onRowWritten?: ((done: number, total: number) => Promise<void>) | null;
@@ -288,8 +295,11 @@ export async function fillApprovedPreview<P>(page: P, {
   causa?: string | null;
   /** How many times the computed column is re-read while ERP is still recalculating, and how long between reads. */
   witnessReads?: number; witnessDelayMs?: number;
-  /** The same two knobs for the gate BETWEEN the two money writes of one row; ERP was measured settling in ~260ms. */
-  settleReads?: number; settleDelayMs?: number;
+  /**
+   * The gate BETWEEN the two money writes of one row: how long ERP's computed column is given to catch up, and how
+   * long between reads. ERP was measured settling in ~260ms (V-59), and seconds on a slow ERP (live 2026-10-21).
+   */
+  settleMs?: number; settleDelayMs?: number;
 }): Promise<FillResult> {
   const problems: Problem[] = gateAndApprovalProblems(approvedPreview, freshGate, approval);
   if (problems.length) return fail('preflight', problems);
@@ -360,11 +370,12 @@ export async function fillApprovedPreview<P>(page: P, {
       // patient when it is not, and it does not silently re-break the day the server gets slower.
       if (MONEY_COLUMNS.has(field.column)) {
         let settled = false;
-        for (let read = 0; read < Math.max(1, settleReads); read++) {
+        const settleUntil = Date.now() + settleMs;
+        for (let read = 0; ; read++) {
           if (read > 0) await sleep(settleDelayMs);
           readings = await readCurrent(null);
           settled = moneyModelSettled(dataRows(readings.detailGrid)[rowIndex]?.values);
-          if (settled) break;
+          if (settled || (read + 1 >= MONEY_SETTLE_READS && Date.now() >= settleUntil)) break;
         }
         if (!settled) {
           const shown = dataRows(readings.detailGrid)[rowIndex]?.values ?? {};

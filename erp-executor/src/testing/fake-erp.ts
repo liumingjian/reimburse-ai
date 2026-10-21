@@ -398,6 +398,12 @@ export type FakeErpOptions = {
    */
   moneyModelLagTicks?: number;
   /**
+   * The same lag in wall-clock ms, for an ERP that is slow rather than fast: live 2026-10-21 (1 of 10 runs) row 2's
+   * 申请报销金额 was still empty seconds after 费用金额 was written, past the ~3 s the fill used to give it.
+   * @unverified: ERP's computed 申请报销金额 can trail a money cell by seconds [transient]
+   */
+  moneyModelLagMs?: number;
+  /**
    * How many ERP-page evaluations the freshly opened 发票类型 dropdown's own items sit under a cover — the list
    * painted, its items measurable, and `document.elementFromPoint` at the wanted item still answering the thing
    * on top of it.
@@ -813,7 +819,7 @@ const kendoDate = (raw: string) => {
   const notTaken = new Map<any, string>();
   // Money writes ERP has taken into the cell but not yet into its model, keyed by the row: one row settles one
   // write at a time, which is exactly why the second write inside the window has nowhere to land.
-  const pendingMoney = new Map<any, { td: any; due: number }>();
+  const pendingMoney = new Map<any, { td: any; due: number; dueAt?: number }>();
   const MONEY_COLUMNS = new Set(['费用金额', '税额']);
   const modelOf = (tr: any, column: string) => {
     const td = cellOf(tr, 'detail', column);
@@ -883,11 +889,14 @@ const kendoDate = (raw: string) => {
     // The model lag (V-59). During the window the model keeps what it had; a second money write arriving inside
     // another one's window is not queued behind it — it is dropped, and the model keeps what it had for good.
     const lag = options.moneyModelLagTicks ?? 0;
-    if (lag > 0 && MONEY_COLUMNS.has(column)) {
+    const lagMs = options.moneyModelLagMs ?? 0;
+    if ((lag > 0 || lagMs > 0) && MONEY_COLUMNS.has(column)) {
       const held = notTaken.has(td) ? notTaken.get(td)! : before;
       const inFlight = pendingMoney.get(tr);
       notTaken.set(td, held);
-      if (!inFlight || mainTicks >= inFlight.due) pendingMoney.set(tr, { td, due: mainTicks + lag });
+      if (!inFlight || (mainTicks >= inFlight.due && Date.now() >= (inFlight.dueAt ?? 0))) {
+        pendingMoney.set(tr, { td, due: mainTicks + lag, dueAt: Date.now() + lagMs });
+      }
     }
     leaveEditClass(tr);
     mutate('cell', `${column}=${text}`);
@@ -1016,7 +1025,7 @@ const kendoDate = (raw: string) => {
   function flushMoneyModel() {
     let flushed = false;
     for (const [tr, pending] of [...pendingMoney]) {
-      if (Date.now() < pending.due) continue;
+      if (mainTicks < pending.due || Date.now() < (pending.dueAt ?? 0)) continue;
       pendingMoney.delete(tr);
       notTaken.delete(pending.td);
       recalc(tr);

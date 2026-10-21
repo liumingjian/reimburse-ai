@@ -188,6 +188,16 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
   });
 
+  // Live 2026-10-21 (1 of 10 runs): row 2's 申请报销金额 was still empty past the ~3 s the gate gave it, and the first
+  // fill stopped on money_model_not_settled; the automatic re-run's form took the same row at once.
+  it('gives ERP\'s computed column seconds to catch up on a slow ERP, not a fixed handful of reads', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyModelLagMs: 5000 }));
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: { ...FAST_PACE, longMs: 10_000 }, probeWaitMs: 0,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted' });
+  }, 120_000);
+
   // Live 2026-09-20, with the owner reporting that BOTH money cells fill by hand on this very form: the fill lost
   // 税额 every single time while the identical clicks, keys and Enter, typed by hand with a pause before the
   // commit, took every single time. The difference was never the value, the column or the order — it was that
