@@ -34,7 +34,8 @@ const WHY_NO_RECORDING = {
 // Raised 59 → 61 for a click on 不生成费用明细 that opened no assistant, and an assistant window up before its iframe
 // attaches (live 2026-10-21, 1 of 10 runs): moments no recording holds.
 // Raised 61 → 62 for a main menu card that stays empty until the page is loaded again (live 2026-10-21, 1 of 10 runs).
-const UNVERIFIED_CEILING = 62;
+// Raised 62 → 63 for a 发票无忧助手 window that opens blank (live 2026-10-21, 1 of 10 runs).
+const UNVERIFIED_CEILING = 63;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

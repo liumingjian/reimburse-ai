@@ -165,6 +165,13 @@ export type FakeErpOptions = {
    */
   assistantAttachDelayMs?: number;
   /**
+   * The first N times the assistant opens, its window shows and stays blank: the piaozone page never loads, so no
+   * iframe target ever attaches. Live 2026-10-21 (1 of 10 runs) the window titled 发票无忧助手 stood empty for the
+   * rest of the 90 s.
+   * @unverified: the assistant's window can open blank and stay so until it is opened again [transient]
+   */
+  assistantBlankOpens?: number;
+  /**
    * Clicking an invoice kind (票种) tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach.
    * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged [upload]
    */
@@ -1097,6 +1104,8 @@ const kendoDate = (raw: string) => {
 
   async function openAssistant() {
     show(q('#assistant-window'), true);
+    assistantOpens += 1;
+    if (assistantOpens <= (options.assistantBlankOpens ?? 0)) return;
     const doc = new FakeDocument(fixture('piaozone-assistant.html'), 'https://www.piaozone.com/pwy-assistant/index.html');
     await doc.ready();
     child = { doc, sessionId: 'piaozone-session-1', targetId: 'piaozone-1' };
@@ -1237,6 +1246,7 @@ const kendoDate = (raw: string) => {
   let lostNewRowClicks = 0;
   let pageLoads = 0;
   let fillEntryClicks = 0;
+  let assistantOpens = 0;
   let lostLookupCommits = 0;
   let newRowCover: { tr: any; until: number } | null = null;
   const pendingLookups: Array<{ td: any; text: string; due: number }> = [];
@@ -1616,6 +1626,8 @@ const kendoDate = (raw: string) => {
     get importMode() { return importMode; },
     /** Clicks on a 选择发票 menu item, landed or lost (`notFillEntryClicksLost`). */
     get fillEntryClicks() { return fillEntryClicks; },
+    /** Times the assistant's window was opened, blank ones included (`assistantBlankOpens`). */
+    get assistantOpens() { return assistantOpens; },
     /** Times the page was loaded again (`Page.navigate`). */
     get pageLoads() { return pageLoads; },
     /** Clicks the loading overlay took (`consoleBlockerTicks`, `newRowClicksLost`). */

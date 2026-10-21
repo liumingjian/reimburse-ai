@@ -764,11 +764,31 @@ describe('choosing the import mode on the 选择发票 menu', () => {
   });
 
   it('does not click again while the assistant\'s window is up and only its iframe is slow to attach', async () => {
-    const fake = await createFakeErp(fakeErpOptions({ assistantAttachDelayMs: 1500 }));
+    // Late, but inside the third of the budget a window that is up is given to load (667 ms here, 30 s live).
+    const fake = await createFakeErp(fakeErpOptions({ assistantAttachDelayMs: 400 }));
     const page = writePage(fake);
     await openNewReimbursement(page, { timeoutMs: 2000 });
     await openInvoiceAssistant(page, { timeoutMs: 2000 });
     expect(fake.fillEntryClicks).toBe(1);
+  });
+
+  // Live 2026-10-21 (1 of 10 runs, the next round): the 发票无忧助手 window came up and stayed blank, and the run
+  // waited the rest of the 90 s on it, then stopped on INVOICE_ASSISTANT_NOT_FOUND.
+  it('closes a blank assistant window and opens the assistant again', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, assistantBlankOpens: 1 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
+    expect(fake.assistantOpens).toBe(2);
+    expect(fake.importMode).toBe('不生成费用明细');
+  });
+
+  it('says the assistant opened blank when it never loads', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assistantBlankOpens: 100 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 600 }))
+      .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringContaining('里面的页面都没有加载出来') });
+    expect(fake.assistantOpens).toBeGreaterThan(1);
   });
 
   it('names the clicks when no assistant ever opened', async () => {

@@ -341,21 +341,33 @@ export async function openInvoiceAssistant(page: WritePage, { timeoutMs = 90_000
   if (!section.ok) throw new ExecutorError('INVOICE_ASSISTANT_ENTRY_NOT_FOUND', section.reason);
   // The item is clicked again when no assistant window comes of the click: live 2026-10-21 one click shut the menu
   // and opened nothing. Only while no 发票无忧助手 window is up, so a slow assistant is waited for, never opened twice.
+  // A window that is up but stays blank — its piaozone page never loads (live 2026-10-21, 1 of 10 runs) — is closed
+  // with its own × and opened again. Nothing has been uploaded yet, so either costs nothing but time.
   const budget = cap(page, timeoutMs);
   const deadline = Date.now() + budget;
-  const opens = async () => Boolean(await waitFor(() => evalIn<boolean>(session, ASSISTANT_SHOWN), Boolean,
-    Math.min(budget / 3, Math.max(0, deadline - Date.now())), paceOf(page).pollMs));
+  const left = (most = budget / 3) => Math.min(most, Math.max(0, deadline - Date.now()));
+  const opens = async () => Boolean(await waitFor(() => evalIn<boolean>(session, ASSISTANT_SHOWN), Boolean, left(), paceOf(page).pollMs));
+  const seconds = Math.round(budget / 1000);
   let clicks = 1;
+  let blank = 0;
   let chosen = await chooseImportMode(page, modeId, modeName, timeoutMs);
-  while (!(await opens())) {
-    if (Date.now() >= deadline) {
-      throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND',
-        `点过「${modeName}」${clicks} 次，${Math.round(budget / 1000)} 秒内发票无忧助手都没有打开`);
+  for (;;) {
+    if (await opens()) {
+      // A third of the budget even past the deadline: an assistant that came up late is given time to load.
+      const child = await page.children.waitFor((url) => url.includes('piaozone'), { timeout: budget / 3, interval: paceOf(page).pollMs });
+      if (child) break;
+      blank += 1;
+      if (Date.now() >= deadline) {
+        throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND', `发票无忧助手的窗口打开了 ${blank} 次，里面的页面都没有加载出来（${seconds} 秒）`);
+      }
+      await closeInvoiceAssistant(page);
+      await waitFor(() => evalIn<boolean>(session, ASSISTANT_SHOWN), (up) => up === false, left(), paceOf(page).pollMs);
+    } else if (Date.now() >= deadline) {
+      throw new ExecutorError('INVOICE_ASSISTANT_NOT_FOUND', `点过「${modeName}」${clicks} 次，${seconds} 秒内发票无忧助手都没有打开`);
     }
     chosen = await chooseImportMode(page, modeId, modeName, timeoutMs);
     clicks += 1;
   }
-  await assistantSession(page, Math.max(budget / 3, deadline - Date.now()));
   const { target, after } = chosen;
   return {
     ok: true, mode: modeName, selectedId: target.wantedId ?? target.hitId ?? null,
