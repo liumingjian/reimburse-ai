@@ -188,6 +188,17 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
   });
 
+  // Live 2026-10-21, the next round (3 of 10 first fills): with 30 s to settle, 申请报销金额 still stood empty (or at
+  // the net alone) — the model had never taken the amount the cell showed, and the re-run's form took it at once.
+  it('types a money value ERP\'s model never took once more, and goes on when ERP\'s arithmetic then agrees', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyCommitsLost: 1 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted' });
+    const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
+    const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
+    expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
+  });
+
   // Live 2026-10-21 (1 of 10 runs): row 2's 申请报销金额 was still empty past the ~3 s the gate gave it, and the first
   // fill stopped on money_model_not_settled; the automatic re-run's form took the same row at once.
   it('gives ERP\'s computed column seconds to catch up on a slow ERP, not a fixed handful of reads', async () => {

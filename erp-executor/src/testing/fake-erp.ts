@@ -404,6 +404,13 @@ export type FakeErpOptions = {
    */
   moneyModelLagMs?: number;
   /**
+   * The first N money commits (费用金额, 税额) show in the cell and never reach ERP's model, until the cell is written
+   * again. Live 2026-10-21 3 of 10 first fills: 申请报销金额 stayed empty (or the net alone) for 30 s after the
+   * write, and the re-run's fresh form took the same amount at once.
+   * @unverified: a money commit can show in its cell and never reach ERP's model until it is written again [typing]
+   */
+  moneyCommitsLost?: number;
+  /**
    * How many ERP-page evaluations the freshly opened 发票类型 dropdown's own items sit under a cover — the list
    * painted, its items measurable, and `document.elementFromPoint` at the wanted item still answering the thing
    * on top of it.
@@ -885,7 +892,10 @@ const kendoDate = (raw: string) => {
     // A write ERP does not take: the cell keeps the typed value, ERP's model keeps 0.00 (`moneyWritesNotTaken`).
     const rowIndex = dataRows('detail').indexOf(tr);
     if ((options.moneyWritesNotTaken ?? []).some((drop) => drop.row === rowIndex && drop.column === column)) notTaken.set(td, '0.00');
-    else notTaken.delete(td);
+    else if (MONEY_COLUMNS.has(column) && lostMoneyCommits < (options.moneyCommitsLost ?? 0)) {
+      lostMoneyCommits += 1;
+      notTaken.set(td, notTaken.has(td) ? notTaken.get(td)! : before);
+    } else notTaken.delete(td);
     // The model lag (V-59). During the window the model keeps what it had; a second money write arriving inside
     // another one's window is not queued behind it — it is dropped, and the model keeps what it had for good.
     const lag = options.moneyModelLagTicks ?? 0;
@@ -1259,6 +1269,7 @@ const kendoDate = (raw: string) => {
 
   let deadNewFormClicks = 0;
   let lostNewRowClicks = 0;
+  let lostMoneyCommits = 0;
   let pageLoads = 0;
   let fillEntryClicks = 0;
   let assistantOpens = 0;

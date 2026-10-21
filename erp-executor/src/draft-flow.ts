@@ -280,10 +280,12 @@ export type FillResult =
 export const MONEY_SETTLE_MS = 30_000;
 // And never fewer reads than the gate always made, however short `settleMs` is.
 const MONEY_SETTLE_READS = 12;
+// Standing still this long after a money write, ERP's model did not take it (V-59: ~260ms; slow ERP lookups: ≤ 6 s).
+export const MONEY_RETYPE_MS = 8_000;
 
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {}, causa = null,
-  witnessReads = 8, witnessDelayMs = 900, settleMs = MONEY_SETTLE_MS, settleDelayMs = 250, onRowWritten = null,
+  witnessReads = 8, witnessDelayMs = 900, settleMs = MONEY_SETTLE_MS, retypeAfterMs = MONEY_RETYPE_MS, settleDelayMs = 250, onRowWritten = null,
 }: {
   /** Told after each 明细 row is written and witnessed: how many rows are done out of the preview's (去报销进度). */
   onRowWritten?: ((done: number, total: number) => Promise<void>) | null;
@@ -300,6 +302,8 @@ export async function fillApprovedPreview<P>(page: P, {
    * long between reads. ERP was measured settling in ~260ms (V-59), and seconds on a slow ERP (live 2026-10-21).
    */
   settleMs?: number; settleDelayMs?: number;
+  /** How long ERP's computed column may stand still before the money value is typed again, once. */
+  retypeAfterMs?: number;
 }): Promise<FillResult> {
   const problems: Problem[] = gateAndApprovalProblems(approvedPreview, freshGate, approval);
   if (problems.length) return fail('preflight', problems);
@@ -369,13 +373,26 @@ export async function fillApprovedPreview<P>(page: P, {
       // the next. The gate is ERP's own arithmetic rather than a sleep, so it is fast when ERP is fast and
       // patient when it is not, and it does not silently re-break the day the server gets slower.
       if (MONEY_COLUMNS.has(field.column)) {
-        let settled = false;
-        const settleUntil = Date.now() + settleMs;
-        for (let read = 0; ; read++) {
-          if (read > 0) await sleep(settleDelayMs);
-          readings = await readCurrent(null);
-          settled = moneyModelSettled(dataRows(readings.detailGrid)[rowIndex]?.values);
-          if (settled || (read + 1 >= MONEY_SETTLE_READS && Date.now() >= settleUntil)) break;
+        const settle = async (withinMs: number) => {
+          const until = Date.now() + withinMs;
+          for (let read = 0; ; read++) {
+            if (read > 0) await sleep(settleDelayMs);
+            readings = await readCurrent(null);
+            const settled = moneyModelSettled(dataRows(readings.detailGrid)[rowIndex]?.values);
+            if (settled || (read + 1 >= MONEY_SETTLE_READS && Date.now() >= until)) return settled;
+          }
+        };
+        // A value ERP's model never took is typed again, once: live 2026-10-21 three first fills of ten stopped here
+        // on a cell that showed the amount while 申请报销金额 stayed empty (or the net alone) for the whole 30 s, and
+        // the re-run's fresh form took the same amount at once. The model is long idle by `retypeAfterMs`, so the
+        // second write cannot land inside the first one's window (V-59); the gate after it is ERP's arithmetic again.
+        let settled = await settle(Math.min(retypeAfterMs, settleMs));
+        if (!settled) {
+          const again = await writeCell(page, { which: 0, row: rowIndex, column: field.column, value: String(field.value), expect: { mode: 'equals', value: String(field.readback) } }, writeDeps);
+          if (!again || !again.ok) {
+            return fail('fill', [{ code: 'field_write_failed', message: (again && again.reason) || `字段 ${field.column} 回读失败`, lineId: line.lineId, column: field.column }], { readings, rowsWritten });
+          }
+          settled = await settle(settleMs);
         }
         if (!settled) {
           const shown = dataRows(readings.detailGrid)[rowIndex]?.values ?? {};
