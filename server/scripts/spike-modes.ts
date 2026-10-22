@@ -1,5 +1,5 @@
 // S8 of docs/design/erp-headless-v1.md §验证计划: which way should the executor drive ERP on the employee's PC? The same
-// 去报销 runs in the 浏览器扩展, in a dedicated headed Chromium and in a headless one, round after round, and the modes
+// 去报销 runs in a dedicated headed Chromium and in a headless one, round after round, and the modes
 // are compared by success rate and time (spike/modes.ts has the how).
 //
 // It runs on the test environment, the Mac mini, with the test ERP account and one test invoice. It is READ-ONLY: each
@@ -8,11 +8,10 @@
 // reported but left out of the comparison. Every login may knock the test account's other ERP sessions off.
 //
 //   set -a; . ~/.baox-erp-live.env; set +a
-//   pnpm --filter @baox/server exec tsx scripts/spike-modes.ts [--invoice <pdf>] [--rounds 3] [--modes extension,headed,headless]
+//   pnpm --filter @baox/server exec tsx scripts/spike-modes.ts [--invoice <pdf>] [--rounds 3] [--modes headed,headless]
 //     [--chromium <path>] [--profiles <dir>] [--out <dir>] [--prefetch] [--port 47391]
 //
-// --chromium should be Playwright's Chromium for every mode: branded Chrome no longer loads an unpacked extension, and one
-// binary keeps the comparison about the mode alone.
+// --chromium should be Playwright's Chromium for every mode: one binary keeps the comparison about the mode alone.
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -20,18 +19,18 @@ import { parseArgs } from 'node:util';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 import { sleep } from '@baox/erp-executor/pace';
 import { erpConfigFromEnv } from '../src/erp/config';
-import { MODES, readInvoice, runMode, stampedExtension, standInApp, type Mode, type ModeCtx } from './spike/modes';
+import { MODES, readInvoice, runMode, standInApp, type Mode, type ModeCtx } from './spike/modes';
 import { Report, type CheckRecord } from './spike/report';
 
 const USAGE = `用法：pnpm --filter @baox/server exec tsx scripts/spike-modes.ts [--invoice <文件>] [选项]
   --invoice <文件>     测试发票（pdf/png/jpg，一张）；每次运行都上传、识别、勾选它，但不导入。不给就是冒烟运行
   --rounds <n>        计入比较的轮数（默认 3）；另有第 0 轮预热，不计入
-  --modes <a,b,…>     extension,headed,headless 中的若干个（默认全部）
-  --chromium <路径>    所有模式共用的 Chromium（应为 Playwright 的 Chromium：品牌 Chrome 不再加载未打包扩展）
+  --modes <a,b,…>     headed,headless 中的若干个（默认全部）
+  --chromium <路径>    所有模式共用的 Chromium（应为 Playwright 的 Chromium）
   --profiles <目录>    每种模式的持久配置目录的上级目录（默认 ~/.baox-spike/s8-profiles）
   --out <目录>         报告目录（默认 ./spike-modes-<时间>）
   --prefetch          登录前先把主控台脚本取进浏览器缓存
-  --port <n>          替身应用的端口（默认 47391；扩展按这个地址盖章，换端口要重新配对）`;
+  --port <n>          替身应用的端口（默认 47391）`;
 
 const { values: args } = parseArgs({
   options: {
@@ -65,11 +64,10 @@ mkdirSync(profileRoot, { recursive: true, mode: 0o700 });
 const erp = erpConfigFromEnv(process.env);
 const invoice = invoicePath ? readInvoice(resolve(here, invoicePath)) : null;
 const app = await standInApp({ port, invoice });
-const extensionDir = modes.includes('extension') ? stampedExtension(join(profileRoot, 'extension'), app.origin) : '';
 
 const ctx: ModeCtx = {
   report, origin: erp.origin, entry: erpEntryOf(erp.origin), compatibility: erp.compatibility, account, password,
-  prefetch: args.prefetch, chromium: args.chromium ? resolve(here, args.chromium) : null, profileRoot, extensionDir,
+  prefetch: args.prefetch, chromium: args.chromium ? resolve(here, args.chromium) : null, profileRoot,
   invoice, app, catalogItem: null,
 };
 

@@ -244,15 +244,13 @@ if [[ ! -f $release/.built ]]; then
     if (db.prepare("select n from t").get().n !== 7) process.exit(1);
     db.close();
   ' "$better_sqlite3" || die "better-sqlite3 source binding failed its in-memory database check"
-  # Builds web/dist, server/dist (main.mjs, baox.mjs, parse-worker.mjs) and the extension template extension/dist.
+  # Builds web/dist, server/dist (main.mjs, baox.mjs, parse-worker.mjs) and the 本地执行器 program local-executor/dist.
   log "building"
   as_baox pnpm build
 fi
 
-# The server serves the settings page's extension download from ../../extension/dist relative to server/dist/main.mjs
-# (server/src/run.ts). If that is not where the template is, every download answers 503.
 main=$release/server/dist/main.mjs
-for built in "$main" "$release/server/dist/baox.mjs" "$release/web/dist/index.html" "$(dirname "$main")/../../extension/dist/manifest.json"; do
+for built in "$main" "$release/server/dist/baox.mjs" "$release/web/dist/index.html"; do
   [[ -f $built ]] || die "the build left no $built"
 done
 touch "$release/.built"
@@ -337,7 +335,7 @@ systemctl restart baox-caddy.service
 wait_for session "$proxy_probe" || die "Caddy does not reach baox on $proxy_probe; see journalctl -u baox-caddy"
 upgrade=$(curl --noproxy '*' --connect-to "$proxy_connect" -s -o /dev/null --max-time 3 -w '%{http_code}' -H "Host: $host" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$proxy_probe/api/extension/channel" || true)
-[[ $upgrade == 101 ]] || die "the extension channel upgrade through Caddy answered $upgrade, not 101"
+[[ $upgrade == 101 ]] || die "the 本地执行器 channel upgrade through Caddy answered $upgrade, not 101"
 
 # --- Old releases -------------------------------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 // Where the local executor keeps its state on the employee's PC: the pairing (the app's address and the token that
-// stands for one 应用账号, ADR-0021's 扩展配对 by another holder), the browser profile, and each job's staged invoices.
+// stands for one 应用账号, ADR-0021's 配对 by another holder), the browser profile, and each job's staged invoices.
 // Everything lives under one directory the employee's own user can read, and nobody else.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

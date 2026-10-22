@@ -47,6 +47,7 @@ describe('the hit-tested click', () => {
   it('names an unnamed cover rather than saying nothing', () => {
     expect(describeCover(null)).toContain('读不出名字');
     expect(describeCover({ tag: 'DIV', id: 'result-window', cls: '', text: '' })).toBe('DIV#result-window');
+    expect(describeCover({ tag: 'DIV', id: '', cls: 'kd-ui-blockingExtention-item other', text: '' })).toBe('DIV.kd-ui-blockingExtention-item');
   });
 
   it('measures and hit-tests in one page expression', () => {

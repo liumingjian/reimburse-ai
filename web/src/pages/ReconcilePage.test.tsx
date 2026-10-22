@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { App } from '../App';
 import { AppProvider } from '../adapter/context';
 import { AppStore } from '../adapter/store';
-import { HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY } from '@baox/contract';
+import { HUMAN_REVIEW_NOTICE, RECONCILE_BUCKETS, type ReconcileBucket, REFILL_COPY } from '@baox/contract';
 import type { SeedStage } from '../mock/options';
 import { emptyReadback, reconcileVerdict } from '../mock/fixtures/erp';
 import { withAllowedActions } from '../mock/fixtures/allowed-actions';
@@ -148,7 +148,7 @@ describe('对账', () => {
     expect(screen.getByText('已转人工处理，应用不再写入报销系统。')).toBeTruthy();
   });
 
-  test('?seed=reconcile（T1 交接步中止，还没对过账）：「开始对账」与「转人工」；读到填好、逐行一致的单据即交接完成，完成页显示固定句且没有单据编号', async () => {
+  test('?seed=reconcile（T1 交接步中止，还没对过账）：「开始对账」与「转人工」；读到填好没保存的单据也不算完成，仍停在对账', async () => {
     renderAt('#/task/T1/reconcile', 'reconcile');
     expect(await screen.findByRole('heading', { name: '对账' })).toBeTruthy();
     expect(within(screen.getByRole('region', { name: '中止原因' })).getByText(/保存后没有读到报销系统的结果/)).toBeTruthy();
@@ -160,11 +160,10 @@ describe('对账', () => {
     expect(screen.queryByTestId('human-review')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '开始对账' }));
-    expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
-    expect(screen.getByText('明细 9/9 一致')).toBeTruthy();
-    expect(screen.getByTestId('handover-completed').textContent).toBe(HANDOVER_COMPLETED_NOTICE);
-    // 交接时单据还没有保存：完成页说「尚无」，而不是端出一个编号。
-    expect(screen.getByTestId('draft-no').textContent).toBe('尚无');
+    // 没有暂存就没有交接（ADR-0037，服务端同此）：对账之后仍在对账页，可以再对一次账或转人工。
+    expect(await screen.findByText(/已重新对账（第 1 次）/)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '对账' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '完成' })).toBeNull();
   });
 
   // 写入结果不确定后员工停在对账页（ticket #408）：暂存单内码已知时，中止原因下面就是核对没通过的提示、按钮和内码。

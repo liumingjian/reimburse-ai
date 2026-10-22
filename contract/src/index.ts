@@ -7,7 +7,7 @@ export * from './actions';
 export * from './auth';
 export * from './project-book';
 export * from './legacy-import';
-export * from './extension';
+export * from './channel';
 export * from './local-executor';
 export * from './erp-credentials';
 export * from './http';

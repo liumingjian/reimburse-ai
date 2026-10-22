@@ -3,7 +3,6 @@ import { GOLDEN_SCENARIOS, GOLDEN_TIME, type GoldenScenario } from './scenarios'
 import catalogMismatch from './catalog-mismatch.json';
 import chooseAction from './choose-action.json';
 import done from './done.json';
-import erpLoginWall from './erp-login-wall.json';
 import erpStoppedBeforeWrite from './erp-stopped-before-write.json';
 import erpUnknown from './erp-unknown.json';
 import pending from './pending.json';
@@ -29,7 +28,6 @@ const RECORDED: Record<GoldenScenario, unknown> = {
   review,
   'choose-action': chooseAction,
   'catalog-mismatch': catalogMismatch,
-  'erp-login-wall': erpLoginWall,
   'erp-stopped-before-write': erpStoppedBeforeWrite,
   'erp-unknown': erpUnknown,
   'reconcile-readback-mismatch': reconcileReadbackMismatch,

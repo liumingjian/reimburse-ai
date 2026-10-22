@@ -1,9 +1,9 @@
 // The v1 in-process ERP executor: one fill plan in, protocol events out (ADR-0016).
 //
-// Job order: Chromium ready -> login probe -> 报销信息核对 (catalog check) -> navigate + compatibility fingerprint
-// -> import -> fill -> strict read-back -> hand-over. The job never clicks 保存 (save). On the attended path it ends
-// with the 费用报销单 filled and unsaved, and the employee commits it (ADR-0028); on the unattended path (a plan with
-// `draft`, sent to a baox 本地执行器 only) it presses 暂存 and ends at the draft, found by its marker (ADR-0029). Before each mutation the executor observes its preconditions,
+// Job order: Chromium ready -> login probe (signing in with the hosted ERP 凭据) -> 报销信息核对 (catalog check) ->
+// navigate + compatibility fingerprint -> import -> fill -> strict read-back -> 暂存 -> 核对暂存单. The job never
+// clicks 保存 (save): it presses 暂存 and ends at the draft, found by its marker, which the employee checks and submits
+// (ADR-0029, ADR-0037). Before each mutation the executor observes its preconditions,
 // sends `attempt_started`, waits for the server to persist it, and re-checks target, form-instance UUID, 新增 mode
 // and URL. Failure before the first attempt aborts cleanly (retryable); anything after it is ERP 写入结果未知
 // (write result unknown) and goes to reconcile, never to replay. The executor never judges read-backs: it sends
@@ -18,7 +18,7 @@ import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
 import { ExecutorError, type ChromiumPage } from './page';
 import { compareDraft, findDrafts, pressDraft, viewDraft, waitDrafted } from './draft';
-import { fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
+import { MONEY_RETYPE_MS, MONEY_SETTLE_MS, fillApprovedPreview, handOverApprovedPreview, type CurrentReadings } from './draft-flow';
 import { leaveEdit, selectOption, writeCell, writeHeader } from './erpform';
 import { checkRerun, RECEIPT_INVOICE_NO, rerunRefusal } from './occupancy';
 import { DEFAULT_PACE, waitFor, type Pace } from './pace';
@@ -28,7 +28,7 @@ import {
   addDetailRow, captureErpError, closeErpDialogs, invoiceUploadGroups, openInvoiceAssistant, openNewReimbursement,
   importInvoices, uploadInvoices, type WritePage,
 } from './steps';
-import type { InvoiceStaging, StagedInvoices } from './invoice-files';
+import type { StagedInvoices } from './invoice-files';
 import { stageInvoices } from './staging';
 import { prepareErpWrite } from './write-context';
 
@@ -42,20 +42,14 @@ export type ExecutorPorts = {
   browser: BrowserPort;
   blobs: BlobSource;
   channel: ExecutorChannel;
-  /**
-   * How the invoices reach the assistant's file input (`invoice-files.ts`). Default by build: local paths in node,
-   * bytes built in the page in the extension's bundle. The extension passes `stageInPage` explicitly, so it takes the
-   * same route under node tests as in the browser.
-   */
-  staging?: InvoiceStaging;
-  /** Parent directory for the local-path route's per-job staging directory (default: the OS temp dir). */
+  /** Parent directory for each job's invoice staging directory (`invoice-files.ts`; default: the OS temp dir). */
   stagingRoot?: string;
   pace?: Pace;
   /** How long the login probe waits for a slow ERP first screen. */
   probeWaitMs?: number;
   /**
-   * The headless path (ADR-0033): sign in with the employee's ERP 凭据 when the probe finds the login page. Without
-   * it — the extension, where the employee logs in themselves — a login page pauses the job at `waiting_login`.
+   * Sign in with the employee's ERP 凭据 when the probe finds the login page (ADR-0033). Without it a login page ends
+   * the job, before any attempt: nobody is there to log in (ADR-0037).
    */
   signIn?: (session: CdpSession) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
   /** The 费用报销单 field an 自动重新去报销 asks ERP about (`occupancy.ts`); null stops every re-run as unanswered. */
@@ -68,6 +62,11 @@ class DriftError extends ExecutorError {
     super('erp_drift', `ERP 页面在动作前发生漂移：${reasons.join('；')}`);
   }
 }
+
+// The job found no logged-in ERP and had nothing to sign in with (or signing in left it on the login page).
+export const NOT_SIGNED_IN_CODE = 'erp_login';
+export const notSignedIn = (hint: string | null | undefined) =>
+  `报销系统没有登录，本地执行器也没能用报销系统账号登录。请在设置页保存报销系统账号和密码后再试。${hint ? `（${hint}）` : ''}`;
 
 // A draft-flow problem as the result message: its own sentence, then the server's reasons (strict read-back).
 const problemText = (problem: { message: string; [extra: string]: unknown }) =>
@@ -92,7 +91,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   }
 
   async function finish(status: ResultStatus, code: string | null, message: string | null, billNo: string | null = null, draftId: string | null = null): Promise<ResultEvent> {
-    if (currentStep && status !== 'handed_over' && status !== 'drafted') await step(currentStep, 'failed');
+    if (currentStep && status !== 'drafted') await step(currentStep, 'failed');
     const capture = status === 'aborted' || status === 'unknown' ? (write ? await captureErpError(write) : null) : null;
     const event: ResultEvent = { type: 'result', status, code, message, billNo, capture, ...(draftId ? { draftId } : {}) };
     await channel.emit(event);
@@ -111,7 +110,8 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     const pages = (await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin));
     await step('chromium', 'done');
 
-    // 2. Login probe. Not logged in: pause for the user, holding nothing (no attempt exists yet).
+    // 2. Login probe, signing in with the 凭据 on the login page. Still not logged in: the job ends, holding nothing
+    //    (no attempt exists yet).
     await step('login', 'running');
     const probeLogin = (tabs: ChromiumPage[]) => probeIdentity({
       origin: plan.erpOrigin, waitMs: ports.probeWaitMs ?? 30_000, pollMs: pace.pollMs, transport: 'chromium-cdp',
@@ -119,16 +119,16 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       evaluate: async (page, expression) => evalIn((await attach(page as ChromiumPage)).session, expression, { timeout: 10_000 }),
     });
     let probe = await probeLogin(pages);
-    if (probe.status === 'not_logged_in' && probe.page && ports.signIn) {
+    // A page that is neither console nor login is given to the sign-in too, which loads the entry page again while
+    // no form comes: live it was a blank entry page (2026-10-13 2 of 10, 2026-10-19, 2026-10-20 2 of 21). Should no
+    // form come of it either, the job stops saying what the page showed, not that no form came.
+    if ((probe.status === 'not_logged_in' || probe.status === 'unknown') && probe.page && ports.signIn) {
       const signedIn = await ports.signIn((await attach(probe.page as ChromiumPage)).session);
+      if (!signedIn.ok && probe.status === 'unknown' && signedIn.code === 'erp_sign_in_no_form') return await finish('aborted', 'erp_login_unknown', probe.hint ?? null);
       if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
       probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
     }
-    if (probe.status === 'not_logged_in' || probe.status === 'no_tab') {
-      await step('login', 'done');
-      await channel.emit({ type: 'waiting_login', hint: probe.hint ?? '' });
-      return await finish('waiting_login', 'erp_login', probe.hint ?? null);
-    }
+    if (probe.status === 'not_logged_in' || probe.status === 'no_tab') return await finish('aborted', NOT_SIGNED_IN_CODE, notSignedIn(probe.hint));
     if (probe.status !== 'matched' || !probe.identity || !probe.page) return await finish('aborted', `erp_login_${probe.status}`, probe.hint ?? null);
     erpAccount = probe.identity;
     const page = await attach(probe.page as ChromiumPage);
@@ -154,7 +154,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('catalog', 'done');
 
     // Invoices by content, fetched and verified before any page action; a bad file stops here.
-    staged = await (ports.staging ?? stageInvoices)(plan.invoices, ports.blobs, ports.stagingRoot);
+    staged = await stageInvoices(plan.invoices, ports.blobs, ports.stagingRoot);
     invoiceUploadGroups(staged.names);
 
     // Preconditions of the next mutation, and the drift guard against the baseline taken after navigation.
@@ -197,7 +197,10 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await step('navigate', 'running');
     await prepareErpWrite({
       page: write,
-      navigate: (p) => openNewReimbursement(p, { timeoutMs: 45_000, replaceNewForms: plan.replaceAbandonedForm === true }),
+      navigate: (p) => openNewReimbursement(p, {
+        timeoutMs: 45_000, replaceNewForms: plan.replaceAbandonedForm === true,
+        ...(ports.signIn ? { signIn: async () => (await ports.signIn!(session)).ok } : {}),
+      }),
       read: async () => {
         const readings = await readForm(session);
         await step('compatibility', 'running');
@@ -309,30 +312,28 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     await startAttempt('fill', { formMode: 'new', billNo: null, detailRowCount: preview.lines.length });
     // 去报销进度 (#420): the row count goes out with the step's start, then one event per row written.
     await step('fill', 'running', { done: 0, total: preview.lines.length });
-    const causa = plan.draft ? markedPurpose(preview.purpose, plan.draft.mark) : null;
+    const causa = markedPurpose(preview.purpose, plan.draft.mark);
     const filled = await fillApprovedPreview(write, {
       approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'), causa,
-      addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs,
+      addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs, settleMs: Math.min(MONEY_SETTLE_MS, pace.longMs), retypeAfterMs: Math.min(MONEY_RETYPE_MS, pace.longMs),
       onRowWritten: (done, total) => step('fill', 'running', { done, total }),
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
     await step('fill', 'done');
 
-    // 7. The strict hand-over read-back, then the hand-over itself: no attempt is started, because nothing is written.
+    // 7. The strict hand-over read-back before 暂存: no attempt is started, because nothing is written.
     await step('handover', 'running');
     const handOver = await handOverApprovedPreview({
       approvedPreview: preview, approval, freshGate, fillResult: filled,
       readCurrent: reader('before_hand_over'),
     });
-    if (handOver.status !== 'handed_over') return await finish('unknown', handOver.problems?.[0]?.code ?? 'hand_over_failed', handOver.problems?.map(problemText).join('；') ?? null);
+    if (handOver.status !== 'verified') return await finish('unknown', handOver.problems?.[0]?.code ?? 'hand_over_failed', handOver.problems?.map(problemText).join('；') ?? null);
     await step('handover', 'done');
-    // ERP 单据已交接 (the attended path, ADR-0028): the form is filled and unsaved, so there is no 单据编号 to report.
-    if (!plan.draft) return await finish('handed_over', null, null, null);
 
-    // 8. 暂存 (the unattended path, ADR-0029), on the form the hand-over gate has just verified. The attempt is durable
+    // 8. 暂存 (ADR-0029), on the form the hand-over gate has just verified. The attempt is durable
     //    before the press; from the press on, every ending that is not `drafted` is `unknown` (对账), never `aborted`.
     const mark = plan.draft.mark;
-    const verified = { causa: causa!, receipts: filledRows(handOver.readings?.receiptsGrid), details: filledRows(handOver.readings?.detailGrid) };
+    const verified = { causa, receipts: filledRows(handOver.readings?.receiptsGrid), details: filledRows(handOver.readings?.detailGrid) };
     await startAttempt('save', { formMode: 'modify', billNo: null, draftMark: mark, detailRowCount: preview.lines.length });
     await step('save', 'running');
     await pressDraft(session, { timeoutMs: Math.min(10_000, pace.longMs), pollMs: pace.pollMs });

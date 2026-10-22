@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { ButtonSet } from '@carbon/react';
+import type { ActionLink } from '@baox/contract';
 import { ActionError } from './ActionError';
 import { useStickyHeight } from './useStickyHeight';
 
@@ -18,9 +19,11 @@ export type ActionBarProps = {
   readonly caption?: ReactNode;
   readonly actions: ReactNode;
   readonly error?: string | null;
+  // The page that can fix what `error` names (useAction's `errorLink`).
+  readonly errorLink?: ActionLink | null;
 };
 
-export function ActionBar({ label, consequence, consequenceProps, caption, actions, error = null }: ActionBarProps) {
+export function ActionBar({ label, consequence, consequenceProps, caption, actions, error = null, errorLink = null }: ActionBarProps) {
   const { className, ...rest } = consequenceProps ?? {};
   const barRef = useRef<HTMLElement>(null);
   // Its height lets sticky page parts (the project panel) stop above it.
@@ -32,7 +35,7 @@ export function ActionBar({ label, consequence, consequenceProps, caption, actio
       </div>
       {caption ? <span className="app-caption">{caption}</span> : null}
       <ButtonSet>{actions}</ButtonSet>
-      <ActionError message={error} />
+      <ActionError message={error} link={errorLink} />
     </section>
   );
 }

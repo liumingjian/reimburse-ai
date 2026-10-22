@@ -1,6 +1,5 @@
 // What every executor module shares about a page, whatever carries the commands to it: the page record, its loggable
-// URL and the error type. Split out of `chromium.ts` so that a transport other than CDP over a WebSocket — the browser
-// extension's `chrome.debugger` — can run the page logic without bundling the transport it replaces.
+// URL and the error type, apart from `chromium.ts`'s CDP-over-WebSocket transport.
 
 import type { CdpSession } from './cdp';
 

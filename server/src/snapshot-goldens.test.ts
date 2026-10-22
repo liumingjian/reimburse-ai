@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { TaskSnapshotSchema } from '@baox/contract';
 import { GOLDEN_SCENARIOS, type GoldenScenario } from '@baox/contract/goldens/scenarios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { abortBeforeAttempt, catalogMismatch, loginWall, readbackMismatch, uncertainSave, type Script } from './erp/testing/fake-executor';
+import { abortBeforeAttempt, catalogMismatch, readbackMismatch, uncertainSave, type Script } from './erp/testing/fake-executor';
 import { goldenJson } from './test/goldens';
 import { scenario, scenarioServer, type Scene, type ScenarioServer } from './test/scenario';
 
@@ -30,7 +30,6 @@ const SCENES: Record<GoldenScenario, (server: ScenarioServer) => Promise<Scene>>
   review: (server) => scenario(server).at('review'),
   'choose-action': (server) => scenario(server).at('actions'),
   'catalog-mismatch': (server) => afterErpWrite(server, catalogMismatch),
-  'erp-login-wall': (server) => scenario(server).at('erp', { erp: loginWall }),
   'erp-stopped-before-write': (server) => afterErpWrite(server, abortBeforeAttempt),
   'erp-unknown': (server) => afterErpWrite(server, uncertainSave),
   'reconcile-readback-mismatch': (server) => scenario(server).at('reconcile', { erp: readbackMismatch }),

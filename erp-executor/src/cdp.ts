@@ -215,8 +215,7 @@ export async function pressKey(session: CdpSession, key: string, { modifiers = 0
   await session.send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, ...k });
 }
 
-// Node names the platform on `process`, a browser (the extension's service worker) on `navigator`.
-const onMac = typeof process !== 'undefined' ? process.platform === 'darwin' : /^Mac/.test(globalThis.navigator?.platform ?? '');
+const onMac = process.platform === 'darwin';
 const SELECT_ALL_MODIFIER = onMac ? 4 : 2;
 
 /**

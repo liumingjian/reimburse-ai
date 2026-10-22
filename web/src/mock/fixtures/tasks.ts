@@ -10,7 +10,7 @@ import {
   ABANDON_TASK_COPY,
 } from '@baox/contract';
 import { HOME_CITY, SEED_ASSIGNMENTS, T1_DONE_ASSIGNMENTS, T1_PURPOSE, confirmationDigest, projectAssignmentOpen, projectAssignmentSubmitted, withLineProjects, withProjectUsage } from './projects';
-import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpWaitingLogin, idleErp, readbackOf, reconcileVerdict } from './erp';
+import { T2_ROWS, applyAbortAtHandover, applyErpDone, emptyReadback, emptyReconcile, erpSeedRunning, idleErp, readbackOf, reconcileVerdict } from './erp';
 import { SEED_ANSWERS, applyPendingAnswer, buildLines, inventoryPhases, inventoryResult, openPendingItemCount, withInventoryProjection, withLodgingEvidenceProjection } from './inventory';
 import { allowedActionsOf, withAllowedActions } from './allowed-actions';
 import { catalogPending, preparationPending, preparationReady } from './preparation';
@@ -126,7 +126,7 @@ const STEP_BY_STAGE: Readonly<Record<TaskStage, TaskSnapshot['step']['kind']>> =
   preparation: 'none',
   review: 'confirm_review',
   actions: 'choose_action',
-  erp: 'erp_login',
+  erp: 'none',
   done: 'none',
   reconcile: 'reconcile',
   voided: 'none',
@@ -220,10 +220,10 @@ export function t1Snapshot(stage: SeedStage = 'upload', unsupportedFault = false
     snapshot.preparation = preparationReady();
   }
   if (stageReached(stage, 'actions')) snapshot.confirmation = { ...snapshot.confirmation, status: 'confirmed', confirmedAt: '2026-09-11T14:32:00' };
-  // erp：「去报销」之后浏览器已启动，等待登录（检测到登录即自动写入）。done：回读 9/9 一致、单据已交接；
+  // erp：「去报销」之后作业正在跑（定格在报销信息核对）。done：回读 9/9 一致、已暂存到报销系统；
   // 交接时单据还没有保存，所以没有单据编号（服务端同此）；只有 T3 那种由员工自己保存过的任务才有编号。
   // reconcile：交接步中止后的对账（同 ?fault=erp-write-aborted 的结果）。
-  if (stage === 'erp') snapshot.erp = erpWaitingLogin(snapshot.lines.length);
+  if (stage === 'erp') snapshot.erp = erpSeedRunning(snapshot.lines.length);
   if (stage === 'done') applyErpDone(snapshot);
   if (stage === 'reconcile') applyAbortAtHandover(snapshot);
   return withAllowedActions(withLodgingEvidenceProjection(withProjectUsage(withInventoryProjection(snapshot))));
@@ -263,7 +263,6 @@ export function t2Snapshot(): TaskSnapshot {
     allowedActions: ['refresh'],
     draftNo: T2_DRAFT_NO,
     abortReason: '严格回读时没有读到报销系统的结果，写入结果不确定。',
-    loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
     review: null,
@@ -317,7 +316,6 @@ export function t3Snapshot(): TaskSnapshot {
     allowedActions: ['refresh'],
     draftNo: T3_DRAFT_NO,
     abortReason: null,
-    loginNotice: null,
     rerunNotice: null,
     erpAccount: null,
     review: null,

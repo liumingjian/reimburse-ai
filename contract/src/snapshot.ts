@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
 import { TaskActionSchema, TaskStageSchema } from './stage';
 import { TaskPeriodSchema } from './task-list';
-import type { ExtensionHolder } from './extension';
 
 // 接口二：单任务完整快照。前端只渲染这里的值，不保存第二份业务状态，不计算、不判定。
 // 本文件在 #100 定下所有分节的名字与最小形状；后续票只加深分节，不重排结构。
@@ -824,45 +823,36 @@ export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
 // ---- ERP 填报、回读、对账 ----
 
 // The ERP progress copy is part of the API: the server derives each state from recorded executor facts and the mock
-// reuses the same lists. Each 去报销 route has its own list (spec #412 part B): the paired browser extension opens one
-// ERP tab for this reimbursement, the employee logs in there, and the app fills and strictly reads the form back before
-// handing it over; the 本地执行器 starts a background browser, signs in with the saved 报销系统 account and ends by
-// 暂存-ing the bill.
+// reuses the same list. There is one list (ADR-0037): the 本地执行器 starts a background browser, signs in with the
+// saved 报销系统 account and ends by 暂存-ing the bill.
 export const ERP_PROGRESS_STAGE_KEYS = ['chromium', 'login', 'catalog', 'navigate', 'import', 'receipt', 'fill', 'handover'] as const;
 export const ErpProgressStageSchema = z.enum(ERP_PROGRESS_STAGE_KEYS);
 export type ErpProgressStage = z.infer<typeof ErpProgressStageSchema>;
 
-export const ERP_EXTERNAL_WAITS = ['none', 'employee_login', 'extension_connection', 'erp_response'] as const;
+export const ERP_EXTERNAL_WAITS = ['none', 'executor_connection', 'erp_response'] as const;
 export const ErpExternalWaitSchema = z.enum(ERP_EXTERNAL_WAITS);
 export type ErpExternalWait = z.infer<typeof ErpExternalWaitSchema>;
 
-export const ERP_OUTCOMES = ['none', 'filled', 'drafted', 'saved'] as const;
+export const ERP_OUTCOMES = ['none', 'drafted', 'saved'] as const;
 export const ErpOutcomeSchema = z.enum(ERP_OUTCOMES);
 export type ErpOutcome = z.infer<typeof ErpOutcomeSchema>;
 
 // These are commands over the recorded state. `refresh` only reads the latest snapshot; it never reruns a fill job.
-export const ERP_ALLOWED_ACTIONS = ['refresh', 'confirm_login', 'cancel'] as const;
+// Nothing on the 去报销 page waits for the employee (ADR-0037): the 本地执行器 signs in by itself.
+export const ERP_ALLOWED_ACTIONS = ['refresh'] as const;
 export const ErpAllowedActionSchema = z.enum(ERP_ALLOWED_ACTIONS);
 export type ErpAllowedAction = z.infer<typeof ErpAllowedActionSchema>;
 
-// The hand-over step (交接单据, hand over the bill) closes 去报销: baox fills the form, runs the strict read-back and
-// releases automation control. It never clicks 保存 or submits the claim (ADR-0028).
-export const ERP_HANDOVER_STEP_COPY = {
-  key: 'handover',
-  title: '交接单据',
-  description: '不点保存、不提交审批：严格回读逐行通过后，把填好的报销单交给你，由你自己点「保存」并按流程提交。',
-} as const;
-
 // The 本地执行器's last step: the strict read-back, 暂存 (the `save` event, ADR-0029) and 核对暂存单. The bill waits in
 // the 报销系统 as a 暂存单 and submitting it is the employee's job. It holds the `handover` slot, the step that closes
-// 去报销 on either route.
+// 去报销.
 export const ERP_DRAFT_STEP_COPY = {
   key: 'handover',
   title: '暂存到报销系统',
   description: '你检查后自己提交',
 } as const;
 
-// The steps both routes share, word for word.
+// The middle steps, from 报销信息核对 to 填写明细.
 const ERP_SHARED_STEPS = [
   { key: 'catalog', title: '报销信息核对', description: '只读核对项目与费用项目：在报销系统里存在、名称一致、已审核且未禁用。' },
   { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，核对报销系统版本，确认是唯一一张空白单据。' },
@@ -871,32 +861,18 @@ const ERP_SHARED_STEPS = [
   { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。' },
 ] as const;
 
-export const ERP_EXTENSION_STEPS = [
-  { key: 'chromium', title: '打开报销系统标签页', description: '通过已配对的浏览器扩展，打开这次报销专用的报销系统标签页。' },
-  { key: 'login', title: '登录', description: '在为这次报销打开的报销系统标签页里使用本人账号登录。应用不会替你输入账号或密码。' },
-  ...ERP_SHARED_STEPS,
-  ERP_HANDOVER_STEP_COPY,
-] as const;
-
-export const ERP_LOCAL_EXECUTOR_STEPS = [
+// The one 去报销 step list (ADR-0037), every job's.
+export const ERP_STEPS = [
   { key: 'chromium', title: '启动后台浏览器', description: '在你的电脑上启动一个看不见的浏览器，专门用于这次报销。' },
   { key: 'login', title: '登录', description: '用你在设置页保存的报销系统账号登录。' },
   ...ERP_SHARED_STEPS,
   ERP_DRAFT_STEP_COPY,
 ] as const;
 
-// 去报销的方式 a job ran on: the pairing holder when it started (ADR-0033). The server records it with the job, so
-// switching methods later rewrites no past job's steps.
-export type ErpRoute = ExtensionHolder;
 export type ErpStepCopy = { readonly key: ErpProgressStage; readonly title: string; readonly description: string };
-export const ERP_ROUTE_STEPS: Readonly<Record<ErpRoute, readonly ErpStepCopy[]>> = {
-  extension: ERP_EXTENSION_STEPS,
-  local_executor: ERP_LOCAL_EXECUTOR_STEPS,
-};
 
 export const ERP_EXTERNAL_WAIT_COPY: Readonly<Record<Exclude<ErpExternalWait, 'none'>, string>> = {
-  employee_login: '等待你在报销系统标签页登录。',
-  extension_connection: '浏览器扩展没有连接。连接恢复后，刷新状态只会读取已经记录的进度。',
+  executor_connection: '本地执行器没有连接。连接恢复后，刷新状态只会读取已经记录的进度。',
   erp_response: '正在等待报销系统返回结果。',
 };
 
@@ -904,7 +880,7 @@ export const ErpStepSchema = z.object({
   key: z.string().min(1),
   title: z.string().min(1),
   description: z.string(),
-  status: z.enum(['todo', 'running', 'waiting', 'done', 'failed']),
+  status: z.enum(['todo', 'running', 'done', 'failed']),
 });
 export type ErpStep = z.infer<typeof ErpStepSchema>;
 
@@ -941,7 +917,7 @@ export type ErpProgress = z.infer<typeof ErpProgressSchema>;
 
 // idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
-  status: z.enum(['idle', 'running', 'waiting_login', 'aborted', 'done']),
+  status: z.enum(['idle', 'running', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
   currentStage: ErpProgressStageSchema.nullable(),
   progress: ErpProgressSchema.nullable(),
@@ -950,8 +926,8 @@ export const ErpSchema = z.object({
   allowedActions: z.array(ErpAllowedActionSchema),
   draftNo: z.string().nullable(),
   abortReason: z.string().nullable(),
-  loginNotice: z.string().nullable(),
-  // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row.
+  // 自动重新去报销 (ADR-0034): baox started this 去报销 over on a fresh form by itself, and how many times in a row. Also
+  // a later run that stopped before writing: why it stopped, while `abortReason` stays the reason of the run that wrote.
   rerunNotice: z.string().nullable(),
   erpAccount: ErpAccountViewSchema.nullable(),
   review: ErpReviewSchema.nullable(),
@@ -1068,11 +1044,6 @@ export const ReconcileSchema = z.object({
 });
 export type Reconcile = z.infer<typeof ReconcileSchema>;
 
-// The filled outcome means the form was strictly read back and handed to the employee. Saving, submission, approval,
-// and payment remain facts of the ERP system, not consequences of filling the form (ADR-0028).
-export const HANDOVER_COMPLETED_NOTICE =
-  '报销单已经按你确认的明细填好，还没有保存或提交。请在报销系统里逐行核对，由你自己点「保存」并按流程提交。保存时如果弹出「字段必录提示」或「处理结果」，说明有字段没有真正写进报销系统：回到这里重新去报销这一项，不要手工补填。保存后回到这里再对一次账。应用只确认已填好，不代表已保存、已提交、已审批或已付款。';
-
 // ERP 草稿已交接 (ADR-0029): the baox 本地执行器 暂存'd the bill. A 暂存单 has no 单据编号 until it is saved; the page
 // shows this next to the 去报销系统查看 button and the 内码 (`Erp.review`), so it stays one short line (spec #406).
 export const DRAFT_HANDOVER_NOTICE = '已暂存到报销系统，请打开检查，确认无误后由你自己提交。';
@@ -1163,7 +1134,7 @@ export const CATALOG_PREPARATION_COPY = {
 
 // 顺序即流程：答复待确认项 → 项目归属（assign_projects）→ 报销信息核对与材料准备（服务端自动，none）
 // → 整单确认（confirm_review）→ 去打印 / 去报销（choose_action）。
-// 「去报销」即开始 ERP 写入，没有单独的「开始填报」：写入进行中为 none；登录步等待时为 erp_login；停在对账时为 reconcile。
+// 「去报销」即开始 ERP 写入，没有单独的「开始填报」：写入进行中为 none；停在对账时为 reconcile。
 // 确认之后、写入开始之前，改派项目仍被接受（confirm_review / choose_action 下提交项目归属），并使确认失效。
 export const STEP_KINDS = [
   'none',
@@ -1178,7 +1149,6 @@ export const STEP_KINDS = [
   'resolve_preparation',
   'confirm_review',
   'choose_action',
-  'erp_login',
   'reconcile',
   // 严格回读不一致、停在完成页：只接受「转人工」。
   'hand_off',

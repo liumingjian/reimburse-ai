@@ -1,6 +1,6 @@
 import { Button, InlineNotification, Tag } from '@carbon/react';
 import { CheckmarkFilled, ErrorFilled, Printer } from '@carbon/icons-react';
-import { DRAFT_HANDOVER_NOTICE, ERP_SAVED_OUTCOME_NOTICE, HANDOVER_COMPLETED_NOTICE, HUMAN_REVIEW_NOTICE, type TaskSnapshot } from '@baox/contract';
+import { DRAFT_HANDOVER_NOTICE, ERP_SAVED_OUTCOME_NOTICE, HUMAN_REVIEW_NOTICE, type TaskSnapshot } from '@baox/contract';
 import { TASKS_HASH, taskHash } from '../router';
 import { ActionGroup } from '../shell/ActionGroup';
 import { PageHeader } from '../shell/PageHeader';
@@ -24,8 +24,8 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const mismatched = readback.status === 'mismatched';
   const handedOff = reconcile.status === 'handed_off';
   const canHandOff = snapshot.allowedActions.includes('hand_off');
-  const { busy, error, run } = useAction(taskId);
-  const completedNotice = erp.outcome === 'filled' ? HANDOVER_COMPLETED_NOTICE : erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
+  const { busy, error, errorLink, run } = useAction(taskId);
+  const completedNotice = erp.outcome === 'drafted' ? DRAFT_HANDOVER_NOTICE : erp.outcome === 'saved' ? ERP_SAVED_OUTCOME_NOTICE : null;
 
   return (
     <>
@@ -112,7 +112,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         <section className="app-block" aria-label="转人工">
           <h2 className="app-section-title">转人工</h2>
           <p className="app-lead">应用不会自动改写报销系统里的行，也不会重试写入。转人工后任务标记为人工处理，保留回读记录，之后不再自动写入报销系统。</p>
-          <ActionGroup className="app-block-actions" error={error}>
+          <ActionGroup className="app-block-actions" error={error} errorLink={errorLink}>
             <Button size="md" disabled={busy} onClick={() => void run((adapter) => adapter.handOff(taskId, step.stepToken))}>
               转人工
             </Button>

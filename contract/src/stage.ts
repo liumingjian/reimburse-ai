@@ -135,8 +135,6 @@ export const TASK_ACTIONS = [
   'submit_project_assignment',
   'confirm_review',
   'start_erp_write',
-  'confirm_login',
-  'cancel_erp_write',
   'reconcile',
   'hand_off',
   'refill',
@@ -171,7 +169,7 @@ const PAGE_ACTIONS: Readonly<Record<TaskPage, readonly TaskAction[]>> = {
   project: ['assign_project_lines', 'submit_project_assignment'],
   review: ['confirm_review'],
   print: [],
-  erp: ['confirm_login', 'cancel_erp_write'],
+  erp: [],
   done: [],
   // 转人工 is not listed: it is also taken from the done page (a strict read-back mismatch), so it names no one page.
   reconcile: ['reconcile', 'refill'],

@@ -18,9 +18,9 @@ import {
   type Session,
   type TaskListOutcome,
   type Unsubscribe,
-  ExtensionPairingSchema,
-  type ExtensionPairing,
-  type ExtensionPairingOutcome,
+  PairingViewSchema,
+  type PairingView,
+  type PairingChangeOutcome,
   LegacyImportSchema,
   type LegacyImport,
   type LegacyImportOutcome,
@@ -71,11 +71,11 @@ export type LegacyImportState = {
   readonly error: string | null;
 };
 
-// 扩展配对 (extension pairing, ADR-0019): read when the settings page opens; afterwards replaced by the result of
+// 配对 (pairing with the 本地执行器, ADR-0019, ADR-0037): read when the settings page opens; afterwards replaced by the result of
 // issuing a 配对码 (pairing code) or revoking the pairing.
-export type ExtensionPairingState = {
+export type PairingState = {
   readonly status: LoadStatus;
-  readonly data: ExtensionPairing | null;
+  readonly data: PairingView | null;
   readonly error: string | null;
 };
 
@@ -100,7 +100,7 @@ export type AppState = {
   readonly publicBook: ProjectBookState;
   readonly accounts: AccountsState;
   readonly legacyImport: LegacyImportState;
-  readonly extensionPairing: ExtensionPairingState;
+  readonly pairing: PairingState;
   readonly tasks: Readonly<Record<string, TaskEntry>>;
   readonly connection: ConnectionState;
 };
@@ -114,7 +114,7 @@ const INITIAL_STATE: AppState = {
   publicBook: { status: 'idle', data: null, error: null },
   accounts: { status: 'idle', data: null, error: null },
   legacyImport: { status: 'idle', data: null, error: null },
-  extensionPairing: { status: 'idle', data: null, error: null },
+  pairing: { status: 'idle', data: null, error: null },
   tasks: {},
   connection: 'connected',
 };
@@ -200,7 +200,7 @@ export class AppStore {
     this.subscriptions.clear();
     this.invalidateBookRead('personal');
     this.invalidateBookRead('public');
-    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, publicBook: INITIAL_STATE.publicBook, accounts: INITIAL_STATE.accounts, legacyImport: INITIAL_STATE.legacyImport, extensionPairing: INITIAL_STATE.extensionPairing, tasks: {} });
+    this.setState({ taskList: INITIAL_STATE.taskList, projectBook: INITIAL_STATE.projectBook, publicBook: INITIAL_STATE.publicBook, accounts: INITIAL_STATE.accounts, legacyImport: INITIAL_STATE.legacyImport, pairing: INITIAL_STATE.pairing, tasks: {} });
   }
 
   // 任务列表是请求/响应（没有事件流）。连接类失败时保留 offline 标记（全页横幅）并按退避自动重试；恢复后横幅消失、列表出现。
@@ -323,43 +323,43 @@ export class AppStore {
   }
 
   // Only the settings page uses the pairing, so it is read the first time that page needs it.
-  async loadExtensionPairing(): Promise<void> {
-    const previous = this.state.extensionPairing;
-    this.setState({ extensionPairing: { status: 'loading', data: previous.data, error: null } });
+  async loadPairing(): Promise<void> {
+    const previous = this.state.pairing;
+    this.setState({ pairing: { status: 'loading', data: previous.data, error: null } });
     try {
-      const raw = await this.adapter.getExtensionPairing();
-      const data = this.options.validate ? ExtensionPairingSchema.parse(raw) : raw;
-      this.setState({ extensionPairing: { status: 'ready', data, error: null } });
+      const raw = await this.adapter.getPairing();
+      const data = this.options.validate ? PairingViewSchema.parse(raw) : raw;
+      this.setState({ pairing: { status: 'ready', data, error: null } });
     } catch (error) {
-      this.setState({ extensionPairing: { status: 'error', data: this.state.extensionPairing.data, error: describe(error) } });
+      this.setState({ pairing: { status: 'error', data: this.state.pairing.data, error: describe(error) } });
       if (isUnauthenticated(error)) this.sessionLost();
     }
   }
 
-  // After the extension redeemed a 配对码 (pairing code) on its own: reads the pairing again until the server sees the
-  // extension connected, at most `polls` reads `intervalMs` apart. Redeeming returns before the extension's channel is
-  // up, and the page has no push for it.
-  async awaitExtensionConnected(polls = 10, intervalMs = 500): Promise<void> {
+  // After the 本地执行器 redeemed a 配对码 (pairing code) on its own: reads the pairing again until the server sees it
+  // connected, at most `polls` reads `intervalMs` apart. Redeeming returns before its channel is up, and the page has
+  // no push for it.
+  async awaitPairingConnected(polls = 10, intervalMs = 500): Promise<void> {
     for (let poll = 0; poll < polls; poll += 1) {
       if (poll > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      await this.loadExtensionPairing();
-      if (this.state.extensionPairing.data?.connected) return;
+      await this.loadPairing();
+      if (this.state.pairing.data?.connected) return;
     }
   }
 
   // Issuing a 配对码 or revoking: the pairing in the result replaces the current one. A freshly issued code appears
   // in this result only; no later read carries it again.
-  async extensionPairingAction(run: (adapter: AppAdapter) => Promise<ExtensionPairingOutcome>): Promise<ExtensionPairingOutcome> {
-    let outcome: ExtensionPairingOutcome;
-    let data: ExtensionPairing | null;
+  async pairingAction(run: (adapter: AppAdapter) => Promise<PairingChangeOutcome>): Promise<PairingChangeOutcome> {
+    let outcome: PairingChangeOutcome;
+    let data: PairingView | null;
     try {
       outcome = await run(this.adapter);
       const raw = outcome.pairing;
-      data = raw && this.options.validate ? ExtensionPairingSchema.parse(raw) : raw;
+      data = raw && this.options.validate ? PairingViewSchema.parse(raw) : raw;
     } catch (error) {
       return { ok: false, error: { code: 'adapter_error', message: describe(error) }, pairing: null };
     }
-    if (data) this.setState({ extensionPairing: { status: 'ready', data, error: null } });
+    if (data) this.setState({ pairing: { status: 'ready', data, error: null } });
     if (!outcome.ok) this.checkSession(outcome.error);
     return outcome;
   }

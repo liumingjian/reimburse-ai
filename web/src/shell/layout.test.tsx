@@ -33,8 +33,8 @@ describe('FileName', () => {
 
 describe('FieldGroup', () => {
   test('is a description list on the Carbon grid, one equal column per field', () => {
-    render(<FieldGroup label="扩展" fields={[{ label: '浏览器', value: 'Chrome' }, { label: '版本', value: '1.1.0' }]} />);
-    const list = screen.getByLabelText('扩展');
+    render(<FieldGroup label="本地执行器" fields={[{ label: '浏览器', value: 'Chrome' }, { label: '版本', value: '1.1.0' }]} />);
+    const list = screen.getByLabelText('本地执行器');
     expect(list.tagName).toBe('DL');
     expect(list.className).toContain('cds--css-grid');
     expect(within(list).getAllByRole('term').map((t) => t.textContent)).toEqual(['浏览器', '版本']);

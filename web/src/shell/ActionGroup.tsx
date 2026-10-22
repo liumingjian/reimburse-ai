@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { ActionLink } from '@baox/contract';
 import { ButtonSet } from '@carbon/react';
 import { ActionError } from './ActionError';
 
@@ -9,12 +10,15 @@ export function ActionGroup({
   children,
   caption,
   error = null,
+  errorLink = null,
   label,
   className,
 }: {
   children: ReactNode;
   caption?: ReactNode;
   error?: string | null;
+  // The page that can fix what `error` names (useAction's `errorLink`).
+  errorLink?: ActionLink | null;
   label?: string;
   className?: string;
 }) {
@@ -22,7 +26,7 @@ export function ActionGroup({
     <div className={className ? `app-action-group ${className}` : 'app-action-group'} {...(label ? { role: 'group', 'aria-label': label } : {})}>
       <ButtonSet>{children}</ButtonSet>
       {caption ? <p className="app-caption">{caption}</p> : null}
-      <ActionError message={error} />
+      <ActionError message={error} link={errorLink} />
     </div>
   );
 }

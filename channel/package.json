@@ -1,0 +1,28 @@
+{
+  "name": "@baox/channel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The paired client's side of the app connection, used by the 本地执行器: 配对, the WebSocket channel, a running job's link, invoice originals",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@baox/contract": "workspace:*",
+    "@baox/erp-executor": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  }
+}

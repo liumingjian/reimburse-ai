@@ -14,7 +14,7 @@ import type { ParseExecutor } from '../parse/executor';
 import type { ErpConfig } from '../erp/config';
 import type { FillExecutor } from '../erp/fill-jobs';
 import type { ReconcileExecutor } from '../erp/reconcile-job';
-import type { Schedule } from '../extension/channel';
+import type { Schedule } from '../channel/channel';
 
 // The primary test seam: the Hono app on SQLite `:memory:`, with a throwaway data directory for blobs.
 // The parser job runs in the real parse worker unless a test injects another executor (`createTestServer({ parser })`).
@@ -77,17 +77,16 @@ export function testClient(app: Hono<AppEnv>, account: Account, cookie: string):
 // database and data directory shared with an earlier server, to test a restart (default `:memory:` + a fresh dir).
 // `publicOrigin`: the address colleagues reach the app at (e.g. `http://10.250.0.222:8888`); without it only 127.0.0.1 is
 // admitted, which is what every test but the deployment ones wants.
-// `extensionTemplate`: a built extension template (`extension/scripts/build.mjs <dir>`) for the settings page's download.
-// `schedule`: the extension channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
+// `schedule`: the 本地执行器 channel's timers (hello deadline, reconnection window); real ones unless a test fires them.
 // `erpCredentialKey`: the key the hosted ERP 凭据 are sealed with; without it they cannot be saved.
-export type TestServerOptions = { parser?: ParseExecutor; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; extensionTemplate?: string | null; schedule?: Schedule; database?: string; dataDir?: string; erpCredentialKey?: Buffer | null; autoRerun?: boolean; localExecutor?: LocalExecutorDist | null };
+export type TestServerOptions = { parser?: ParseExecutor; legacyHome?: string | null; erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; erpConfig?: ErpConfig; publicOrigin?: string; schedule?: Schedule; database?: string; dataDir?: string; erpCredentialKey?: Buffer | null; autoRerun?: boolean; localExecutor?: LocalExecutorDist | null };
 
-export async function createTestServer({ parser, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, extensionTemplate = null, schedule, database = ':memory:', dataDir = tempDataDir(), erpCredentialKey = null, autoRerun, localExecutor = null }: TestServerOptions = {}): Promise<TestServer> {
+export async function createTestServer({ parser, legacyHome = null, erpExecutor, reconcileExecutor, erpConfig, publicOrigin, schedule, database = ':memory:', dataDir = tempDataDir(), erpCredentialKey = null, autoRerun, localExecutor = null }: TestServerOptions = {}): Promise<TestServer> {
   const db = await openDatabase(database);
   let offset = 0;
   const clock: TestClock = { now: () => new Date(Date.now() + offset), advance: (ms) => void (offset += ms) };
   const erpLease = createInMemoryErpLease();
-  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, erpCredentialKey, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, extensionTemplate, localExecutor, ...(parser ? { parser } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}), ...(autoRerun !== undefined ? { autoRerun } : {}) });
+  const app = createApp({ db, dataDir, now: clock.now, erpLease, legacyHome, erpCredentialKey, publicOrigin: publicOrigin ? parsePublicOrigin(publicOrigin) : null, localExecutor, ...(parser ? { parser } : {}), ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(erpConfig ? { erpConfig } : {}), ...(schedule ? { schedule } : {}), ...(autoRerun !== undefined ? { autoRerun } : {}) });
   await app.ready;
   let accounts = 0;
   let administrator: TestClient | null = null;

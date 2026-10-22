@@ -48,7 +48,7 @@ rexec --background 'set -o pipefail; pnpm install --frozen-lockfile --prefer-off
 rexec --background --timeout 3600 'set -o pipefail; pnpm install --frozen-lockfile --prefer-offline --reporter=silent && pnpm test:e2e 2>&1 | tail -40'   # full gate only
 ```
 
-The Mac is shared with the maintainer's desktop apps, and the web, extension and e2e suites have timing-sensitive
+The Mac is shared with the maintainer's desktop apps, and the web, server and e2e suites have timing-sensitive
 tests: on a busy Mac they fail by the dozen while the code is fine. The Mac mini has 12 cores and 64 GB, so a load
 average of 5 to 15 is normal: judge "busy" by CPU use (`rexec --no-sync 'top -l 2 -o cpu -n 10'`), never by load
 average. Before calling a red file noise, rerun that file alone, on the branch and on an `origin/main` snapshot; the

@@ -1,0 +1,204 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { PAIRING_CODE_LENGTH, PAIRING_CODE_TTL_MS, PAIRING_ERRORS, InstallSystemSchema, type PairingState, type InstallSystem } from '@baox/contract';
+import { AuthRefusal, type Clock } from '../accounts/accounts';
+import type { Db } from '../db/database';
+import type { MaintenanceWriteAdmission } from '../maintenance';
+
+// 配对 (pairing, ADR-0019, ADR-0037): one baox 本地执行器 bound to one 应用账号 (app account). The settings page issues
+// a 配对码 (pairing code); the 本地执行器 exchanges it once for a long-lived token.
+//
+// The token is held the way a session token is: the 本地执行器 keeps the random string, the database keeps only its
+// sha256, so a copy of the database never hands anyone a working 本地执行器. The 配对码 is stored the same way, and
+// only for the ten minutes it is good for.
+//
+// One row per 应用账号 (the primary key), so "one active pairing per account" is the table's own shape: issuing a new
+// 配对码 replaces the row, which is what makes the previously paired 本地执行器's token stop resolving. Revoking
+// deletes the row and touches no session; a logout deletes a session and touches no row. Both also close the old
+// 本地执行器's live socket (`live.disconnect`): the token is checked only when a socket opens, so a row deleted under
+// an open socket would otherwise leave that 本地执行器 receiving this account's next 去报销.
+//
+// What is stored is what the settings page can still read after a restart: which browser, when it paired, when it
+// last spoke, which version it reported. Whether it is connected *now* is not storable — it is a live socket
+// (`channel.ts`) — so the view asks for it.
+
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+
+// No look-alike characters (no I, L, O, 0, 1): the employee reads this off the settings page and types it in.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+const NOT_PAIRED: PairingState = { status: 'none', browser: null, pairedAt: null, lastConnectedAt: null, codeExpiresAt: null, connected: false, version: null, code: null };
+
+function generatePairingCode(): string {
+  return [...randomBytes(PAIRING_CODE_LENGTH)].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join('');
+}
+
+// A 配对码 is read aloud or copied with stray spaces and dashes, and its alphabet has no lowercase letters.
+const normalise = (code: string) => code.replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
+
+// Wrong, expired and already-used codes get the same refusal: which one it was is not the 本地执行器's business, and
+// telling it apart would confirm a guessed code to whoever guessed it.
+const refuseCode = () => new AuthRefusal(401, 'pairing_code_invalid', PAIRING_ERRORS.codeInvalid);
+
+// Whether this 应用账号 has a redeemed pairing (a 配对码 issued but not yet used is none): since ADR-0037 every pairing
+// is a 本地执行器's. Takes the handle to read through, so the 去报销 refusal (the task policy's `executorPaired`, read
+// by `tasks.ts`) and the 凭据 can ask inside the transaction they are already in.
+export async function hasPairing(db: Db, accountId: string): Promise<boolean> {
+  const row = await db.selectFrom('pairing').select('token_sha256').where('account_id', '=', accountId).executeTakeFirst();
+  return !!row?.token_sha256;
+}
+
+// What the pairing service needs of the live channel (`channel.ts`): whether an account's 本地执行器 is connected, and
+// closing its socket when the pairing goes. It defaults to "nothing is connected" so a server wired without a channel —
+// every test that only exercises pairing — still answers the contract's shape.
+export type LivePairings = { connected(accountId: string): boolean; disconnect(accountId: string): void };
+const NO_CHANNEL: LivePairings = { connected: () => false, disconnect: () => undefined };
+
+export function createPairingService(db: Db, clock: Clock, live: LivePairings = NO_CHANNEL, acquireWrite: MaintenanceWriteAdmission = () => ({ release: () => undefined })) {
+  const iso = (date: Date) => date.toISOString();
+
+  // Pairing reads normally update liveness or remove an expired code. They remain reads when maintenance has admitted:
+  // the stale status is less harmful than allowing a GET or WebSocket hello to cross the durable write boundary.
+  async function optionalWrite(write: () => Promise<unknown>): Promise<boolean> {
+    const maintenance = acquireWrite();
+    if (!maintenance) return false;
+    try {
+      await write();
+      return true;
+    } finally {
+      maintenance.release();
+    }
+  }
+
+  // `code` is the string just issued, carried through this once; every other caller passes nothing and the employee
+  // sees no code, because there is none to show.
+  async function view(accountId: string, code: string | null = null): Promise<PairingState> {
+    const row = await db.selectFrom('pairing').selectAll().where('account_id', '=', accountId).executeTakeFirst();
+    if (!row) return NOT_PAIRED;
+    if (!row.token_sha256 && (row.code_expires_at === null || Date.parse(row.code_expires_at) <= clock().getTime())) {
+      // Nobody used it in time; drop it rather than leave the page saying a 本地执行器 is expected.
+      await optionalWrite(() => db.deleteFrom('pairing').where('account_id', '=', accountId).execute());
+      return NOT_PAIRED;
+    }
+    return {
+      status: row.token_sha256 ? 'paired' : 'waiting',
+      browser: row.browser,
+      pairedAt: row.paired_at,
+      lastConnectedAt: row.last_connected_at,
+      codeExpiresAt: row.code_expires_at,
+      connected: row.token_sha256 ? live.connected(accountId) : false,
+      version: row.version,
+      code,
+    };
+  }
+
+  return {
+    view,
+
+    // Issuing is also how a pairing is replaced: the previous row goes first, so a 本地执行器 paired a moment ago
+    // stops being this account's 本地执行器 before the new 配对码 is even readable.
+    // `system`: the one-command install's choice (#425), which makes the code fetch that system's install script.
+    async issue(accountId: string, system: InstallSystem | null = null): Promise<PairingState> {
+      const code = generatePairingCode();
+      const now = clock();
+      await db.transaction().execute(async (tx) => {
+        await tx.deleteFrom('pairing').where('account_id', '=', accountId).execute();
+        await tx
+          .insertInto('pairing')
+          .values({
+            account_id: accountId,
+            code_sha256: sha256(code),
+            code_expires_at: iso(new Date(now.getTime() + PAIRING_CODE_TTL_MS)),
+            token_sha256: null,
+            browser: null,
+            version: null,
+            install_system: system,
+            install_code_sha256: system ? sha256(code) : null,
+            created_at: iso(now),
+            paired_at: null,
+            last_connected_at: null,
+          })
+          .execute();
+      });
+      live.disconnect(accountId);
+      return view(accountId, code);
+    },
+
+    // What `/install/<配对码>` answers for (#425): the account and system of a code issued for an install, for its ten
+    // minutes, whether it has paired yet or not. Null for any other code. Reading it spends nothing.
+    async installCode(code: string): Promise<{ accountId: string; system: InstallSystem } | null> {
+      const row = await db
+        .selectFrom('pairing')
+        .select(['account_id', 'install_system', 'created_at'])
+        .where('install_code_sha256', '=', sha256(normalise(code)))
+        .executeTakeFirst();
+      if (!row || Date.parse(row.created_at) + PAIRING_CODE_TTL_MS <= clock().getTime()) return null;
+      const system = InstallSystemSchema.safeParse(row.install_system);
+      return system.success ? { accountId: row.account_id, system: system.data } : null;
+    },
+
+    // 撤销配对 (revoke the pairing): the 本地执行器's token stops resolving and its socket closes, at once. The
+    // account's web session is untouched.
+    async revoke(accountId: string): Promise<PairingState> {
+      await db.deleteFrom('pairing').where('account_id', '=', accountId).execute();
+      live.disconnect(accountId);
+      return NOT_PAIRED;
+    },
+
+    // 撤销配对 from the 本地执行器 itself, authorised by the token it holds. It works for a deactivated account
+    // too, whose token no longer resolves in `lookup`: the 本地执行器 is giving the pairing up, not using it. False
+    // when the token names no pairing (already revoked or replaced).
+    async revokeToken(token: string | undefined): Promise<boolean> {
+      if (!token) return false;
+      const row = await db.selectFrom('pairing').select('account_id').where('token_sha256', '=', sha256(token)).executeTakeFirst();
+      if (!row) return false;
+      await db.deleteFrom('pairing').where('account_id', '=', row.account_id).where('token_sha256', '=', sha256(token)).execute();
+      live.disconnect(row.account_id);
+      return true;
+    },
+
+    // Single use: the update matches only while the code is still on the row and clears it in the same statement, so
+    // two 本地执行器s racing the same 配对码 cannot both walk away with a token.
+    async redeem(code: string, browser: string | null, version: string | null): Promise<{ token: string; accountId: string }> {
+      const now = clock();
+      const codeSha = sha256(normalise(code));
+      const row = await db.selectFrom('pairing').selectAll().where('code_sha256', '=', codeSha).executeTakeFirst();
+      if (!row || row.code_expires_at === null || Date.parse(row.code_expires_at) <= now.getTime()) throw refuseCode();
+      const token = randomBytes(32).toString('base64url');
+      const at = iso(now);
+      const updated = await db
+        .updateTable('pairing')
+        .set({ code_sha256: null, code_expires_at: null, token_sha256: sha256(token), browser, version, paired_at: at, last_connected_at: at })
+        .where('account_id', '=', row.account_id)
+        .where('code_sha256', '=', codeSha)
+        .executeTakeFirst();
+      if (Number(updated.numUpdatedRows) !== 1) throw refuseCode();
+      return { token, accountId: row.account_id };
+    },
+
+    // The 应用账号 a 本地执行器 acts for, or null when the pairing is gone (revoked, replaced) or the account can no
+    // longer act at all. A deactivated or unapproved account loses its 本地执行器 the way it loses its sessions.
+    // Every answer marks the connection: the settings page has no other sign that the pairing is alive. The username is
+    // how the 本地执行器 names the account when asking before it switches to another one (#292).
+    async lookup(token: string | undefined): Promise<{ accountId: string; username: string } | null> {
+      if (!token) return null;
+      const tokenSha = sha256(token);
+      const row = await db
+        .selectFrom('pairing')
+        .innerJoin('account', 'account.account_id', 'pairing.account_id')
+        .select(['pairing.account_id', 'account.username', 'account.active', 'account.approved'])
+        .where('pairing.token_sha256', '=', tokenSha)
+        .executeTakeFirst();
+      if (!row || row.active !== 1 || row.approved !== 1) return null;
+      await optionalWrite(() => db.updateTable('pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute());
+      return { accountId: row.account_id, username: row.username ?? row.account_id };
+    },
+
+    // The version a 本地执行器 reports when it opens its channel (ADR-0021). A 本地执行器 is replaced by unpacking a
+    // new directory over the old one, so the version on the row is only ever as fresh as the last connect.
+    async noteConnection(accountId: string, version: string | null): Promise<void> {
+      await optionalWrite(() => db.updateTable('pairing').set({ version, last_connected_at: iso(clock()) }).where('account_id', '=', accountId).execute());
+    },
+  };
+}
+
+export type PairingService = ReturnType<typeof createPairingService>;

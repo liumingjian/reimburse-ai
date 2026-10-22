@@ -2,8 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ALLOCATION_ERRORS,
-  ERP_EXTENSION_STEPS,
-  ERP_LOCAL_EXECUTOR_STEPS,
+  ERP_STEPS,
   ErpStepSchema,
   PENDING_ANSWER_ERRORS,
   PendingAnswerSchema,
@@ -17,7 +16,7 @@ import {
   validatePendingAnswer,
 } from '@baox/contract';
 import { GOLDEN_SCENARIOS, GOLDENS } from '@baox/contract/goldens';
-import { ERP_LOCAL_STEP_DEFS, ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
+import { ERP_STEP_DEFS, ERP_STEP_INDEX, erpSteps } from './fixtures/erp';
 import { INITIAL_BOOK, MOCK_TODAY, annotateProject, confirmationDigest } from './fixtures/projects';
 import { t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createMockAdapter } from './mock-adapter';
@@ -40,15 +39,10 @@ describe('契约 schema', () => {
   });
 
   test('mock 的写入步骤清单与契约同源', () => {
-    expect(ERP_STEP_DEFS).toEqual(ERP_EXTENSION_STEPS);
-    expect(ERP_LOCAL_STEP_DEFS).toEqual(ERP_LOCAL_EXECUTOR_STEPS);
-    // Both routes hold the same stage keys in the same order (the mock indexes either by ERP_STEP_INDEX).
-    expect(ERP_LOCAL_STEP_DEFS.map((step) => step.key)).toEqual(ERP_STEP_DEFS.map((step) => step.key));
+    expect(ERP_STEP_DEFS).toEqual(ERP_STEPS);
     expect(ERP_STEP_INDEX.handover).toBe(ERP_STEP_DEFS.length - 1);
-    expect([...ERP_STEP_DEFS, ...ERP_LOCAL_STEP_DEFS].some((step) => step.title.includes('保存'))).toBe(false);
-    for (const route of ['extension', 'local_executor'] as const) {
-      for (const step of erpSteps(ERP_STEP_DEFS.length, 'running', route)) expect(() => ErpStepSchema.parse(step)).not.toThrow();
-    }
+    expect(ERP_STEP_DEFS.some((step) => step.title.includes('保存'))).toBe(false);
+    for (const step of erpSteps(ERP_STEP_DEFS.length, 'running')) expect(() => ErpStepSchema.parse(step)).not.toThrow();
   });
 
   test('由快照投影出的任务列表通过任务列表 schema', () => {
@@ -184,10 +178,10 @@ describe('契约 schema', () => {
     expect(STEP_KINDS.indexOf('assign_projects')).toBeLessThan(STEP_KINDS.indexOf('confirm_review'));
     expect(STEP_KINDS.indexOf('confirm_review')).toBeLessThan(STEP_KINDS.indexOf('choose_action'));
     expect((STEP_KINDS as readonly string[]).includes('start_erp_write')).toBe(false);
-    // ?seed=erp：已点「去报销」，浏览器启动后等待登录。
+    // ?seed=erp：已点「去报销」，作业正在跑；没有等员工的一步（ADR-0037）。
     const erp = t1Snapshot('erp');
-    expect(erp.step.kind).toBe('erp_login');
-    expect(erp.erp.status).toBe('waiting_login');
+    expect(erp.step.kind).toBe('none');
+    expect(erp.erp.status).toBe('running');
   });
 
   test('逐段分摊与处理人：?allocation=1 的各阶段夹具通过 schema；待确认项都带处理人；答复为 amounts 或 giveUp', () => {
@@ -283,7 +277,7 @@ describe('报销任务阶段', () => {
     expect(readMockOptions('?seed=preparation')).toEqual({ seed: null, fault: null });
     // ?seed=print：actions 阶段，且打印稿已经生成（打印稿预览不是阶段）。
     expect(readMockOptions('?seed=print')).toEqual({ seed: 'actions', fault: null, printSheet: true });
-    expect(FAULTS).toHaveLength(8);
+    expect(FAULTS).toHaveLength(7);
     // ?book=empty：个人项目簿初始为空。
     expect(readMockOptions('?seed=pending&book=empty')).toEqual({ seed: 'pending', fault: null, bookEmpty: true });
     expect(readMockOptions('?book=nope')).toEqual({ seed: null, fault: null });

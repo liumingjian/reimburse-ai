@@ -79,8 +79,13 @@ export const HIT_JS = `(n) => {
 }`;
 
 /** The cover in the employee's words: what is in the way, not just that something is. */
-export const describeCover = (cover: Cover | null | undefined) =>
-  cover ? `${cover.tag}${cover.id ? `#${cover.id}` : ''}${cover.text ? `「${cover.text}」` : ''}` : '一个读不出名字的元素';
+// Without an id or a text the first class names it: live 2026-10-20 a cover reported as a bare 「DIV」 could not be told from
+// ERP's loading overlay afterwards.
+export const describeCover = (cover: Cover | null | undefined) => {
+  if (!cover) return '一个读不出名字的元素';
+  const cls = (cover.cls ?? '').trim().split(/\s+/)[0];
+  return `${cover.tag}${cover.id ? `#${cover.id}` : cls && !cover.text ? `.${cls}` : ''}${cover.text ? `「${cover.text}」` : ''}`;
+};
 
 /**
  * Why this point must not be clicked, in one sentence, or null when it may be. The sentence names what is at the

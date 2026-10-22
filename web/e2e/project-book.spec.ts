@@ -16,7 +16,7 @@ async function intake(page: Page, number: string, name = number === 'P-6021' ? '
 }
 
 test('offline intake preserves names and retains input on duplicate or unsafe numbers', async ({ page }, testInfo) => {
-  await page.goto(open('?fault=erp-login-missing', '#/projects'));
+  await page.goto(open('', '#/projects'));
   await expect(h1(page, '个人项目簿')).toBeVisible();
   await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '截止日期', '状态', '']);
   await intake(page, 'LOCAL-5108', '本地维护项目');

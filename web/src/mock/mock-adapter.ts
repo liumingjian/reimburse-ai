@@ -9,7 +9,7 @@ import {
   type AppAdapter,
   type AuthOutcome,
   type ErpCredentialsOutcome,
-  type ExtensionPairingOutcome,
+  type PairingChangeOutcome,
   type LegacyImportOutcome,
   type ProjectBookOutcome,
   type TaskListOutcome,
@@ -35,7 +35,7 @@ import { createPendingFlow } from './flows/pending';
 import { createPrintFlow } from './flows/print';
 import { createProjectFlow } from './flows/project';
 import { createErpCredentialsFlow } from './erp-credentials';
-import { createExtensionPairingFlow } from './extension';
+import { createPairingFlow } from './pairing';
 import { createLegacyImportFlow } from './legacy-import';
 import type { MockOptions } from './options';
 import type { LocalExecutorPort } from '../adapter/local-executor-port';
@@ -59,7 +59,7 @@ declare global {
   }
 }
 
-// `localExecutor`: the 本地执行器 the mock plays on this PC (`./extension.ts`), for `App`'s `localExecutor`.
+// `localExecutor`: the 本地执行器 the mock plays on this PC (`./pairing.ts`), for `App`'s `localExecutor`.
 export type MockAdapter = AppAdapter & MockHooks & { localExecutor: LocalExecutorPort };
 
 export function installMockHooks(target: Window, adapter: MockAdapter): void {
@@ -67,11 +67,11 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 }
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
-const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getExtensionPairing', 'getErpCredentials']);
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getPairing', 'getErpCredentials']);
 // 旧数据导入的重试 / 跳过带回新的导入结果。
 const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['retryLegacyImport', 'skipLegacyImport']);
 // Issuing a 配对码 (pairing code) and revoking the pairing answer with the new pairing.
-const PAIRING_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['createExtensionPairingCode', 'revokeExtensionPairing']);
+const PAIRING_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['createPairingCode', 'revokePairing']);
 // Saving, 试登录 and clearing the ERP 凭据 answer with the new view.
 const CREDENTIAL_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['saveErpCredentials', 'testErpCredentials', 'clearErpCredentials']);
 // 作废与重置的失败形状带 taskList 而不是 snapshot；账号动作只有 error；项目簿维护动作带 book。
@@ -146,7 +146,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     return { value: HOME_CITY, source: 'network' };
   };
 
-  const pairing = createExtensionPairingFlow(options);
+  const pairing = createPairingFlow(options);
   const adapter: AppAdapter = {
     // The session reads memory, like snapshots: a disconnect shows up on the task list (banner), not at the gate.
     getSession: async () => auth.session(),
@@ -263,16 +263,16 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...pairing.flow,
     ...createErpCredentialsFlow(),
     ...createPrintFlow(bus),
-    ...createErpFlow(bus),
+    ...createErpFlow(bus, pairing.paired),
   };
 
   // 断开期间动作不送达：统一包一层，失败原因由页面就地显示。
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome | ErpCredentialsOutcome>;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome>;
     const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
-    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | ExtensionPairingOutcome | ErpCredentialsOutcome =>
+    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome =>
       ACCOUNT_METHODS.has(key)
         ? { ok: false, error: unavailable, accountList: null }
         : LEGACY_METHODS.has(key)

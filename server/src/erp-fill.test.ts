@@ -1,14 +1,14 @@
-import { ERP_HANDOVER_STEP_COPY, TaskListSchema } from '@baox/contract';
+import { ERP_DRAFT_STEP_COPY, TaskListSchema } from '@baox/contract';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
-import { abortBeforeAttempt, catalogMismatch, gated, handedOver, loginWall, readbackMismatch, TEST_ERP_ACCOUNT, type Script, type ScriptedExecutor } from './erp/testing/fake-executor';
+import { abortBeforeAttempt, catalogMismatch, drafted, gated, notSignedIn, readbackMismatch, TEST_ERP_ACCOUNT, type Script, type ScriptedExecutor } from './erp/testing/fake-executor';
 import { api, sample } from './test/api';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 12 (#191): 去报销 (fill ERP) end to end on a fake executor. The job runs in the background; the snapshot is
-// derived from the persisted job facts (ADR-0014/0016): login pause, cancel, catalog mismatch, write result unknown,
-// hand-over. The account's ERP lease is held only while one of its jobs runs (ADR-0019). Every task starts from the
+// derived from the persisted job facts (ADR-0014/0016): no sign-in, catalog mismatch, write result unknown, and
+// ERP 草稿已交接, the one ending (ADR-0037). The account's ERP lease is held only while one of its jobs runs (ADR-0019). Every task starts from the
 // scenario builder's default: the 全季 hotel invoice + folio, one accommodation line confirmed on P-2307.
 
 let server: ScenarioServer;
@@ -27,64 +27,38 @@ async function refused(response: Response, status: number, code: string) {
 const taskList = async (client: TestClient) => TaskListSchema.parse(await (await client.request('/api/tasks')).json());
 
 describe('去报销 on a fake executor', () => {
-  it('pauses for login: stage erp, step erp_login, no attempt, lease released; confirm-login re-probes once', async () => {
-    const scene = await scenario(server).at('erp', { erp: loginWall });
-    const waiting = scene.reached;
-    expect(waiting).toMatchObject({
-      stage: 'erp',
-      step: { kind: 'erp_login' },
-      erp: {
-        status: 'waiting_login',
-        currentStage: 'login',
-        externalWait: 'employee_login',
-        outcome: 'none',
-        allowedActions: ['refresh', 'confirm_login', 'cancel'],
-        loginNotice: null,
-        rerunNotice: null,
-      },
-    });
-    expect(waiting.erp.steps.find((step) => step.key === 'login')?.status).toBe('waiting');
+  it('nothing waits for a login: a job that cannot sign in stops before any attempt and the task can go again', async () => {
+    const scene = await scenario(server).at('actions', { erp: notSignedIn });
+    const stopped = await scene.run('start-erp-write');
+    expect(stopped).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle', outcome: 'none', externalWait: 'none' }, confirmation: { status: 'confirmed' } });
+    expect(stopped.erp.abortReason).toContain('设置页保存报销系统账号和密码');
+    expect(stopped.allowedActions).toContain('start_erp_write');
     expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
     expect(executor.runs().map((run) => run.trigger)).toEqual(['start']);
-    // The plan carries the confirmed lines' projects and the voucher invoices by content.
-    expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: scene.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] } });
+    // The plan carries the confirmed lines' projects, the voucher invoices by content, and the marker it 暂存s under.
+    expect(executor.runs()[0]!.plan).toMatchObject({ kind: 'fill', taskId: scene.task.taskId, purpose: '上海产品评审出差', catalog: { projects: [{ code: 'P-2307', name: '华东客户交付' }], expenseItems: [{ code: 'FY010001', name: '住宿' }] }, draft: { mark: expect.stringMatching(/^baox-[a-z0-9]{10}$/) } });
     expect(executor.runs()[0]!.plan.invoices).toHaveLength(1);
 
-    // Re-reading a recorded login wait cannot dispatch another fill, import, write, or save.
-    const refreshed = await scene.snapshot();
-    const refreshedAgain = await scene.snapshot();
-    expect(refreshed.erp).toMatchObject({ currentStage: 'login', externalWait: 'employee_login', outcome: 'none', allowedActions: ['refresh', 'confirm_login', 'cancel'] });
-    expect(refreshedAgain.erp).toEqual(refreshed.erp);
+    // Re-reading the stop cannot dispatch another fill.
+    expect((await scene.snapshot()).erp).toEqual(stopped.erp);
     expect(executor.runs()).toHaveLength(1);
 
-    // Still not logged in: stays, with a notice.
-    await scene.accept('confirm-login');
-    const still = await scene.settled();
-    expect(still).toMatchObject({ stage: 'erp', step: { kind: 'erp_login' }, erp: { status: 'waiting_login' } });
-    expect(still.erp.loginNotice).toEqual(expect.any(String));
-    expect(executor.runs().map((run) => run.trigger)).toEqual(['start', 'confirm_login']);
-
-    executor.queue(handedOver());
-    await scene.accept('confirm-login');
-    const done = await scene.settled();
-    expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'filled', allowedActions: ['refresh'], draftNo: null } });
+    executor.queue(drafted);
+    expect((await scene.run('start-erp-write')).stage).toBe('done');
   });
 
-  it('cancel-erp-write returns to write-pending and the task can start again', async () => {
-    const scene = await scenario(server).at('erp', { erp: loginWall });
-    const cancelled = await scene.accept('cancel-erp-write');
-    expect(cancelled).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle', abortReason: null }, confirmation: { status: 'confirmed' } });
-    expect(await scene.refused('cancel-erp-write')).toEqual({ status: 400, code: 'not_waiting_login' });
-    expect(await scene.refused('confirm-login')).toEqual({ status: 400, code: 'not_waiting_login' });
+  it('has no 我已登录，继续 and no 取消去报销 any more (ADR-0037)', async () => {
+    const scene = await scenario(server).at('actions');
+    for (const name of ['confirm-login', 'cancel-erp-write']) expect((await scene.act(name)).status, name).toBe(404);
+  });
 
-    executor.queue(handedOver());
+  it('answers every mutation with 409 while the job runs', async () => {
+    const scene = await scenario(server).at('actions');
+    const gate = gated(drafted);
+    executor.queue(gate.script);
     await scene.accept('start-erp-write');
-    expect((await scene.settled()).stage).toBe('done');
-  });
-
-  it('answers every mutation other than confirm-login / cancel-erp-write with 409 during the login pause', async () => {
-    const scene = await scenario(server).at('erp', { erp: loginWall });
-    const waiting = scene.reached;
+    await gate.running;
+    const waiting = await scene.snapshot();
     const id = scene.task.taskId;
     const line = waiting.lines[0]!;
     const mutations: Array<[string, Record<string, unknown>]> = [
@@ -106,6 +80,8 @@ describe('去报销 on a fake executor', () => {
     expect((await scene.client.post(`/api/tasks/${id}/abandon`, {})).status).toBe(409);
     // Nothing changed: the same step still stands.
     expect((await scene.snapshot()).step.stepToken).toBe(waiting.step.stepToken);
+    gate.release();
+    expect((await scene.settled()).stage).toBe('done');
   });
 
   it('a catalog mismatch aborts before import, with no attempt, and returns to project assignment', async () => {
@@ -123,7 +99,7 @@ describe('去报销 on a fake executor', () => {
     const resubmitted = await scene.accept('submit-project-assignment', { purpose: '上海产品评审出差', projects: Object.fromEntries(mismatch.lines.map((line) => [line.lineId, 'P-3312'])) });
     expect(resubmitted).toMatchObject({ stage: 'review', step: { kind: 'confirm_review' }, catalog: { status: 'pending' } });
     await scene.accept('confirm-review', { digest: resubmitted.confirmation.digest });
-    executor.queue(handedOver());
+    executor.queue(drafted);
     await scene.accept('start-erp-write');
     expect((await scene.settled()).stage).toBe('done');
   });
@@ -169,32 +145,32 @@ describe('去报销 on a fake executor', () => {
     expect((await scene.snapshot()).stage).toBe('voided');
   });
 
-  it('a filled, unsaved form that passed the strict read-back is done (ERP 单据已交接), a terminal', async () => {
-    const scene = await scenario(server).at('done', { erp: handedOver() });
+  it('a 暂存 draft found again after the strict read-back is done (ERP 草稿已交接), a terminal', async () => {
+    const scene = await scenario(server).at('done');
     const done = scene.reached;
-    // Nothing was saved, so there is no 单据编号 to report — the read-back rows are the whole of the evidence.
-    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'filled', allowedActions: ['refresh'], draftNo: null, erpAccount: TEST_ERP_ACCOUNT }, readback: { status: 'matched' } });
+    // A 暂存单 has no 单据编号 until the employee saves it: its 内码 and the read-back rows are the evidence.
+    expect(done).toMatchObject({ stage: 'done', step: { kind: 'none' }, erp: { status: 'done', currentStage: 'handover', externalWait: 'none', outcome: 'drafted', allowedActions: ['refresh'], draftNo: null, erpAccount: TEST_ERP_ACCOUNT, review: { draftId: '119946' } }, readback: { status: 'matched' } });
     expect(done.readback.rows).toHaveLength(done.lines.length);
     expect(done.readback.rows.every((row) => row.matched)).toBe(true);
     expect(done.erp.steps.every((step) => step.status === 'done')).toBe(true);
-    // The list closes on the hand-over step, and its copy comes from the contract: the web mock's step list reads the
-    // same constant, so the two lists cannot drift apart (ADR-0028).
-    expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_HANDOVER_STEP_COPY, status: 'done' });
+    // The list is the one 本地执行器 list (ADR-0037), and its copy comes from the contract: the web mock's step list
+    // reads the same constant, so the two lists cannot drift apart.
+    expect(done.erp.steps.at(-1)).toMatchObject({ ...ERP_DRAFT_STEP_COPY, status: 'done' });
     expect(done.erp.steps.some((step) => step.title.includes('保存'))).toBe(false);
     expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
 
     expect((await taskList(scene.client)).tasks[0]).toMatchObject({ stage: 'done', erpDraftNo: null, abandonable: true, erpTouched: true });
     expect(await scene.refused('set-home-city', { homeCity: '上海' })).toEqual({ status: 400, code: 'task_closed' });
-    // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the form is handed over.
+    // 去打印 never needs ERP (stories 57 and 63), so the paper bundle is still available once the draft is handed over.
     expect((await scene.client.post(`/api/tasks/${scene.task.taskId}/actions/generate-print-sheet`, {})).status).toBe(200);
     expect((await scene.snapshot()).printSheet.status).toBe('generated');
-    // The hand-over is terminal: the account may start the next task.
+    // ERP 草稿已交接 is terminal: the account may start the next task.
     expect((await scene.client.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   });
 
   it('a failure before the first attempt_started returns to write-pending and allows retry', async () => {
     const scene = await scenario(server).at('actions');
-    executor.queue(abortBeforeAttempt, handedOver());
+    executor.queue(abortBeforeAttempt, drafted);
     await scene.accept('start-erp-write');
     const aborted = await scene.settled();
     expect(aborted).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
@@ -211,7 +187,7 @@ describe('去报销 on a fake executor', () => {
   it("holds only this account's lease while the job runs: 409 stale for this task, another account untouched", async () => {
     const scene = await scenario(server).at('actions');
     const alice = scene.client;
-    const gate = gated(handedOver());
+    const gate = gated(drafted);
     executor.queue(gate.script);
     const running = await scene.accept('start-erp-write');
     await gate.running;

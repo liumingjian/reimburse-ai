@@ -1,7 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import { createWindowBridge } from './adapter/extension-bridge';
 import { createHttpAdapter } from './adapter/http-adapter';
 import { createLoopbackPort, type LocalExecutorPort } from './adapter/local-executor-port';
 import type { AppAdapter } from '@baox/contract';
@@ -23,13 +22,10 @@ async function chooseAdapter(): Promise<{ adapter: AppAdapter; localExecutor: Lo
 const container = document.getElementById('app');
 if (!container) throw new Error('页面缺少 #app 容器');
 
-// The mock has no extension to talk to (and runs on no origin one is stamped for), so only the real app gets the bridge.
-const bridge = import.meta.env.MODE === 'mock' ? undefined : createWindowBridge();
-
 void chooseAdapter().then(({ adapter, localExecutor }) => {
   createRoot(container).render(
     <StrictMode>
-      <App adapter={adapter} localExecutor={localExecutor} {...(bridge ? { bridge } : {})} />
+      <App adapter={adapter} localExecutor={localExecutor} />
     </StrictMode>,
   );
 });

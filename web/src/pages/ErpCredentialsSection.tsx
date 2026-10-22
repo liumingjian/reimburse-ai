@@ -10,7 +10,7 @@ import { ConfirmDialog } from '../shell/Dialog';
 // password field is write-only: what was saved is never shown, only the account and whether the 试登录 succeeded. Every
 // save runs a 试登录 on the employee's PC through the paired 本地执行器, which takes up to a few minutes, and every
 // login there knocks the ERP account's other logins off, which is said before saving.
-// It renders inside the 本地执行器 section of the 设置页 only (#429): the 浏览器扩展 never uses it.
+// It renders inside the 本地执行器 section of the 设置页 (#429).
 
 export const ERP_CREDENTIALS_COPY = {
   title: '报销系统账号密码',

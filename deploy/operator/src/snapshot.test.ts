@@ -283,7 +283,7 @@ function installManagedCurrentRelease(target: SnapshotIsolatedTarget, releaseId:
   const activePath = join(target.profile.deployRoot, activeRelease);
   const release = join(releaseRoot, releaseId);
   mkdirSync(release, { recursive: true });
-  for (const name of ['server', 'web', 'extension', 'deploy']) symlinkSync(join(activePath, name), join(release, name), 'dir');
+  for (const name of ['server', 'web', 'deploy']) symlinkSync(join(activePath, name), join(release, name), 'dir');
   unlinkSync(target.current);
   symlinkSync(`releases/${releaseId}`, target.current);
   return releaseId;

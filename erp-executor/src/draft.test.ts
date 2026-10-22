@@ -1,6 +1,6 @@
-// 暂存 on the unattended path (ADR-0029): a plan with `draft` ends with the bill 暂存'd, found again by baox's ownership
-// marker and read back by its 内码; a plan without it still hands over unsaved (ADR-0028). And the boundary that keeps
-// it the only ERP command of its kind the executor presses.
+// 暂存 (ADR-0029, ADR-0037): every fill ends with the bill 暂存'd, found again by baox's ownership marker and read back
+// by its 内码; there is no plan without `draft`. And the boundary that keeps it the only ERP command of its kind the
+// executor presses.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,12 +49,12 @@ describe('暂存 on the unattended path', () => {
     expect(stepTrail().slice(-3)).toEqual(['save:done', 'draft_check:running', 'draft_check:failed']);
   });
 
-  it('hands over unsaved, as before, when the plan carries no draft', async () => {
+  it('refuses a plan without a draft before it touches ERP: nothing hands over an unsaved form any more', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
-    const result = await runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), channel: server.channel, pace: FAST_PACE, probeWaitMs: 0 });
-    expect(result).toMatchObject({ status: 'handed_over' });
-    expect(causa(fake)).not.toContain('baox-');
-    expect(fake.mutations.some((m) => m.kind === 'draft' || m.kind === 'save')).toBe(false);
+    const { draft: _draft, ...unsaved } = fillPlan(taskId);
+    await expect(runFillJob(unsaved, { browser: fake.browser, blobs: blobSource(), channel: server.channel, pace: FAST_PACE, probeWaitMs: 0 })).rejects.toThrow(/draft/);
+    expect(server.events).toEqual([]);
+    expect(fake.commands.filter((c) => c.method.startsWith('Input.'))).toEqual([]);
   });
 
   it('says it does not know, rather than aborting, when 暂存 lands nothing', async () => {

@@ -34,11 +34,10 @@ describe('reconcile job on the fake ERP', () => {
     expect(attempts).toEqual([]);
   });
 
-  it('pauses for login on the login page, without a read-back or any input', async () => {
+  it('stops on the login page when there is nothing to sign in with, without a read-back or any input', async () => {
     const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
     const { result, events, sent } = await reconcile(fake);
-    expect(result).toMatchObject({ status: 'waiting_login', code: 'erp_login' });
-    expect(events.some((event) => event.type === 'waiting_login')).toBe(true);
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login' });
     expect(events.some((event) => event.type === 'readback')).toBe(false);
     expect(sent.every((command) => command.method === 'Runtime.evaluate')).toBe(true);
   });

@@ -70,7 +70,7 @@ test('全流程：从 ?seed=pending 一路走到去打印与去报销，顺序�
   await page.getByRole('button', { name: '去报销', exact: true }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/erp$/);
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
-  await page.getByRole('button', { name: '我已登录，继续' }).click();
+  await expect(page.getByRole('button', { name: '我已登录，继续' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: '查看完成结果' })).toBeVisible();
   await expect(page.getByRole('button', { name: '开始填报' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('flow-erp-done.png'), fullPage: true });

@@ -5,9 +5,8 @@
 // (docs/research/erp-expense-flow): edit-on-click cells, select-all + typing + Enter/Tab commit, F7 code -> name,
 // the invoice-type dropdown, linked recalculation, the piaozone assistant as a child target, save -> 修改 mode.
 //
-// Invoices reach the assistant's file input by either route the executor has (`invoice-files.ts`): local paths
-// through `DOM.setFileInputFiles`, or `File` objects in a `DataTransfer` assigned inside the page. Both end in the
-// same recognition, keyed by the bytes' sha256.
+// Invoices reach the assistant's file input as local paths through `DOM.setFileInputFiles` (`invoice-files.ts`),
+// recognised by the bytes' sha256.
 //
 // Layout: jsdom has none, so every visible element gets a unique 8x8 box on a 10px grid in DOCUMENT coordinates, in
 // the order it is first measured. Hidden (display:none / visibility:hidden / [hidden]) elements measure 0x0.
@@ -61,6 +60,20 @@ export type FakeMasterData = { code: string; name: string; documentStatus?: stri
 export type FakeErpOptions = {
   origin?: string;
   loggedIn?: boolean;
+  /**
+   * The ERP entry page loads logged out with an empty body: no login form, no console, until it is loaded again.
+   * Live 2026-10-20 2 of 21 sign-ins met it (scripts loaded, body empty for 90 s); loading the entry page again brought
+   * the form in 2-30 s.
+   * @unverified: the entry page stays blank until it is loaded again [transient]
+   */
+  entryPageBlank?: boolean;
+  /**
+   * The main menu card opens on a click and stays empty — no 员工服务, no row at all — until the page is loaded
+   * again. Live 2026-10-21 (1 of 10 runs) the card stayed open and empty for the 45 s a run clicked it every 5 s,
+   * where 6 sign-ins measured that day filled it 0.9-4.8 s after the click, and a second click left it as it was.
+   * @unverified: the main menu card can stay empty until the page is loaded again [transient]
+   */
+  menuEmptyUntilReload?: boolean;
   /**
    * Serve a recording (./recordings/<name>, see recordings.ts) instead of the hand-written fixtures: its login page
    * while logged out, and its pages in order while logged in, moving on when a click lands where the live click
@@ -140,6 +153,31 @@ export type FakeErpOptions = {
    */
   notFillEntryHitsNeighbour?: boolean;
   /**
+   * The first N clicks on 不生成费用明细 close the 选择发票 menu and open nothing. Live 2026-10-21 (1 of 10 runs) the
+   * click passed its hit test, the menu shut, and no 发票无忧助手 window came in the 90 s after it.
+   * @unverified: a click on 不生成费用明细 can shut the menu and open no assistant [transient]
+   */
+  notFillEntryClicksLost?: number;
+  /**
+   * The assistant's window shows at once, and its piaozone iframe attaches as a CDP target this many ms (wall clock)
+   * later: a slow assistant, which a second click on 不生成费用明细 must not open twice.
+   * @unverified: the assistant's window can show before its iframe attaches [transient]
+   */
+  assistantAttachDelayMs?: number;
+  /**
+   * The first N times the assistant opens, its window shows and stays blank: the piaozone page never loads, so no
+   * iframe target ever attaches. Live 2026-10-21 (1 of 10 runs) the window titled 发票无忧助手 stood empty for the
+   * rest of the 90 s.
+   * @unverified: the assistant's window can open blank and stay so until it is opened again [transient]
+   */
+  assistantBlankOpens?: number;
+  /**
+   * A blank assistant window (`assistantBlankOpens`) does not close on its ×. Live 2026-10-21 one took the click, its
+   * × left pressed, and stayed up with its overlay over the 选择发票 button.
+   * @unverified: a blank assistant window can stay up when its × is clicked [transient]
+   */
+  assistantBlankWontClose?: boolean;
+  /**
    * Clicking an invoice kind (票种) tab does nothing: the pane never changes, so rows in the other 票种 stay out of reach.
    * @unverified: a click on the assistant's 票种 tab can leave the pane unchanged [upload]
    */
@@ -215,6 +253,17 @@ export type FakeErpOptions = {
    */
   newFormDeadClicks?: number;
   openListDeadClicks?: number;
+  /**
+   * The console has no 我的费用报销 shortcut, so the way in is 菜单 -> 员工服务 -> 人人报销 -> 我的费用报销 (live
+   * 2026-10-19). `selected` is the second-level node the menu reopens on, which ERP remembers per user: `LOG`
+   * (定制开发 › 日志管理) is the one the failing live runs met, where a click on 员工服务 only expands its row.
+   */
+  menuPath?: { selected: 'ERX' | 'LOG' };
+  /**
+   * ERP's loading overlay shows for the first N page ticks and takes every click made while it shows. Live
+   * 2026-10-19 it flashed for 2-4 s after sign-in, appearing between the hit test and the mouse-down.
+   */
+  consoleBlockerTicks?: number;
   /** 暂存 is pressed and nothing lands: the tab stays 新增. */
   draftCommandDead?: boolean;
   /** 暂存 lands the draft but the tab stays 新增, so the fill cannot tell it landed: what 对账 by the marker is for. */
@@ -279,6 +328,34 @@ export type FakeErpOptions = {
    */
   newRowAppearsAfterTicks?: number;
   /**
+   * The first N 新增行 clicks go to ERP's loading overlay and are gone: no row ever comes of them. Live 2026-10-19 the
+   * overlay came back ~0.3 s after each 新增行 or cell commit, between the hit test and the mouse-down, and took 1 of 13
+   * 新增行 clicks (and all 3 clicks made into it on purpose); the next click added the row in 0.5 s.
+   * @unverified: the loading overlay takes a 新增行 click and ERP never adds that row [transient]
+   */
+  newRowClicksLost?: number;
+  /**
+   * The first N commits of a lookup cell (项目, 费用项目) leave it empty: the Enter came before ERP had resolved the
+   * typed code, and ERP dropped it. Live 2026-10-20 3 of 10 first fills (runs 7, 8, 10) read 「」 or 「select」 back
+   * on a slow ERP, and the same field written again on the re-run's form took.
+   * @unverified: a lookup committed before ERP resolved the code ends empty [transient]
+   */
+  lookupCommitsLost?: number;
+  /**
+   * The first committed lookup cell (项目, 费用项目) shows 「」 under the loading overlay for N ms of wall-clock time
+   * (ERP's server call, not page reads), then its name; later lookups resolve at once.
+   * Live 2026-10-20 20 lookup writes resolved in 0.25-6.2 s (median 0.55 s), the slow ones behind one long
+   * DynamicFormService.Call with `.kd-ui-blockingExtention-item` up the whole time; 「」 always turned into the name.
+   * @unverified: a lookup resolves after the commit, under the loading overlay [transient]
+   */
+  lookupResolveMs?: number;
+  /**
+   * For N page ticks after 新增行 the new row's cells are under a cover. Live 2026-10-20 run 9 stopped on
+   * 「「项目」的落点…上盖着DIV」 right after 新增行, while ERP was still re-rendering the grid.
+   * @unverified: a cover sits over a freshly added 费用明细行 for a moment [transient]
+   */
+  newRowCoverTicks?: number;
+  /**
    * How many ERP-page evaluations a committed row keeps its `k-grid-edit-row` class — the grid still reporting
    * the row as being edited for a render or two after the value has been taken. `leaveEdit` reads that state
    * once, and `draft-flow.ts` turns `stillEditing: true` into `leave_edit_failed`.
@@ -320,6 +397,19 @@ export type FakeErpOptions = {
    * @unverified: ERP's model trails a money cell by ~260ms and drops a second write inside that window [typing]
    */
   moneyModelLagTicks?: number;
+  /**
+   * The same lag in wall-clock ms, for an ERP that is slow rather than fast: live 2026-10-21 (1 of 10 runs) row 2's
+   * 申请报销金额 was still empty seconds after 费用金额 was written, past the ~3 s the fill used to give it.
+   * @unverified: ERP's computed 申请报销金额 can trail a money cell by seconds [transient]
+   */
+  moneyModelLagMs?: number;
+  /**
+   * The first N money commits (费用金额, 税额) show in the cell and never reach ERP's model, until the cell is written
+   * again. Live 2026-10-21 3 of 10 first fills: 申请报销金额 stayed empty (or the net alone) for 30 s after the
+   * write, and the re-run's fresh form took the same amount at once.
+   * @unverified: a money commit can show in its cell and never reach ERP's model until it is written again [typing]
+   */
+  moneyCommitsLost?: number;
   /**
    * How many ERP-page evaluations the freshly opened 发票类型 dropdown's own items sit under a cover — the list
    * painted, its items measurable, and `document.elementFromPoint` at the wanted item still answering the thing
@@ -367,13 +457,6 @@ const cents = (text: string | null | undefined) => {
 };
 const money = (value: number) => `¥${(value / 100).toFixed(2)}`;
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-/** A page-side `File`'s bytes. jsdom's `File` has no `arrayBuffer()`, so this goes through its `FileReader`. */
-const readInPage = (window: any, file: any) => new Promise<Uint8Array>((resolve, reject) => {
-  const reader = new window.FileReader();
-  reader.onload = () => resolve(new Uint8Array(reader.result));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsArrayBuffer(file);
-});
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 /**
@@ -503,9 +586,8 @@ export type FakeErp = Awaited<ReturnType<typeof createFakeErp>>;
 
 /**
  * The ERP page the fake renders, placeholders filled: the main console when logged in, the login page otherwise.
- * Shared with the extension's real-browser harness, which serves the same page over HTTP.
  */
-export function erpFixtureHtml(loggedIn: boolean, values: { uuid: string; displayName: string; erpBuild: string; formId: string; today: string }) {
+function erpFixtureHtml(loggedIn: boolean, values: { uuid: string; displayName: string; erpBuild: string; formId: string; today: string }) {
   return fixture(loggedIn ? 'erp-main.html' : 'erp-login.html')
     .replaceAll('{{UUID}}', values.uuid).replaceAll('{{DISPLAY_NAME}}', escapeHtml(values.displayName))
     .replaceAll('{{BUILD}}', values.erpBuild).replaceAll('{{FORM_ID}}', values.formId).replaceAll('{{TODAY}}', values.today);
@@ -649,7 +731,9 @@ export async function createFakeErp(options: FakeErpOptions) {
   async function render() {
     const page = recordedPage();
     if (page) return renderRecorded(page);
-    const html = erpFixtureHtml(loggedIn, { uuid: formUuid, displayName: account.displayName, erpBuild, formId, today });
+    const html = !loggedIn && options.entryPageBlank
+      ? '<!doctype html><html><head><title>金蝶云星空</title></head><body></body></html>'
+      : erpFixtureHtml(loggedIn, { uuid: formUuid, displayName: account.displayName, erpBuild, formId, today });
     const doc = new FakeDocument(html, url);
     // K3Cloud states its front-end resource version nowhere in the DOM, only on this global, which is where the
     // compatibility fingerprint reads it. jsdom runs no inline script, so the fake sets it directly.
@@ -674,6 +758,13 @@ export async function createFakeErp(options: FakeErpOptions) {
     }
     if (options.notFillEntryBelowFold) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-below-fold', '1240');
     if (options.notFillEntryHitsNeighbour) doc.document.querySelector('a[id$="tbNotFillEntry"]')?.setAttribute('data-covered-by', 'a[id$="tbMergeFillEntry"]');
+    if (loggedIn && options.menuPath) {
+      (doc.document.querySelector('.kd-mainconsole-shortcuts') as any).style.display = 'none';
+      selectMenuNode(doc.document, options.menuPath.selected);
+      const parent: any = doc.document.querySelector(`[data-action="menu-child"][data-node="${options.menuPath.selected}"]`)?.closest('li[id^="parentli_"]');
+      if (parent) toggleMenuRow(parent);
+    }
+    if (loggedIn && options.consoleBlockerTicks) (doc.document.querySelector('#console-blocker') as any).style.display = '';
     return doc;
   }
 
@@ -689,6 +780,19 @@ export async function createFakeErp(options: FakeErpOptions) {
     if (inner) inner.textContent = text; else td.textContent = text;
   };
   const show = (el: any, on: boolean) => { if (el) el.style.display = on ? '' : 'none'; };
+  // The main menu (`menuPath`): a first-level row expands or collapses on a click; a second-level node becomes the
+  // selection, and the right panel shows its groups. Declarations, not `show`, because the first render calls them.
+  function showMenuPart(el: any, on: boolean) { if (el) el.style.display = on ? '' : 'none'; }
+  function toggleMenuRow(li: any) {
+    const open = !li.classList.contains('kd-nav-menutreenewstyle-expand');
+    li.classList.toggle('kd-nav-menutreenewstyle-expand', open);
+    showMenuPart(li.querySelector('ul.kd-tabsnewsyle-list'), open);
+  }
+  function selectMenuNode(doc: any, node: string) {
+    for (const panel of doc.querySelectorAll('#system-menu .menu-right')) showMenuPart(panel, panel.getAttribute('data-node') === node);
+  }
+  let swallowedClicks = 0;
+  const blockerShown = () => !!options.consoleBlockerTicks && mainTicks < options.consoleBlockerTicks;
   const visible = (el: any) => !!el && !main.hidden(el);
 
 /**
@@ -722,7 +826,7 @@ const kendoDate = (raw: string) => {
   const notTaken = new Map<any, string>();
   // Money writes ERP has taken into the cell but not yet into its model, keyed by the row: one row settles one
   // write at a time, which is exactly why the second write inside the window has nowhere to land.
-  const pendingMoney = new Map<any, { td: any; due: number }>();
+  const pendingMoney = new Map<any, { td: any; due: number; dueAt?: number }>();
   const MONEY_COLUMNS = new Set(['费用金额', '税额']);
   const modelOf = (tr: any, column: string) => {
     const td = cellOf(tr, 'detail', column);
@@ -764,24 +868,45 @@ const kendoDate = (raw: string) => {
     // The commit reads Kendo's model, not the DOM input. Inside the settle window the model still holds `before`.
     const settle = options.editorSettleTicks ?? 0;
     if (settle > 0 && mainTicks - lastTypedAt < settle) input.value = before;
+    if ((column === '项目' || column === '费用项目') && lostLookupCommits < (options.lookupCommitsLost ?? 0)) {
+      lostLookupCommits += 1;
+      input.value = '';
+    }
     // A date column is not read as text: the datepicker parses what it holds, and what it cannot parse it
     // refuses, keeping its previous value — which is how a typed date silently became today's.
     const text = DATE_COLUMNS.has(column)
       ? kendoDate(String(input.value)) ?? before
       : display(column, String(input.value).trim());
     td.textContent = text;
+    // Written again while ERP is still resolving it: the edit and ERP's own work race, and the cell ends empty.
+    const resolving = pendingLookups.findIndex((pending) => pending.td === td);
+    if (resolving >= 0) {
+      pendingLookups.splice(resolving, 1);
+      td.textContent = '';
+    } else if ((column === '项目' || column === '费用项目') && options.lookupResolveMs && text !== '' && !slowLookupDone) {
+      slowLookupDone = true;
+      td.textContent = '';
+      show(q('#form-blocker'), true);
+      pendingLookups.push({ td, text, due: Date.now() + options.lookupResolveMs });
+    }
     // A write ERP does not take: the cell keeps the typed value, ERP's model keeps 0.00 (`moneyWritesNotTaken`).
     const rowIndex = dataRows('detail').indexOf(tr);
     if ((options.moneyWritesNotTaken ?? []).some((drop) => drop.row === rowIndex && drop.column === column)) notTaken.set(td, '0.00');
-    else notTaken.delete(td);
+    else if (MONEY_COLUMNS.has(column) && lostMoneyCommits < (options.moneyCommitsLost ?? 0)) {
+      lostMoneyCommits += 1;
+      notTaken.set(td, notTaken.has(td) ? notTaken.get(td)! : before);
+    } else notTaken.delete(td);
     // The model lag (V-59). During the window the model keeps what it had; a second money write arriving inside
     // another one's window is not queued behind it — it is dropped, and the model keeps what it had for good.
     const lag = options.moneyModelLagTicks ?? 0;
-    if (lag > 0 && MONEY_COLUMNS.has(column)) {
+    const lagMs = options.moneyModelLagMs ?? 0;
+    if ((lag > 0 || lagMs > 0) && MONEY_COLUMNS.has(column)) {
       const held = notTaken.has(td) ? notTaken.get(td)! : before;
       const inFlight = pendingMoney.get(tr);
       notTaken.set(td, held);
-      if (!inFlight || mainTicks >= inFlight.due) pendingMoney.set(tr, { td, due: mainTicks + lag });
+      if (!inFlight || (mainTicks >= inFlight.due && Date.now() >= (inFlight.dueAt ?? 0))) {
+        pendingMoney.set(tr, { td, due: mainTicks + lag, dueAt: Date.now() + lagMs });
+      }
     }
     leaveEditClass(tr);
     mutate('cell', `${column}=${text}`);
@@ -864,8 +989,30 @@ const kendoDate = (raw: string) => {
   /** Append one blank 费用明细行 above the footer, and log the click that asked for it. */
   function insertDetailRow() {
     const tbody = grid('detail').querySelector('tbody');
-    tbody.insertBefore(defaultRow(), tbody.querySelector('tr.k-footer-template'));
+    const added = defaultRow();
+    tbody.insertBefore(added, tbody.querySelector('tr.k-footer-template'));
+    if (options.newRowCoverTicks) {
+      for (const td of added.querySelectorAll('td')) td.setAttribute('data-covered-by', '#form-blocker');
+      newRowCover = { tr: added, until: mainTicks + options.newRowCoverTicks };
+    }
     mutate('addRow', String(dataRows('detail').length));
+  }
+
+  /** A lookup ERP has resolved by now (`lookupResolveMs`): its name shows and the overlay lifts. */
+  function flushLookups() {
+    for (const pending of [...pendingLookups]) {
+      if (Date.now() < pending.due) continue;
+      pending.td.textContent = pending.text;
+      pendingLookups.splice(pendingLookups.indexOf(pending), 1);
+    }
+    if (options.lookupResolveMs && pendingLookups.length === 0 && blockerUntil === null) show(q('#form-blocker'), false);
+  }
+
+  /** The cover over a freshly added row lifting, `newRowCoverTicks` reads after 新增行. */
+  function uncoverNewRow() {
+    if (!newRowCover || mainTicks < newRowCover.until) return;
+    for (const td of newRowCover.tr.querySelectorAll('td')) td.removeAttribute('data-covered-by');
+    newRowCover = null;
   }
 
   /** Drop the edit class, or let it linger for a few reads when the test asks for the lingering shape. */
@@ -878,7 +1025,7 @@ const kendoDate = (raw: string) => {
   /** Rows the grid still paints as being edited, after the value was taken. */
   function flushEditClass() {
     for (const pending of [...lingeringEditRows]) {
-      if (mainTicks < pending.due) continue;
+      if (Date.now() < pending.due) continue;
       pending.tr.classList.remove('k-grid-edit-row');
       lingeringEditRows.splice(lingeringEditRows.indexOf(pending), 1);
     }
@@ -888,7 +1035,7 @@ const kendoDate = (raw: string) => {
   function flushMoneyModel() {
     let flushed = false;
     for (const [tr, pending] of [...pendingMoney]) {
-      if (mainTicks < pending.due) continue;
+      if (mainTicks < pending.due || Date.now() < (pending.dueAt ?? 0)) continue;
       pendingMoney.delete(tr);
       notTaken.delete(pending.td);
       recalc(tr);
@@ -982,9 +1129,10 @@ const kendoDate = (raw: string) => {
 
   async function openAssistant() {
     show(q('#assistant-window'), true);
+    assistantOpens += 1;
+    if (assistantOpens <= (options.assistantBlankOpens ?? 0)) return;
     const doc = new FakeDocument(fixture('piaozone-assistant.html'), 'https://www.piaozone.com/pwy-assistant/index.html');
     await doc.ready();
-    acceptFilesInPage(doc);
     child = { doc, sessionId: 'piaozone-session-1', targetId: 'piaozone-1' };
     activePane = null;
     uploadBatches = 0;
@@ -995,7 +1143,7 @@ const kendoDate = (raw: string) => {
       setTimeout(() => {
         emitEvent('Target.attachedToTarget', { sessionId, targetInfo: { targetId, type: 'iframe', url: 'about:blank' } });
         emitEvent('Target.targetInfoChanged', { targetInfo: { targetId, type: 'iframe', url: doc.window.location.href } });
-      }, 0);
+      }, options.assistantAttachDelayMs ?? 0);
     }
   }
 
@@ -1120,10 +1268,21 @@ const kendoDate = (raw: string) => {
   }
 
   let deadNewFormClicks = 0;
+  let lostNewRowClicks = 0;
+  let lostMoneyCommits = 0;
+  let pageLoads = 0;
+  let fillEntryClicks = 0;
+  let assistantOpens = 0;
+  let lostLookupCommits = 0;
+  let newRowCover: { tr: any; until: number } | null = null;
+  const pendingLookups: Array<{ td: any; text: string; due: number }> = [];
+  let slowLookupDone = false;
   let deadOpenListClicks = 0;
   async function clickMain(el: any) {
     const assistant = q('#assistant-window');
     if (visible(assistant) && !assistant.contains(el)) return; // the modal assistant swallows clicks
+    // The loading overlay is up by the mouse-down even when the hit test before it found the target.
+    if (blockerShown()) { swallowedClicks += 1; return; }
     if (dropdown) {
       const li = el.closest('ul.k-list li');
       if (li) return pickOption(String(li.textContent).trim());
@@ -1141,8 +1300,14 @@ const kendoDate = (raw: string) => {
     if (td && !td.parentElement.classList.contains('k-footer-template')) return editCell(td);
     commitEditor();
     switch (action) {
+      case 'system-menu':
+        show(q('#system-menu .kd-site-accordion'), !(options.menuEmptyUntilReload && pageLoads === 0));
+        return show(q('#system-menu'), true);
+      case 'menu-parent': return toggleMenuRow(el.closest('li'));
+      case 'menu-child': return selectMenuNode(main.document, el.getAttribute('data-node'));
       case 'open-list':
         if (deadOpenListClicks < (options.openListDeadClicks ?? 0)) { deadOpenListClicks += 1; return undefined; }
+        show(q('#system-menu'), false);
         return show(q('#expense-list'), true);
       // @unverified: clicking 新增 reveals the form in the same document, where live adds a tab panel (recordings/new-form) [fake]
       case 'new-form':
@@ -1176,11 +1341,14 @@ const kendoDate = (raw: string) => {
         for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, true);
         return undefined;
       case 'fill-entry': {
-        importMode = el.closest('[data-mode]').getAttribute('data-mode');
+        fillEntryClicks += 1;
         for (const item of main.document.querySelectorAll('a.kdmenuitem[data-mode]')) show(item, false);
+        if (fillEntryClicks <= (options.notFillEntryClicksLost ?? 0)) return undefined;
+        importMode = el.closest('[data-mode]').getAttribute('data-mode');
         return openAssistant();
       }
       case 'new-row': {
+        if (lostNewRowClicks < (options.newRowClicksLost ?? 0)) { lostNewRowClicks += 1; swallowedClicks += 1; return undefined; }
         // ERP paints the new row in its own re-render, which is not the click's own turn of the event loop.
         const delay = options.newRowAppearsAfterTicks ?? 0;
         if (delay > 0) { pendingNewRow = mainTicks + delay; return undefined; }
@@ -1193,6 +1361,7 @@ const kendoDate = (raw: string) => {
         // A 处理结果 whose 退出 does nothing: the click lands, the window stays, and everything under it is
         // unreachable from then on.
         if (options.importReportStaysOpen && win.id === 'result-window') return undefined;
+        if (options.assistantBlankWontClose && win.id === 'assistant-window' && !child) return undefined;
         return show(win, false);
       }
       default:
@@ -1414,29 +1583,7 @@ const kendoDate = (raw: string) => {
     for (const box of doc.querySelectorAll('input.ant-checkbox-input')) box.setAttribute('data-covered-by', ASSISTANT_NOTICE);
   }
 
-  /**
-   * The in-page route. What Chrome supplies natively, jsdom lacks: it has no `DataTransfer`, and its `files` setter
-   * takes only a FileList of its own making. So the fake supplies both — a `DataTransfer` whose `files` is the list of
-   * files added, and a file input that holds whatever list it is given. The assistant's part is its own: on `change`
-   * it uploads what the input holds, which is where the bytes are read back and recognised.
-   */
-  function acceptFilesInPage(doc: FakeDocument) {
-    const { window } = doc;
-    window.DataTransfer = class {
-      private readonly added: any[] = [];
-      readonly items = { add: (file: any) => { this.added.push(file); } };
-      get files() { return Object.assign([...this.added], { item: (index: number) => this.added[index] ?? null }); }
-    };
-    const input = doc.document.querySelector('input[type=file]');
-    let held: any[] = [];
-    Object.defineProperty(input, 'files', { configurable: true, get: () => held, set: (files: any[]) => { held = files; } });
-    input.addEventListener('change', () => {
-      const batch = [...held];
-      void Promise.all(batch.map((file) => readInPage(window, file))).then((files) => { if (child?.doc === doc) setFiles(files); });
-    });
-  }
-
-  /** One upload batch reaching the assistant, by either route. */
+  /** One upload batch reaching the assistant. */
   function setFiles(files: Uint8Array[]) {
     if (!child) return;
     const delay = options.assistantRecognitionTicks ?? 0;
@@ -1453,7 +1600,7 @@ const kendoDate = (raw: string) => {
       if (!sessionId && !targetAlive) throw new Error('CDP 连接已关闭');
       const doc = sessionId ? child!.doc : main;
       if (sessionId) { assistantTicks += 1; flushRecognition(); }
-      else { mainTicks += 1; syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
+      else { mainTicks += 1; if (!blockerShown()) show(q('#console-blocker'), false); syncFormPanel(); clearBlocker(); syncOptionCover(); paintReport(); flushNewRow(); uncoverNewRow(); flushLookups(); flushMoneyModel(); flushEditClass(); syncOptionItemCover(); }
       switch (method) {
         case 'Runtime.evaluate': return doc.evaluate(String(params.expression));
         case 'Input.dispatchMouseEvent':
@@ -1475,6 +1622,11 @@ const kendoDate = (raw: string) => {
         case 'DOM.getDocument': return { root: { nodeId: 1 } };
         case 'DOM.querySelector': return { nodeId: doc.document.querySelector(params.selector) ? 2 : 0 };
         case 'DOM.setFileInputFiles': setFiles((params.files as string[]).map((path) => readFileSync(path))); return {};
+        // Loading the entry page again ends the session: live 2026-10-21 it came back to the login form.
+        // @unverified: loading the entry page again signs the session out [transient]
+        case 'Page.navigate':
+          if (doc === main && !recorded) { pageLoads += 1; loggedIn = false; main = await render(); }
+          return { frameId: 'main' };
         case 'Page.captureScreenshot': return { data: Buffer.from(`fake-screenshot ${JSON.stringify(params.clip ?? null)}`).toString('base64') };
         default: return {};
       }
@@ -1500,6 +1652,14 @@ const kendoDate = (raw: string) => {
     get recordedPage() { return recordedPage()?.name ?? null; },
     /** Which 选择发票 menu item the clicks actually landed on, null until one of them is clicked. */
     get importMode() { return importMode; },
+    /** Clicks on a 选择发票 menu item, landed or lost (`notFillEntryClicksLost`). */
+    get fillEntryClicks() { return fillEntryClicks; },
+    /** Times the assistant's window was opened, blank ones included (`assistantBlankOpens`). */
+    get assistantOpens() { return assistantOpens; },
+    /** Times the page was loaded again (`Page.navigate`). */
+    get pageLoads() { return pageLoads; },
+    /** Clicks the loading overlay took (`consoleBlockerTicks`, `newRowClicksLost`). */
+    get swallowedClicks() { return swallowedClicks; },
     /** The 发票助手's own document while it is open — its 票种 panes, their rows and their ticks. */
     get assistantDocument() { return child?.doc.document ?? null; },
     browser: {

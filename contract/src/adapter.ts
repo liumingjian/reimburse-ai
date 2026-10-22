@@ -1,7 +1,7 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { ErpCredentialsOutcome, ErpCredentialsView, SaveErpCredentialsInput } from './erp-credentials';
-import type { ExtensionPairing, ExtensionPairingOutcome } from './extension';
+import type { PairingView, PairingChangeOutcome } from './channel';
 import type { CreatePairingCodeInput } from './local-executor';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
@@ -101,13 +101,13 @@ export interface AppAdapter {
   getLegacyImport(): Promise<LegacyImport>;
   retryLegacyImport(): Promise<LegacyImportOutcome>;
   skipLegacyImport(): Promise<LegacyImportOutcome>;
-  // 扩展配对 (extension pairing, ADR-0019): read this account's pairing; issue a 配对码 (pairing code), which voids
+  // 配对 (pairing, ADR-0019): read this account's pairing; issue a 配对码 (pairing code), which voids
   // the old pairing; revoke the pairing. Pairing and login are independent: revoking signs nobody out, and signing out
   // revokes nothing.
-  getExtensionPairing(): Promise<ExtensionPairing>;
+  getPairing(): Promise<PairingView>;
   // `system`: the one-command install's choice of Mac or Windows, stored with the code (`/install/<配对码>`).
-  createExtensionPairingCode(input?: CreatePairingCodeInput): Promise<ExtensionPairingOutcome>;
-  revokeExtensionPairing(): Promise<ExtensionPairingOutcome>;
+  createPairingCode(input?: CreatePairingCodeInput): Promise<PairingChangeOutcome>;
+  revokePairing(): Promise<PairingChangeOutcome>;
   // ERP 凭据 (ADR-0033): read the view (never the password); save, which runs a 试登录 through the paired baox 本地执行器;
   // run the 试登录 again; clear, which deletes them.
   getErpCredentials(): Promise<ErpCredentialsView>;
@@ -143,10 +143,6 @@ export interface AppAdapter {
   // 修改当前任务的常驻城市：第一次写入报销系统之前可改；服务端重新推导费用类别，并记为这个账号的常驻城市。
   setTaskHomeCity(taskId: string, homeCity: string, stepToken: string): Promise<ActionOutcome>;
   startErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
-  // 「我已登录，继续」只是请服务端再探测一次，页面从不断言登录已发生。
-  confirmLogin(taskId: string, stepToken: string): Promise<ActionOutcome>;
-  // 登录等待时放弃这次去报销：什么都没有写入，任务回到「去打印 / 去报销」，之后可以再去报销。
-  cancelErpWrite(taskId: string, stepToken: string): Promise<ActionOutcome>;
   // 重新对账：只读 ERP 再判定一次，不发起任何写入。转人工：终止后续 ERP 写入，交给用户接管。两者都回传当前对账 step 的 stepToken。
   reconcile(taskId: string, stepToken: string): Promise<ActionOutcome>;
   handOff(taskId: string, stepToken: string): Promise<ActionOutcome>;

@@ -65,6 +65,7 @@ const SCENE_UNMATCHED: Partial<Record<GoldenScenario, Readonly<Record<string, st
     'reconcile.reasons': 'as erp.abortReason',
   },
   done: {
+    'erp.review.url': "the 报销系统 the draft went to: the mock's fictional one, the server scenario's configured ERP",
     'readback.rows.*.fields.7.local': 'the scripted job reads back no 收票单号 (receipt number); a real one (and the mock) does',
     'readback.rows.*.fields.7.erp': 'as readback.rows.*.fields.7.local',
   },
@@ -143,8 +144,8 @@ function compared(value: unknown, unmatched: readonly string[], path: readonly s
   );
 }
 
-// Timers of the simulated server, shortened. The login is detected on its own unless a fault says otherwise.
-const FAST: Partial<MockOptions> = { inventoryPhaseMs: 1, erpStepMs: 1, erpLoginAutoMs: 1 };
+// Timers of the simulated server, shortened.
+const FAST: Partial<MockOptions> = { inventoryPhaseMs: 1, erpStepMs: 1 };
 
 async function settled(adapter: MockAdapter, taskId: string, done: (snapshot: TaskSnapshot) => boolean): Promise<TaskSnapshot> {
   await vi.waitFor(async () => expect(done(await adapter.getSnapshot(taskId))).toBe(true));
@@ -215,7 +216,7 @@ const ladder = {
 };
 
 // 去报销 (claim) from choose_action, with `fault` playing the server's scripted ERP outcome, until `done`.
-// The mock detects the login by itself (FAST.erpLoginAutoMs), like the scenario builder's scripts do.
+// The mock signs in by itself, like the 本地执行器 and the scenario builder's scripts do.
 async function afterErpWrite(fault: MockOptions['fault'], done: (snapshot: TaskSnapshot) => boolean): Promise<TaskSnapshot> {
   const { adapter, taskId, snapshot } = await ladder.actions(fault);
   ok(await adapter.startErpWrite(taskId, snapshot.step.stepToken));
@@ -229,8 +230,6 @@ const SCENES: Record<GoldenScenario, () => Promise<TaskSnapshot>> = {
   review: async () => (await ladder.review()).snapshot,
   'choose-action': async () => (await ladder.actions()).snapshot,
   'catalog-mismatch': () => afterErpWrite('catalog-mismatch', (snapshot) => snapshot.catalog.status === 'mismatch'),
-  // erp-login-missing keeps the mock from detecting the login by itself: the task stays at the login wall.
-  'erp-login-wall': () => afterErpWrite('erp-login-missing', (snapshot) => snapshot.step.kind === 'erp_login'),
   'erp-stopped-before-write': () => afterErpWrite('erp-stopped-before-write', (snapshot) => snapshot.stage === 'actions'),
   'erp-unknown': () => afterErpWrite('erp-write-aborted', (snapshot) => snapshot.stage === 'reconcile'),
   'reconcile-readback-mismatch': () => afterErpWrite('readback-mismatch', (snapshot) => snapshot.stage === 'reconcile'),

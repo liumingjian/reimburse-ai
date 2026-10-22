@@ -127,10 +127,9 @@ const STATES = [
   ['07-review-actions', '?seed=actions', '#/task/T1/review'],
   ['07-review-not-ready', '?seed=project', '#/task/T1/review'],
   ['08-print', '?seed=print', '#/task/T1/print'],
-  ['09-erp-waiting-login', '?seed=erp', '#/task/T1/erp'],
-  ['09-erp-login-missing', '?seed=erp&fault=erp-login-missing', '#/task/T1/erp', (p) => click(p, btn(p, '我已登录，继续'))],
-  ['09-erp-readback-mismatch', '?seed=erp&fault=readback-mismatch', '#/task/T1/erp', async (p, shot) => {
-    await click(p, btn(p, '我已登录，继续'));
+  ['09-erp-in-progress', '?seed=erp', '#/task/T1/erp'],
+  ['09-erp-readback-mismatch', '?seed=actions&fault=readback-mismatch', '#/task/T1/review', async (p, shot) => {
+    await click(p, btn(p, '去报销'));
     await btn(p, '开始对账').waitFor({ timeout: 30000 }).catch(() => {});
     await settle(p, 1500);
     await shot('-before');
@@ -147,15 +146,13 @@ const STATES = [
   ['12-projects-book-empty', '?book=empty', '#/projects'],
   ['13-settings', '', '#/settings'],
   ['13-settings-legacy-failed', '?legacy=failed', '#/settings'],
-  ['13-settings-extension-paired', '?extension=paired', '#/settings'],
-  ['13-settings-extension-disconnected', '?extension=disconnected', '#/settings'],
+  ['13-settings-unpaired', '?pairing=none', '#/settings'],
   ['13-settings-reset-dialog', '', '#/settings', async (p, shot) => {
     await click(p, p.getByText('高级设置', { exact: true }));
     await shot('-advanced-open');
     await click(p, btn(p, '完全重置'));
   }],
   ['13-settings-password', '', '#/settings/password'],
-  ['14-extension-tutorial', '', '#/settings/tutorial'],
   ['15-admin', '', '#/admin'],
   ['16-auth-signed-out', '?auth=signed-out', '#/tasks'],
   ['16-auth-setup', '?auth=setup', '#/tasks'],

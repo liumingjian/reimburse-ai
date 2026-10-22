@@ -27,8 +27,8 @@ then use the matching feature file as the recipe. Terms are the ones in `GLOSSAR
   snapshot's `stage`, `step.kind`, `erp`, `reconcile`.
 - The transcript's first line names the ERP double. A PASS against a double proves the app's handling of that ERP
   behaviour, never the real ERP (`pnpm test:erp-live` does that).
-- Production 去报销 runs in the paired browser extension. This harness drives the CDP executor's seam instead. Say so
-  when a change touches the extension transport, and point at `server/src/erp-remote-executor.test.ts`.
+- Production 去报销 runs in the paired 本地执行器. This harness drives the CDP executor's seam instead. Say so
+  when a change touches the 本地执行器 transport, and point at `server/src/erp-remote-executor.test.ts`.
 - Report an entry point you did not drive as not verified. Don't count it as covered by another path.
 
 ## Feature entry contract
@@ -41,6 +41,7 @@ Each feature file has an H1 title and one paragraph of user-visible behaviour, t
 - [Accounts and sign-in](./accounts.md): 创建管理员, registration, approval, sign-in refusals. No scenario yet.
 - [New task, upload and 盘点](./new-task-upload.md): scenario `new-task-upload`.
 - [项目归属 and 整单确认](./project-review.md): no scenario yet; `v.confirmedTask()` covers it through the API only.
-- [去报销](./go-erp.md): scenario `login-wall`; `--fake catalog_mismatch` and the no-browser path are mapped.
+- [去报销](./go-erp.md): scenario `drafted`; `--fake not_signed_in`, `--fake catalog_mismatch` and the no-browser path are mapped.
 - [对账 and 转人工](./reconcile.md): scenario `reconcile-uncertain`.
 - [ERP 凭据 on the settings page](./erp-credentials.md): scenario `erp-credentials` (needs `BAOX_ERP_CREDENTIAL_KEY_FILE`).
+- 设置页 (本地执行器 only) and the 去报销 refusal without a pairing: scenario `settings-executor-only` (the refusal body is played by a page route; the verify server never refuses by itself).

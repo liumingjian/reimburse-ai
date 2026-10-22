@@ -6,7 +6,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import * as contract from '@baox/contract';
-import { ERP_LOCAL_STEP_DEFS, ERP_STEP_DEFS, handedOffBanner, loginNotDetected, mismatchReason, HANDOVER_ABORT_REASON, MISMATCH_ABORT_REASON } from './mock/fixtures/erp';
+import { ERP_STEP_DEFS, handedOffBanner, mismatchReason, HANDOVER_ABORT_REASON, MISMATCH_ABORT_REASON } from './mock/fixtures/erp';
 import { t1Snapshot, t2Snapshot, t3Snapshot } from './mock/fixtures/tasks';
 import { PAGE_COPY } from './pages/page-copy';
 import { AUTH_COPY } from './pages/AuthPage';
@@ -81,8 +81,7 @@ describe('员工可见文案不含内核禁用词', () => {
   test('mock 服务端给出的文字（写入步骤、中止原因、对账横幅、原因句、夹具快照）', () => {
     const out: Array<[string, string]> = [];
     strings(ERP_STEP_DEFS, 'ERP_STEP_DEFS', out);
-    strings(ERP_LOCAL_STEP_DEFS, 'ERP_LOCAL_STEP_DEFS', out);
-    for (const text of [HANDOVER_ABORT_REASON, MISMATCH_ABORT_REASON, mismatchReason(6), loginNotDetected(1), handedOffBanner('BX1'), handedOffBanner(null)]) out.push(['erp', text]);
+    for (const text of [HANDOVER_ABORT_REASON, MISMATCH_ABORT_REASON, mismatchReason(6), handedOffBanner('BX1'), handedOffBanner(null)]) out.push(['erp', text]);
     for (const [name, make] of [
       ['t1-reconcile', () => t1Snapshot('reconcile')],
       ['t1-done', () => t1Snapshot('done')],

@@ -36,6 +36,7 @@ export const READ_ONLY_SNIPPET = `(() => {
     account: stored && stored.user ? String(stored.user) : null,
     tenant: stored && stored.acc ? String(stored.acc) : null,
     onMainConsole: !!document.querySelector('.kd-mainconsole, [class*=mainconsole]'),
+    pageText: (document.body ? document.body.innerText : '').replace(/\\s+/g, ' ').trim().slice(0, 60) || null,
     loginFormVisible: passwords.some(visible)
       && [...document.querySelectorAll('button, input[type=submit]')]
         .some((n) => visible(n) && /登\\s*录|sign\\s*in|log\\s*in/i.test(n.textContent || n.value || '')),
@@ -45,6 +46,8 @@ export const READ_ONLY_SNIPPET = `(() => {
 export type Observation = {
   url?: string; ready: string; title?: string; displayName: string | null; account: string | null; tenant: string | null;
   onMainConsole?: boolean; loginFormVisible?: boolean;
+  /** The start of the page's text, quoted when the page is neither the console nor the login page (an ERP error page). */
+  pageText?: string | null;
 };
 
 export type ProbeVerdict =
@@ -57,8 +60,8 @@ const hasText = (value: unknown) => (typeof value === 'string' ? value.trim().le
 export function identityFromObservation(info: Observation | null | undefined, { transport = 'default', origin = DEFAULT_ERP_ORIGIN }: { transport?: string | { kind?: string }; origin?: string } = {}): ProbeVerdict | null {
   if (!info || info.ready !== 'complete') return null;
   const cdp = transport === 'chromium-cdp' || (typeof transport === 'object' && transport?.kind === 'chromium-cdp');
-  // Where the page is, in words true for both CDP executors: the employee's own Chrome or Edge through the extension, and
-  // the dedicated Chromium of development and e2e. Each opens a tab of its own for the job.
+  // Where the page is, in words true for every CDP run: the 本地执行器's Chromium, and the dedicated Chromium of
+  // development and e2e. Each opens a tab of its own for the job.
   const page = cdp ? '为这次报销打开的报销系统标签页' : '系统默认浏览器里的报销系统页面';
 
   if (hasText(info.displayName) && hasText(info.account) && hasText(info.tenant)) {
@@ -71,7 +74,9 @@ export function identityFromObservation(info: Observation | null | undefined, { 
   // No user name: a visible login form means "go and log in"; nothing readable at all needs a person to look.
   return info.loginFormVisible
     ? { status: 'not_logged_in', hint: `${page}停在登录页（${erpEntryOf(origin)}）。请你本人在这个页面里登录，回到主控制台之后再探测；baox 不代填账号密码。注意登录页上也读得出上次登录的账号，那不算已登录。` }
-    : { status: 'unknown', hint: `页面已加载完成，既读不出 ${USER_SELECTOR}，也看不见登录表单；身份不能确定读出就不接管，请人工看一眼${page}` };
+    // Nobody can look at the 本地执行器's headless tab, and it is closed when the job ends (erp-headless-v1.md, 线 2), so
+    // the hint says what the page said and where the employee can look themselves.
+    : { status: 'unknown', hint: `报销系统打开的页面既不是主控制台，也不是登录页（${hasText(info.pageText) ? `页面上写着「${info.pageText}」` : '页面是空白的'}）；身份不能确定就不接管。请在这台电脑的浏览器里打开 ${erpEntryOf(origin)}，看报销系统能不能正常打开。` };
 }
 
 type Page = ChromiumPage | (Record<string, unknown> & { url: string });

@@ -5,9 +5,13 @@ import { TaskListSchema } from './task-list';
 
 // 接口三：动作端点。成功返回新快照；失败返回 { error }；stepToken 过期返回 HTTP 409 与 { error, snapshot }。
 
+// `link`: the page where the employee can fix what the refusal names, for a refusal that has one (`settings`: the 设置页).
+export const ACTION_LINKS = ['settings'] as const;
+export type ActionLink = (typeof ACTION_LINKS)[number];
 export const ActionErrorSchema = z.object({
   code: z.string().min(1),
   message: z.string().min(1),
+  link: z.enum(ACTION_LINKS).optional(),
 });
 export type ActionError = z.infer<typeof ActionErrorSchema>;
 
@@ -178,7 +182,6 @@ export const REOPEN_UPLOAD_ERRORS = {
 // notAllowed：对账结果不允许这个处置（页面只渲染 allowedActions，服务端仍然再核一次）。
 export const ERP_ACTION_ERRORS = {
   notReady: '现在还不能去报销，请先完成整单明细确认。',
-  notWaitingLogin: '现在没有在等待登录。',
   notReconciling: '这个任务现在不在对账中。',
   notAllowed: '当前对账结果不允许这个处置。',
   // Another task of the same 应用账号 (app account) holds that account's ERP lease; names no task (ADR-0019).
@@ -188,11 +191,18 @@ export const ERP_ACTION_ERRORS = {
   erpStarted: '已开始写入报销系统，不能再改动；请按对账结果处理。',
   // Checks that need no ERP (invoice identity, ERP invoice type, dates, amounts) failed; nothing was started.
   preflight: (problems: readonly string[]) => `还不能写入报销系统：${problems.join('；')}。`,
-  // 去报销 runs in the employee's own 浏览器扩展 (browser extension, ADR-0019); without one nothing is started (story 13).
-  // `extension_not_paired`: this 应用账号 has no pairing. `extension_offline`: paired, but its extension is not connected.
-  extensionNotPaired: '还没有配对浏览器扩展，所以现在去报销不了。请先到设置页的「浏览器扩展」一节下载安装扩展，用那里生成的配对码完成配对，再来去报销。',
-  extensionOffline: '浏览器扩展现在没有连上应用，所以现在去报销不了。请打开装着扩展的 Chrome 或 Edge，等设置页的「浏览器扩展」一节显示已连接，再来去报销。',
+  // 去报销 runs only in the employee's paired 本地执行器 (ADR-0037); without one nothing is started (story 13).
+  // `executor_not_paired` (EXECUTOR_NOT_PAIRED_CODE): this 应用账号 has no pairing; the refusal links to the 设置页.
+  // `executor_offline` (EXECUTOR_OFFLINE_CODE): paired, but the 本地执行器 is not connected.
+  notPaired: '先在设置页安装本地执行器。',
+  executorOffline: '本地执行器现在没有连上应用，所以现在去报销不了。请在电脑上打开 baox 本地执行器，等设置页显示已连接，再来去报销。',
 } as const;
+
+// The 去报销 refusal when the 应用账号 has no paired 本地执行器 (ADR-0037). It carries `link: 'settings'`.
+export const EXECUTOR_NOT_PAIRED_CODE = 'executor_not_paired';
+// The 去报销 refusal, and the in-job abort, when the paired 本地执行器 is not connected; the channel's `request` rejects
+// with it too.
+export const EXECUTOR_OFFLINE_CODE = 'executor_offline';
 
 // The one task-action refusal that is HTTP 409 but not stale_step: this 应用账号's ERP lease is held by another of
 // its own tasks.
@@ -334,8 +344,6 @@ export const ACTION_NAMES = [
   'exclude-material',
   'set-home-city',
   'start-erp-write',
-  'confirm-login',
-  'cancel-erp-write',
   'reconcile',
   'hand-off',
   'refill',

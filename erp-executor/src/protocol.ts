@@ -3,8 +3,8 @@
 // The server sends one plan per job; the executor answers with events. Two events wait for a server reply:
 //   - `attempt_started`: the executor must not mutate ERP until the server has persisted the attempt;
 //   - `readback`: the server owns judgement, so it answers each raw read-back with a verdict.
-// This file and the executor ship together in @baox/erp-executor, so a second consumer — the 浏览器扩展 (browser
-// extension) — speaks the protocol without importing the server. A lint rule keeps the package off the server.
+// This file and the executor ship together in @baox/erp-executor, so a second consumer — the 本地执行器 (local
+// executor) — speaks the protocol without importing the server. A lint rule keeps the package off the server.
 
 import { sha256Hex } from './sha256';
 import { z } from 'zod';
@@ -60,10 +60,9 @@ export const FillPlanSchema = z.object({
   // fresh one. 对账 offers that recovery only over a 新增 with no 单据编号, or over no form at all, so the tab it
   // closes is the unsaved bill the banner already told the employee would be replaced.
   replaceAbandonedForm: z.boolean().optional(),
-  // 暂存 (ADR-0029, the unattended path only): set by the server for a job it sends to a baox 本地执行器 and for
-  // nothing else; the 浏览器扩展 hands the form over unsaved (ADR-0028). The fill writes 事由 as the purpose followed
-  // by a space and `mark`, presses 暂存, and finds the draft again by that mark: a 暂存 draft has no 单据编号.
-  draft: z.object({ mark: z.string().regex(DRAFT_MARK) }).optional(),
+  // 暂存 (ADR-0029, ADR-0037): every fill ends at a draft. The fill writes 事由 as the purpose followed by a space
+  // and `mark`, presses 暂存, and finds the draft again by that mark: a 暂存 draft has no 单据编号.
+  draft: z.object({ mark: z.string().regex(DRAFT_MARK) }),
   // 自动重新去报销 (ADR-0034): set by the server on a re-run it starts by itself, and on nothing else. Before anything
   // is uploaded the executor asks ERP, read-only, whether a 费用报销单 already holds one of these invoices and whether a
   // draft carries one of the earlier jobs' marks; either, or no answer, ends the run with nothing written.
@@ -117,14 +116,14 @@ export const PreconditionsSchema = z.object({
 });
 export type Preconditions = z.infer<typeof PreconditionsSchema>;
 
-// `save` is 暂存 on the unattended path (ADR-0029), and a 保存 in job events recorded before ADR-0028; `draft_check`
-// (核对暂存单) is that path's lookup and read-back of the draft 暂存 left. An attended fill job ends at `handover`.
+// `save` is 暂存 (ADR-0029), and a 保存 in job events recorded before ADR-0028; `draft_check` (核对暂存单) is the
+// lookup and read-back of the draft 暂存 left. `handover` is the strict read-back the form passes before 暂存.
 export const STEPS = ['chromium', 'login', 'catalog', 'compatibility', 'navigate', 'import', 'fill', 'save', 'handover', 'readback', 'draft_check'] as const;
 export type Step = (typeof STEPS)[number];
 
 /**
  * 去报销进度 (#420): how far a step with countable parts is, on its `step` event. Today only 填写明细 sends it: `total`
- * 明细 rows with its start (`done: 0`), then one event per row written. An executor or 浏览器扩展 from before it sends
+ * 明细 rows with its start (`done: 0`), then one event per row written. An executor from before it sends
  * none; the server then counts the step once. Optional on purpose: a new event type would be refused (`bad_event`).
  */
 export const StepProgressSchema = z.object({ done: z.number().int().min(0), total: z.number().int().min(1) })
@@ -146,8 +145,8 @@ export const ReadingsSchema = z.object({
 export type Readings = z.infer<typeof ReadingsSchema>;
 
 // The moments a fill job reads the form back. `before_hand_over` is the strict read the hand-over gate makes before
-// it hands the filled, unsaved 单据 (bill) to the employee; it was `before_save` until ADR-0028 took the save away,
-// and there is no read after a save because baox never saves.
+// 暂存 (the name is from ADR-0028, when the filled, unsaved form itself was handed over); the draft 暂存 leaves is
+// read back by its 内码 instead (`draft_check`), and baox never saves.
 export const READBACK_STAGES = ['after_import', 'after_fill', 'before_hand_over', 'reconcile'] as const;
 export type ReadbackStage = (typeof READBACK_STAGES)[number];
 
@@ -158,19 +157,16 @@ export const ErrorCaptureSchema = z.object({
 });
 export type ErrorCapture = z.infer<typeof ErrorCaptureSchema>;
 
-// `handed_over`: ERP 单据已交接 — the form is filled, the strict read-back matched, and baox released the ERP
-// 自动化控制权 (automation control) without saving (ADR-0028). It is a fill job's only success status.
-// `drafted`: ERP 草稿已交接 — the unattended path's success (ADR-0029): the filled form was 暂存'd, found again by its
-// ownership marker and read back by its 内码 (`draftId`); it has no 单据编号 until the employee saves it.
+// `drafted`: ERP 草稿已交接 — a fill job's only success (ADR-0029, ADR-0037): the filled form was 暂存'd, found again
+// by its ownership marker and read back by its 内码 (`draftId`); it has no 单据编号 until the employee saves it.
 // `saved`: no longer produced by a fill job, but still a valid stored value — legacy imported tasks really did save,
 // and a 对账 (reconcile) that proves 已保存 synthesises one.
 // `read`: a reconcile job delivered its read-back (the bucket is the server's, not the executor's).
-export const RESULT_STATUSES = ['saved', 'handed_over', 'drafted', 'aborted', 'unknown', 'waiting_login', 'catalog_mismatch', 'read'] as const;
+export const RESULT_STATUSES = ['saved', 'drafted', 'aborted', 'unknown', 'catalog_mismatch', 'read'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const ExecutorEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('step'), step: z.enum(STEPS), status: z.enum(['running', 'done', 'failed']), progress: StepProgressSchema.optional() }),
-  z.object({ type: z.literal('waiting_login'), hint: z.string() }),
   z.object({
     type: z.literal('catalog_mismatch'),
     problems: z.array(z.object({ kind: z.enum(['project', 'expense_item']), code: z.string(), verdict: z.string(), expectedName: z.string(), erpName: z.string().nullable() })),
@@ -214,7 +210,7 @@ export type ExecutorEvent = z.infer<typeof ExecutorEventSchema>;
 export type ResultEvent = Extract<ExecutorEvent, { type: 'result' }>;
 /**
  * A job ended as `aborted` by whoever could not let it go on: the server past its reconnection window, or the
- * extension's job link. It never picks the disposition — the server turns it into `unknown` (对账) when an attempt is
+ * 本地执行器's job link. It never picks the disposition — the server turns it into `unknown` (对账) when an attempt is
  * on record.
  */
 export const abortedResult = (code: string, message: string): ResultEvent => ({ type: 'result', status: 'aborted', code, message, billNo: null, capture: null });

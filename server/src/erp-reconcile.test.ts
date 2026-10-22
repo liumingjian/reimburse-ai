@@ -8,7 +8,7 @@ import type { FillExecutor } from './erp/fill-jobs';
 import type { ExecutorChannel, ExecutorEvent, FillPlan, Mutation, ResultEvent } from '@baox/erp-executor/protocol';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
-import { handedOver, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
+import { drafted, noFormOpen, scripted, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
 import { api } from './test/api';
 import { tempDataDir, testClient, type TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer, type Scene } from './test/scenario';
@@ -26,8 +26,8 @@ import { join } from 'node:path';
 const DUPLICATE_REFUSAL = '重复报销，禁止导入：该发票已被历史费用报销单占用。';
 
 // Where the fill job dies: right after the attempt of that mutation is durable (before ERP changes), or once the
-// strict hand-over read-back is durable. The job never saves (ADR-0028), so there is no
-// `save` attempt to die at.
+// strict hand-over read-back before 暂存 is durable. A death at the `save` attempt (暂存) is 对账 by the ownership
+// marker instead, tested in erp-reconcile-draft.test.ts.
 type Fault = Exclude<Mutation, 'save'> | 'before_hand_over';
 
 let server: ScenarioServer;
@@ -162,7 +162,7 @@ describe('fault injection at each ERP mutation point', () => {
     expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
   });
 
-  it('重新去报销 runs the fill again on a fresh 新增单 and hands over, with the 收票网格 holding N rows and not 2N', async () => {
+  it('重新去报销 runs the fill again on a fresh 新增单 and 暂存s, with the 收票网格 holding N rows and not 2N', async () => {
     const scene = await crashedAt('fill');
     const judged = await scene.run('reconcile');
     const taskId = scene.task.taskId;
@@ -180,7 +180,7 @@ describe('fault injection at each ERP mutation point', () => {
     const started = await scene.accept('refill');
     expect(started).toMatchObject({ stage: 'erp', erp: { status: 'running' } });
     const over = await scene.settled();
-    expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
+    expect(over).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', draftNo: null }, readback: { status: 'matched' } });
     expect(fillRuns).toBe(2);
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     // Only the recovery is told to replace an open 新增: live, ERP keeps the abandoned bill's tab, and reusing it
@@ -207,7 +207,7 @@ describe('fault injection at each ERP mutation point', () => {
       { job_id: recoveryJob, trigger: 'refill' },
     ]);
     const attempts = await server.db.selectFrom('erp_attempt').select(['job_id', 'action']).where('task_id', '=', taskId).execute();
-    expect(attempts.filter((attempt) => attempt.job_id === recoveryJob).map((attempt) => attempt.action)).toEqual(['import', 'fill']);
+    expect(attempts.filter((attempt) => attempt.job_id === recoveryJob).map((attempt) => attempt.action)).toEqual(['import', 'fill', 'save']);
     expect(attempts.filter((attempt) => attempt.job_id === firstJob).length).toBeGreaterThan(0);
     expect((await server.db.selectFrom('erp_reconcile_job').select(['fill_job_id']).where('task_id', '=', taskId).execute()).map((row) => row.fill_job_id)).toEqual([firstJob]);
 
@@ -254,8 +254,10 @@ describe('fault injection at each ERP mutation point', () => {
     // This job wrote nothing, but the import the first one made is still unsettled: the task stays in 对账, which is
     // the only thing that can settle it. The copy must not offer 去报销, which the ADR-0014 freeze refuses.
     expect(stopped).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' } });
-    expect(stopped.erp.abortReason).toContain('报销专用 Chromium 浏览器不可用');
-    expect(stopped.erp.abortReason).not.toContain('可以再去报销');
+    // The reason is the first run's, the one that wrote; this run's own reason is a line of its own (QA 2026-10-19).
+    expect(stopped.erp.abortReason).toBe('写入报销系统的结果不确定，应用已停止写入，不会重放。原因：injected fault at fill');
+    expect(stopped.erp.rerunNotice).toContain('报销专用 Chromium 浏览器不可用');
+    expect(`${stopped.erp.abortReason}${stopped.erp.rerunNotice}`).not.toContain('可以再去报销');
     expect(stopped.reconcile.allowedActions).toEqual(['wait', 'hand_off']);
     expect(await scene.refused('start-erp-write')).toEqual({ status: 400, code: 'erp_started' });
 
@@ -321,23 +323,19 @@ describe('fault injection at each ERP mutation point', () => {
     expect(judged.erp.draftNo).toEqual(expect.any(String));
   });
 
-  it('a filled, unsaved form that matches the approved preview line by line reconciles to the hand-over terminal', async () => {
+  it('a filled, unsaved form that matches the approved preview line by line is no terminal: nothing is handed over unsaved', async () => {
     const scene = await crashedAt('before_hand_over');
-    // The resume path: nobody saved, so 对账 reads 未保存·就绪待保存 with the strict per-line match satisfied. That is
-    // ERP 单据已交接 (bill handed over), the same terminal a clean run reaches — not a breakpoint.
+    // The fill died before 暂存: nobody saved, so 对账 reads 未保存·就绪待保存 with the strict per-line match satisfied.
+    // That used to be ERP 单据已交接; since ADR-0037 every 去报销 ends at 暂存, so the task stays in 对账.
     const judged = await scene.run('reconcile');
-    expect(judged).toMatchObject({ stage: 'done', erp: { status: 'done', draftNo: null }, readback: { status: 'matched' } });
-    // Nothing is offered to deal with: the employee never sees a reconcile page for this task.
-    expect(judged.step.kind).not.toBe('reconcile');
-    expect(judged.reconcile).toMatchObject({ status: 'none', bucket: null, action: null, actionCode: null, allowedActions: [], humanReview: false, banner: null });
-    // The read-back rows are the evidence the terminal rests on, and no save was ever recorded.
-    expect(judged.readback.rows.length).toBeGreaterThan(0);
-    expect(fake!.mutations.some((mutation) => mutation.kind === 'save')).toBe(false);
-    // Terminal: the account may start its next 报销任务.
-    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(200);
+    expect(judged).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, readback: { status: 'none' } });
+    expect(judged.reconcile).toMatchObject({ bucket: '未保存·就绪待保存', action: '原地等待', allowedActions: ['wait', 'hand_off'], humanReview: false });
+    expect(fake!.mutations.some((mutation) => mutation.kind === 'save' || mutation.kind === 'draft')).toBe(false);
+    // Not terminal: the account still has its one open 报销任务.
+    expect((await alice.post('/api/tasks', { homeCity: '杭州' })).status).toBe(400);
   });
 
-  it('the hand-over promotion needs the totals to agree: a detail amount that drifted stays a breakpoint', async () => {
+  it('a filled form whose detail amount drifted is 转人工', async () => {
     const scene = await crashedAt('before_hand_over');
     // The unsaved form drifts on one money cell, so the form no longer adds up to the task. Since the owner's
     // 2026-09-20 decision that is the whole test of a form, and it alone must keep the task out of the terminal.
@@ -400,7 +398,7 @@ describe('crash recovery', () => {
     expect(await scene.snapshot()).toMatchObject({ stage: 'erp', erp: { status: 'running' } });
 
     // The second process on the same data: the job gets its result before any request is served.
-    const neverRun = scripted(handedOver());
+    const neverRun = scripted(drafted);
     const second = await scenarioServer({ erpExecutor: neverRun, reconcileExecutor: noFormOpen, database, dataDir: dir });
     const again = await scenario(second, testClient(second.app, owner.account, owner.cookie)).of(scene.task.taskId);
     expect(again.reached).toMatchObject({ stage: 'reconcile', step: { kind: 'reconcile' }, erp: { status: 'aborted' }, reconcile: { status: 'pending', allowedActions: ['wait', 'hand_off'] } });

@@ -1,5 +1,5 @@
 // The narrow boundary between an approved preview and an ERP 费用报销单 (expense reimbursement bill): fill it, read it
-// back strictly, and hand it over unsaved (ADR-0028). Nothing here clicks 保存 (save).
+// back strictly, and clear it for 暂存 (ADR-0028, ADR-0029). Nothing here clicks 保存 (save) or 暂存.
 // Origin: 50931a3:kernel/src/erp-draft-flow.mjs (fillApprovedPreview, saveApprovedPreview, matchReceiptRows,
 // formReadbackToken, completePreviewProblems). It never creates an approval.
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
@@ -274,9 +274,18 @@ export type FillResult =
  * Fill an approved preview. The first read is a no-write preflight: one new tab, empty bill number, exact receipt
  * identities, no unlocated detail row. A missing addRow adapter is a visible blocker, never a guessed click.
  */
+// ERP's computed 申请报销金额 after a money write: ~260ms when ERP is fast (V-59). Live 2026-10-21 one row's was still
+// empty past the ~3 s this gate used to allow, on a run whose lookups took up to 6 s; the gate returns as soon as
+// ERP agrees, so the ceiling costs a fast ERP nothing.
+export const MONEY_SETTLE_MS = 30_000;
+// And never fewer reads than the gate always made, however short `settleMs` is.
+const MONEY_SETTLE_READS = 12;
+// Standing still this long after a money write, ERP's model did not take it (V-59: ~260ms; slow ERP lookups: ≤ 6 s).
+export const MONEY_RETYPE_MS = 8_000;
+
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {}, causa = null,
-  witnessReads = 8, witnessDelayMs = 900, settleReads = 12, settleDelayMs = 250, onRowWritten = null,
+  witnessReads = 8, witnessDelayMs = 900, settleMs = MONEY_SETTLE_MS, retypeAfterMs = MONEY_RETYPE_MS, settleDelayMs = 250, onRowWritten = null,
 }: {
   /** Told after each 明细 row is written and witnessed: how many rows are done out of the preview's (去报销进度). */
   onRowWritten?: ((done: number, total: number) => Promise<void>) | null;
@@ -288,8 +297,13 @@ export async function fillApprovedPreview<P>(page: P, {
   causa?: string | null;
   /** How many times the computed column is re-read while ERP is still recalculating, and how long between reads. */
   witnessReads?: number; witnessDelayMs?: number;
-  /** The same two knobs for the gate BETWEEN the two money writes of one row; ERP was measured settling in ~260ms. */
-  settleReads?: number; settleDelayMs?: number;
+  /**
+   * The gate BETWEEN the two money writes of one row: how long ERP's computed column is given to catch up, and how
+   * long between reads. ERP was measured settling in ~260ms (V-59), and seconds on a slow ERP (live 2026-10-21).
+   */
+  settleMs?: number; settleDelayMs?: number;
+  /** How long ERP's computed column may stand still before the money value is typed again, once. */
+  retypeAfterMs?: number;
 }): Promise<FillResult> {
   const problems: Problem[] = gateAndApprovalProblems(approvedPreview, freshGate, approval);
   if (problems.length) return fail('preflight', problems);
@@ -359,12 +373,26 @@ export async function fillApprovedPreview<P>(page: P, {
       // the next. The gate is ERP's own arithmetic rather than a sleep, so it is fast when ERP is fast and
       // patient when it is not, and it does not silently re-break the day the server gets slower.
       if (MONEY_COLUMNS.has(field.column)) {
-        let settled = false;
-        for (let read = 0; read < Math.max(1, settleReads); read++) {
-          if (read > 0) await sleep(settleDelayMs);
-          readings = await readCurrent(null);
-          settled = moneyModelSettled(dataRows(readings.detailGrid)[rowIndex]?.values);
-          if (settled) break;
+        const settle = async (withinMs: number) => {
+          const until = Date.now() + withinMs;
+          for (let read = 0; ; read++) {
+            if (read > 0) await sleep(settleDelayMs);
+            readings = await readCurrent(null);
+            const settled = moneyModelSettled(dataRows(readings.detailGrid)[rowIndex]?.values);
+            if (settled || (read + 1 >= MONEY_SETTLE_READS && Date.now() >= until)) return settled;
+          }
+        };
+        // A value ERP's model never took is typed again, once: live 2026-10-21 three first fills of ten stopped here
+        // on a cell that showed the amount while 申请报销金额 stayed empty (or the net alone) for the whole 30 s, and
+        // the re-run's fresh form took the same amount at once. The model is long idle by `retypeAfterMs`, so the
+        // second write cannot land inside the first one's window (V-59); the gate after it is ERP's arithmetic again.
+        let settled = await settle(Math.min(retypeAfterMs, settleMs));
+        if (!settled) {
+          const again = await writeCell(page, { which: 0, row: rowIndex, column: field.column, value: String(field.value), expect: { mode: 'equals', value: String(field.readback) } }, writeDeps);
+          if (!again || !again.ok) {
+            return fail('fill', [{ code: 'field_write_failed', message: (again && again.reason) || `字段 ${field.column} 回读失败`, lineId: line.lineId, column: field.column }], { readings, rowsWritten });
+          }
+          settled = await settle(settleMs);
         }
         if (!settled) {
           const shown = dataRows(readings.detailGrid)[rowIndex]?.values ?? {};
@@ -411,19 +439,18 @@ export async function fillApprovedPreview<P>(page: P, {
   return { ok: true, phase: 'filled', previewDigest: approvedPreview.previewDigest, formToken: formReadbackToken(readings), rowsWritten, readings: after };
 }
 
-// `status` carries the whole outcome: `handed_over` is the one success, and it is the only status without problems.
+// `status` carries the whole outcome: `verified` is the one success, and it is the only status without problems.
 export type HandOverResult = {
-  status: 'handed_over' | 'blocked' | 'unknown';
+  status: 'verified' | 'blocked' | 'unknown';
   problems?: Problem[]; readings?: CurrentReadings;
 };
 
 /**
- * The hand-over gate (ADR-0028): the strict pre-save verification that used to precede the save, now the end of the
- * job. It re-checks the gate and the approval, that the fill read-back covered this very preview on this very form,
+ * The hand-over gate (ADR-0028): the strict verification the form passes before 暂存 (ADR-0029). It re-checks the gate and the approval, that the fill read-back covered this very preview on this very form,
  * that the page is still the same 新增 (new) form with an empty 单据编号 (bill number), that every detail line still
- * matches the approved preview field by field, and that the 收票 (receipt) rows are still the approved ones. It takes
- * no save adapter and performs no mutation: baox never clicks 保存 (save), the employee does. The readings it
- * verified come back as the evidence of the hand-over.
+ * matches the approved preview field by field, and that the 收票 (receipt) rows are still the approved ones. It
+ * performs no mutation, and baox never clicks 保存 (save): the employee does, on the draft. The readings it verified
+ * come back as what the 暂存 draft is compared with.
  */
 export async function handOverApprovedPreview({
   approvedPreview, approval, freshGate, fillResult, readCurrent,
@@ -445,5 +472,5 @@ export async function handOverApprovedPreview({
     || before.billNo?.value !== null || !before.taskMatch?.ok || !matchReceiptRows(before.receiptsGrid, approvedPreview).ok) {
     return { status: 'blocked', problems: [{ code: 'hand_over_precondition_failed', message: '填充后当前页已不是同一张新增空号单，没有交接' }] };
   }
-  return { status: 'handed_over', readings: before };
+  return { status: 'verified', readings: before };
 }

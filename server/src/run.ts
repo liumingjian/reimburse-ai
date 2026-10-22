@@ -30,9 +30,6 @@ import { startServer } from './server';
 const DEFAULT_PORT = 4319;
 // src/run.ts (dev, via tsx) and dist/main.mjs (built) both sit two levels below the repo root.
 const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
-// The extension template `pnpm build` leaves beside it; the download is assembled from it per request, so a template
-// built after the server started is picked up without a restart.
-const EXTENSION_TEMPLATE = fileURLToPath(new URL('../../extension/dist', import.meta.url));
 // The 本地执行器 (ADR-0035): the program `pnpm build` leaves beside the server, and the Node runtimes the deploy fetched
 // (`BAOX_LOCAL_EXECUTOR_RUNTIMES`, kept outside the release so a deploy does not download them again).
 const LOCAL_EXECUTOR = {
@@ -40,7 +37,7 @@ const LOCAL_EXECUTOR = {
   runtimes: process.env['BAOX_LOCAL_EXECUTOR_RUNTIMES'] ?? fileURLToPath(new URL('../../local-executor/runtime', import.meta.url)),
 };
 
-// Where ERP jobs run. Absent, they run in each task owner's paired 浏览器扩展 (`erp/remote-executor.ts`), which is the
+// Where ERP jobs run. Absent, they run in each task owner's paired 本地执行器 (`erp/remote-executor.ts`), which is the
 // only choice the production entry has: the CDP executor is passed in by the development and e2e entries alone, so it
 // never reaches a bundle users run (`production-entry.test.ts`).
 export type RunOverrides = { erpExecutor?: FillExecutor; reconcileExecutor?: ReconcileExecutor; parser?: ParseExecutor };
@@ -63,7 +60,6 @@ export async function run({ erpExecutor, reconcileExecutor, parser }: RunOverrid
       ...(parser ? { parser } : {}),
       erpConfig,
       publicOrigin: process.env['BAOX_PUBLIC_ORIGIN'] ?? null,
-      extensionTemplate: EXTENSION_TEMPLATE,
       localExecutor: LOCAL_EXECUTOR,
       erpCredentialKey: credentialKeyFile && existsSync(credentialKeyFile) ? readCredentialKey(credentialKeyFile) : null,
       ...(maintenanceTokenFile ? {

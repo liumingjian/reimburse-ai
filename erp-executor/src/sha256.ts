@@ -1,7 +1,6 @@
-// SHA-256 (FIPS 180-4), synchronous and dependency-free, so the same digest runs in node and in the browser extension.
-//
-// `node:crypto` cannot be bundled into the extension, and `crypto.subtle.digest` is asynchronous, which would turn
-// `erpWritePreviewDigest` — called inside synchronous gates in draft-flow — into a promise and every caller with it.
+// SHA-256 (FIPS 180-4), synchronous and dependency-free. It was written so the same digest could run in a browser
+// bundle, where `crypto.subtle.digest` is asynchronous; that bundle is gone, and node's `createHash` could replace it.
+// `erpWritePreviewDigest` is called inside synchronous gates in draft-flow, so a replacement must stay synchronous.
 // The output must stay byte-identical to `createHash('sha256')`, because approvals recorded by the server carry
 // digests computed with it; `sha256.test.ts` pins that against node's implementation.
 

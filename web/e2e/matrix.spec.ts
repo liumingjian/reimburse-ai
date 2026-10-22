@@ -20,7 +20,7 @@ const KEY_TEXT: Readonly<Record<SeedStage, string>> = {
   project: '2 / 9 条',
   review: '确认后即可去打印、去报销',
   actions: '整单明细已确认',
-  erp: '我已登录，继续',
+  erp: '正在等待报销系统返回结果。',
   done: '尚无',
   reconcile: '写入结果不确定',
   // A voided T1 has no materials yet; its only page is upload.
@@ -57,10 +57,10 @@ async function shot(page: Page, testInfo: TestInfo) {
 
 const pdf = (name: string) => ({ name, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4 ${name}`) });
 
-// The ERP seed is waiting for the employee to log in to the task's ERP tab.
+// 去报销 from the confirmed T1: the job runs through by itself, `fault` choosing how it ends.
 async function startErp(page: Page, fault: Fault) {
-  await page.goto(open(`?seed=erp&fault=${fault}`, '#/task/T1/erp'));
-  await page.getByRole('button', { name: '我已登录，继续' }).click();
+  await page.goto(open(`?seed=actions&fault=${fault}`, '#/task/T1/review'));
+  await page.getByRole('button', { name: '去报销', exact: true }).click();
 }
 
 // 每个 fault 的典型场景与它应当显示的内容。
@@ -78,11 +78,6 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
     await page.goto(open('?seed=pending&fault=unsupported-material', '#/task/T1/pending'));
     await expect(page.getByText('还剩 5 个')).toBeVisible();
     await expect(page.getByLabel('待确认项清单').getByRole('button', { name: /曹操出行_行程单\.pdf/ })).toBeVisible();
-  },
-  'erp-login-missing': async (page) => {
-    await startErp(page, 'erp-login-missing');
-    await expect(page.getByText(/还没有检测到登录（第 1 次检测）/)).toBeVisible();
-    await expect(page.getByRole('button', { name: '我已登录，继续' })).toBeEnabled();
   },
   // The catalog is checked inside the ERP job: a renamed project stops it before anything is imported, and the task
   // is back at project assignment (项目归属) with the problem shown.

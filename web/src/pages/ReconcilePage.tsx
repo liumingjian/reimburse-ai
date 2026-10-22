@@ -37,7 +37,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
   const allowRefill = snapshot.allowedActions.includes('refill');
   // 建议的处置：两个按钮都在时，它是主按钮，后果说明也按它写。
   const suggestHandOff = reconcile.actionCode === 'hand_off';
-  const { busy, error, run } = useAction(taskId);
+  const { busy, error, errorLink, run } = useAction(taskId);
 
   const act = async (action: (adapter: AppAdapter) => Promise<ActionOutcome>) => {
     const outcome = await run(action);
@@ -142,6 +142,7 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
             </>
           }
           error={error}
+          errorLink={errorLink}
         />
       )}
     </>

@@ -202,7 +202,8 @@ describe('migrations on an existing database', () => {
     try {
       expect(await migrated.selectFrom('erp_job').select(['job_id', 'trigger']).orderBy('job_id').execute()).toEqual([
         { job_id: 'old-job', trigger: 'start' },
-        { job_id: 'old-login', trigger: 'confirm_login' },
+        // 0025 stores the 「我已登录，继续」 of before ADR-0037 as the 去报销 it resumed.
+        { job_id: 'old-login', trigger: 'start' },
       ]);
       // The children still point at the parent that was rebuilt under them.
       expect(await migrated.selectFrom('erp_reconcile_job').select(['fill_job_id']).execute()).toEqual([{ fill_job_id: 'old-job' }]);
@@ -247,25 +248,42 @@ describe('migrations on an existing database', () => {
     }
   });
 
-  // 0023_412 (#423): a fill job records the route it ran on. Jobs from before it ran on an unrecorded route and keep
-  // null (the snapshot then asks the current pairing); the column takes the two holders only, and erp_job stays
-  // append-only.
-  it('migrates 0022 → latest: past ERP jobs keep a null route, and a new job records its own', async () => {
-    const owner = await priorVersionFixture('0022_line2_rerun_trigger');
+  // 0025_432 (ADR-0037, no compatibility): the 本地执行器 is the only pairing. An extension pairing, and one from before
+  // the holder was recorded (which was an extension), is deleted without notice; the 本地执行器's stays, in `pairing`,
+  // with no holder. erp_job forgets the route each job ran on, stores a 「我已登录，继续」 (gone with ADR-0037) as the
+  // 去报销 it resumed, refuses that trigger from then on, and stays append-only.
+  it('migrates 0024 → latest: only the 本地执行器 pairing remains, in `pairing`, no job has a route or a confirm_login', async () => {
+    const owner = await priorVersionFixture('0024_412_install_code');
     const at = '2026-09-01T10:00:00Z';
     const db = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(databasePath(dataDir)) }) });
-    await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
-              VALUES ('old-job', 'old-task', ${owner}, 'fill', 'start', 'digest', '{}', 3, ${at})`.execute(db);
+    for (const [account, holder] of [['bob', 'extension'], ['carol', null], ['dave', 'local_executor']] as const) {
+      await sql`INSERT INTO account (account_id, display_name, created_at) VALUES (${account}, ${account}, ${at})`.execute(db);
+      await sql`INSERT INTO extension_pairing (account_id, token_sha256, browser, version, holder, created_at, paired_at, last_connected_at)
+                VALUES (${account}, ${'token-' + account}, 'a browser', '1.0.0', ${holder}, ${at}, ${at}, ${at})`.execute(db);
+    }
+    for (const [jobId, revision, route, trigger] of [['extension-job', 3, 'extension', 'confirm_login'], ['executor-job', 4, 'local_executor', 'refill'], ['unrecorded-job', 5, null, 'start']] as const) {
+      await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at, route)
+                VALUES (${jobId}, 'old-task', ${owner}, 'fill', ${trigger}, 'digest', '{}', ${revision}, ${at}, ${route})`.execute(db);
+    }
     await db.destroy();
 
     const migrated = await openDatabase(databasePath(dataDir));
     try {
-      expect(await migrated.selectFrom('erp_job').select(['job_id', 'route']).execute()).toEqual([{ job_id: 'old-job', route: null }]);
-      await sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at, route)
-                VALUES ('new-job', 'old-task', ${owner}, 'fill', 'start', 'digest', '{}', 4, ${at}, 'local_executor')`.execute(migrated);
-      await expect(sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at, route)
-                       VALUES ('bogus', 'old-task', ${owner}, 'fill', 'start', 'digest', '{}', 5, ${at}, 'carrier_pigeon')`.execute(migrated)).rejects.toThrow();
-      await expect(sql`UPDATE erp_job SET route = 'extension' WHERE job_id = 'new-job'`.execute(migrated)).rejects.toThrow();
+      const tables = (await sql<{ name: string }>`SELECT name FROM sqlite_master WHERE type = 'table'`.execute(migrated)).rows.map((row) => row.name);
+      expect(tables).toContain('pairing');
+      expect(tables).not.toContain('extension_pairing');
+      expect((await sql`SELECT account_id, token_sha256, browser FROM pairing`.execute(migrated)).rows).toEqual([
+        { account_id: 'dave', token_sha256: 'token-dave', browser: 'a browser' },
+      ]);
+      const columns = async (table: string) => (await sql<{ name: string }>`SELECT name FROM pragma_table_info(${table})`.execute(migrated)).rows.map((row) => row.name);
+      expect(await columns('pairing')).not.toContain('holder');
+      expect(await columns('erp_job')).not.toContain('route');
+      expect((await sql`SELECT job_id, trigger FROM erp_job ORDER BY job_id`.execute(migrated)).rows).toEqual([
+        { job_id: 'executor-job', trigger: 'refill' }, { job_id: 'extension-job', trigger: 'start' }, { job_id: 'unrecorded-job', trigger: 'start' },
+      ]);
+      await expect(sql`INSERT INTO erp_job (job_id, task_id, account_id, kind, trigger, confirmation_digest, plan, revision, started_at)
+                       VALUES ('new-login', 'old-task', ${owner}, 'fill', 'confirm_login', 'digest', '{}', 6, ${at})`.execute(migrated)).rejects.toThrow();
+      await expect(sql`DELETE FROM erp_job WHERE job_id = 'extension-job'`.execute(migrated)).rejects.toThrow();
     } finally {
       await migrated.destroy();
     }

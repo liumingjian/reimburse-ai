@@ -1,4 +1,4 @@
-import { EXTENSION_HOLDERS, TASK_STAGES, type ErpRoute, type TaskStage } from '@baox/contract';
+import { TASK_STAGES, type TaskStage } from '@baox/contract';
 
 // Stages a task can be seeded at. The server never projects `catalog` or `preparation` (it checks the catalog inside
 // the ERP job), so the mock has no snapshot for them either.
@@ -11,7 +11,6 @@ export const SEED_STAGES: readonly SeedStage[] = TASK_STAGES.filter((stage): sta
 export const FAULTS = [
   'duplicate-upload',
   'unsupported-material',
-  'erp-login-missing',
   // The ERP job's catalog step finds P-2307 renamed in the ERP: the task goes back to project assignment (项目归属).
   'catalog-mismatch',
   'erp-write-aborted',
@@ -33,7 +32,9 @@ export type AuthOption = (typeof AUTH_OPTIONS)[number];
 export const LEGACY_OPTIONS = ['failed', 'imported', 'absent'] as const;
 export type LegacyOption = (typeof LEGACY_OPTIONS)[number];
 
-export const EXTENSION_OPTIONS = ['paired', 'disconnected'] as const;
+// `?pairing=`: whether this 应用账号 has a paired 本地执行器 (default `paired`). With `none`, 去报销 is refused.
+export const PAIRING_OPTIONS = ['paired', 'none'] as const;
+export type PairingOption = (typeof PAIRING_OPTIONS)[number];
 
 // `?localExecutor=`: a 本地执行器 answers on this PC's 47319, unpaired, paired to this account, or to another one.
 export const LOCAL_EXECUTOR_OPTIONS = ['unpaired', 'paired', 'other'] as const;
@@ -60,19 +61,15 @@ export type MockOptions = {
   duplicateHit?: boolean;
   // `?legacy=failed|imported|absent`：设置页的旧数据导入面板摆出那一次导入的结果（不给则「没有运行过」）。
   legacy?: LegacyOption;
-  // `?extension=paired|disconnected` sets the browser extension panel to its paired or disconnected state.
-  extensionPaired?: boolean;
-  extensionConnected?: boolean;
-  // `?extensionOrigin=<origin>` sets the active application address for extension download and pairing.
-  extensionOrigin?: string;
+  // `?pairing=paired|none`, see PAIRING_OPTIONS; left out, the account's 本地执行器 is paired and connected.
+  pairing?: PairingOption;
+  // `?origin=<origin>` sets the active application address the install and uninstall commands name.
+  appOrigin?: string;
   // `?localExecutor=unpaired|paired|other`, see LOCAL_EXECUTOR_OPTIONS; left out, nothing answers on 47319.
   localExecutor?: LocalExecutorOption;
   // How long the install command takes, from issuing its 配对码 to the pairing landing (毫秒，默认 4000); tests set it
   // small.
   localExecutorInstallMs?: number;
-  // `?route=local_executor` plays 去报销 on the 本地执行器 (its own step list, no login wait, ends 暂存'd); the default
-  // is the 浏览器扩展 route.
-  erpRoute?: ErpRoute;
   storage?: MockStorage;
   // `?location=unavailable`：mock 位置 Adapter 取不到网络位置，第一次新建任务时常驻城市没有默认值。不是故障场景。
   locationUnavailable?: boolean;
@@ -80,9 +77,8 @@ export type MockOptions = {
   printSheet?: boolean;
   // 盘点每个阶段的推进间隔（毫秒）；测试可以调小。
   inventoryPhaseMs?: number;
-  // ERP 填报每一步的推进间隔（毫秒，默认 300）；正常场景下服务端自动探测到登录的延迟（默认 2500）。
+  // ERP 填报每一步的推进间隔（毫秒，默认 300）。
   erpStepMs?: number;
-  erpLoginAutoMs?: number;
   // `?fault=service-disconnected`：第一次订阅后多久断开（默认 300），断开后多久恢复（默认 3000）。
   disconnectAfterMs?: number;
   reconnectAfterMs?: number;
@@ -133,33 +129,25 @@ export function readMockOptions(search: string): MockOptions {
     if ((LEGACY_OPTIONS as readonly string[]).includes(legacy)) options.legacy = legacy as LegacyOption;
     else console.warn(`未知的 legacy「${legacy}」，可用值：${LEGACY_OPTIONS.join(', ')}`);
   }
-  const extension = params.get('extension');
-  if (extension !== null) {
-    if (extension === 'paired') options.extensionPaired = true;
-    else if (extension === 'disconnected') {
-      options.extensionPaired = true;
-      options.extensionConnected = false;
-    } else console.warn(`未知的 extension「${extension}」，可用值：${EXTENSION_OPTIONS.join(', ')}`);
+  const pairing = params.get('pairing');
+  if (pairing !== null) {
+    if ((PAIRING_OPTIONS as readonly string[]).includes(pairing)) options.pairing = pairing as PairingOption;
+    else console.warn(`未知的 pairing「${pairing}」，可用值：${PAIRING_OPTIONS.join(', ')}`);
   }
-  const extensionOrigin = params.get('extensionOrigin');
-  if (extensionOrigin !== null) {
+  const appOrigin = params.get('origin');
+  if (appOrigin !== null) {
     try {
-      const origin = new URL(extensionOrigin).origin;
-      if (origin === extensionOrigin && (origin.startsWith('http://') || origin.startsWith('https://'))) options.extensionOrigin = origin;
-      else console.warn(`未知的 extensionOrigin「${extensionOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
+      const origin = new URL(appOrigin).origin;
+      if (origin === appOrigin && (origin.startsWith('http://') || origin.startsWith('https://'))) options.appOrigin = origin;
+      else console.warn(`未知的 origin「${appOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
     } catch {
-      console.warn(`未知的 extensionOrigin「${extensionOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
+      console.warn(`未知的 origin「${appOrigin}」，请写成 http://host[:port] 或 https://host[:port]`);
     }
   }
   const localExecutor = params.get('localExecutor');
   if (localExecutor !== null) {
     if ((LOCAL_EXECUTOR_OPTIONS as readonly string[]).includes(localExecutor)) options.localExecutor = localExecutor as LocalExecutorOption;
     else console.warn(`未知的 localExecutor「${localExecutor}」，可用值：${LOCAL_EXECUTOR_OPTIONS.join(', ')}`);
-  }
-  const route = params.get('route');
-  if (route !== null) {
-    if ((EXTENSION_HOLDERS as readonly string[]).includes(route)) options.erpRoute = route as ErpRoute;
-    else console.warn(`未知的 route「${route}」，可用值：${EXTENSION_HOLDERS.join(', ')}`);
   }
   const auth = params.get('auth');
   if (auth !== null) {

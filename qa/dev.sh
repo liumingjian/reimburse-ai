@@ -19,8 +19,10 @@
 # default ~/.baox-qa-dev). Every other BAOX_* variable (BAOX_ERP_CHROMIUM, BAOX_ERP_STOP_BEFORE_IMPORT, ...) passes
 # through to the server at `up`. One instance per Mac: `up` stops the previous one first, whichever checkout started it.
 #
-# `BAOX_DEV_ERP=paired qa/dev.sh up` sends 去报销 to the paired 浏览器扩展 or 本地执行器 instead of the dedicated
-# Chromium (server/src/dev-executors.ts), so a 本地执行器 installed from the 设置页 暂存s in the real ERP.
+# Either way 去报销 runs the production path (ADR-0037): it signs in with the account's ERP 凭据 saved on the 设置页
+# and ends at 暂存 (ERP 草稿已交接), so save them before the first 去报销. `BAOX_DEV_ERP=cdp` (the default) runs it in
+# the dedicated, headed Chromium on this Mac; `BAOX_DEV_ERP=paired qa/dev.sh up` sends it to the paired 本地执行器
+# instead (server/src/dev-executors.ts), so a 本地执行器 installed from the 设置页 暂存s in the real ERP.
 set -euo pipefail
 
 CHECKOUT=$(cd "$(dirname "$0")/.." && pwd)
@@ -114,7 +116,10 @@ up() {
     pnpm --filter @baox/server dev >>"$0/server.log" 2>&1 &
     pnpm --filter @baox/web exec vite --host 127.0.0.1 --port "$1" --strictPort >>"$0/web.log" 2>&1 &
     wait' "$STATE" "$WEB_PORT" </dev/null >/dev/null 2>&1 &
-  echo $! > "$STATE/pgid"
+  local pg=$!
+  echo "$pg" > "$STATE/pgid"
+  # perl joins its own group only after the fork, so wait for the group before running_pgid may call it gone.
+  for _ in $(seq 1 20); do kill -0 -"$pg" 2>/dev/null && break; sleep 0.25; done
   echo "$CHECKOUT" > "$STATE/checkout"
   echo "$BAOX_DATA_DIR" > "$STATE/data"
 
@@ -152,7 +157,7 @@ push() {
     return
   fi
   # A new program is what an installed executor updates itself to (local-executor/src/update.ts).
-  if grep -Eq '(^|/| )(local-executor|erp-executor|extension|contract)/src/' <<<"$changed"; then
+  if grep -Eq '(^|/| )(local-executor|channel|erp-executor|contract)/src/' <<<"$changed"; then
     (cd "$SRC" && pnpm --filter @baox/local-executor build >/dev/null)
     echo "rebuilt the 本地执行器 program; an installed one picks it up at its next update check"
   fi

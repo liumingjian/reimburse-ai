@@ -55,6 +55,7 @@ describe('the fake ERP replaying the live new-form recording', () => {
     expect(result.status).toBe('not_logged_in');
   });
 
+  // The whole recorded path, replayed: 10 s alone on the Mac, 59-63 s inside the full suite (2026-10-21).
   it('opens a new 费用报销单 along the recorded path, and reads the fingerprint the hand-written fake assumes', async () => {
     const erp = await recorded('new-form');
     const { manifest } = loadRecording('new-form');
@@ -67,7 +68,7 @@ describe('the fake ERP replaying the live new-form recording', () => {
     expect({ erpBuild: fingerprint.erpBuild, formIds: fingerprint.formIds }).toEqual({ erpBuild: live.erpBuild, formIds: live.formIds });
     // scenario.ts COMPATIBILITY is what every hand-written test expects ERP to answer.
     expect({ erpBuild: fingerprint.erpBuild, formId: fingerprint.formIds[0] }).toEqual(COMPATIBILITY);
-  });
+  }, 120_000);
 
   it('finds 事由 and 单据编号 on the recorded new form by the one header-field rule, both empty, as on the fixture', async () => {
     for (const erp of [await newForm(await recorded('new-form')), await newForm(await handWritten())]) {

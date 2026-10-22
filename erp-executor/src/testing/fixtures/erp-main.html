@@ -35,6 +35,29 @@
       <span class="kd-btn" data-action="new-form">新增</span>
     </div>
   </div>
+  <!-- @unverified: the main menu card, its 员工服务 accordion row and the right panel of the selected second-level node, as measured live 2026-10-19 [unseen]
+       The accordion row only expands or collapses on a click; the right panel shows the selected second-level node,
+       which ERP remembers per user, and only 人人报销 (`childnavli_ERX`) holds 我的费用报销. -->
+  <div id="system-menu" data-kdformid="BOS_MainSystemMenuCard" style="display:none">
+    <ul class="kd-site-accordion">
+      <li id="parentli_TopCustom">
+        <div class="kd-tabnewstyle-head"><div class="kd-tabnewstyle-content" data-action="menu-parent">定制开发</div></div>
+        <ul class="kd-tabsnewsyle-list" style="display:none">
+          <li id="childnavli_LOG"><span class="kd-divchildnewstyle-contentspan" data-action="menu-child" data-node="LOG">日志管理</span></li>
+        </ul>
+      </li>
+      <li id="parentli_TopER">
+        <div class="kd-tabnewstyle-head"><div class="kd-tabnewstyle-content" data-action="menu-parent">员工服务</div></div>
+        <ul class="kd-tabsnewsyle-list" style="display:none">
+          <li id="childnavli_ERX"><span class="kd-divchildnewstyle-contentspan" data-action="menu-child" data-node="ERX">人人报销</span></li>
+        </ul>
+      </li>
+    </ul>
+    <div class="menu-right" data-node="LOG" style="display:none"><a id="BOS_MainSystemMenuCard-log"><span class="kd_consolerightmenu_linkspan">日志查询</span></a></div>
+    <div class="menu-right" data-node="ERX" style="display:none"><a id="BOS_MainSystemMenuCard-erx"><span class="kd_consolerightmenu_linkspan" data-action="open-list">我的费用报销</span></a></div>
+  </div>
+  <!-- @unverified: ERP's loading overlay flashes over the console after sign-in and takes the clicks made under it [transient] -->
+  <div class="kd-ui-blockingExtention-item" id="console-blocker" style="display:none"></div>
   <!-- The form's own tab panel. It gains `k-state-active` when Kendo gets round to it; `formPanelActiveTicks`
        decides how many page evaluations later that is. -->
   <div class="k-content" id="form-panel">

@@ -6,19 +6,20 @@
 //   so ERP 自动化授权 holds only once ERP has accepted the password on that PC.
 // - A login ERP refuses — at the 试登录 or in a job — deletes the password at once. baox never tries a refused
 //   password again, so it cannot lock the ERP account; the employee saves a new one.
-// - A job is given the 凭据 only when they are authorised and the account's pairing is a 本地执行器. A 浏览器扩展 is
-//   never sent them: it works in the employee's own ERP login.
+// - A job is given the 凭据 only when they are authorised. Every pairing is a 本地执行器's (ADR-0037), and every job
+//   signs in with them.
 
 import {
   ERP_CREDENTIAL_ERRORS, type ErpCredentialsView, type SaveErpCredentialsInput,
+  EXECUTOR_OFFLINE_CODE,
 } from '@baox/contract';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, TrySignInAnswerSchema, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
 import type { ErpCredentials } from '@baox/erp-executor/sign-in';
 import { AuthRefusal, type Clock } from '../accounts/accounts';
 import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
-import { EXTENSION_OFFLINE_CODE, ExtensionChannelError } from '../extension/channel';
-import { holderOf } from '../extension/pairing';
+import { ChannelError } from '../channel/channel';
+import { hasPairing } from '../channel/pairing';
 import type { CredentialVault } from './credential-vault';
 
 // A cold 本地执行器 has measured up to about a minute to sign in (erp-headless-v1.md); five leaves room for a slow link.
@@ -30,7 +31,7 @@ export type ErpCredentialPorts = {
   /** Null when the server has no key: nothing can be saved, and no job is given any 凭据. */
   vault: CredentialVault | null;
   erpOrigin: string;
-  /** Ask the account's paired executor; rejects with `extension_offline` when nothing is connected. */
+  /** Ask the account's paired executor; rejects with `executor_offline` when nothing is connected. */
   request(accountId: string, method: string, payload: TrySignInRequest): Promise<unknown>;
   /** Whether a job of this account holds ERP right now: a 试登录 would knock it off. */
   erpBusy(accountId: string): boolean;
@@ -78,7 +79,7 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
       const parsed = TrySignInAnswerSchema.safeParse(answer);
       return parsed.success ? parsed.data : { ok: false, code: 'bad_answer', message: 'baox 本地执行器的试登录回答看不懂，请更新本地执行器后再试。' };
     } catch (error) {
-      if (error instanceof ExtensionChannelError && error.code === EXTENSION_OFFLINE_CODE) return { offline: true };
+      if (error instanceof ChannelError && error.code === EXECUTOR_OFFLINE_CODE) return { offline: true };
       return { ok: false, code: 'trial_failed', message: `试登录没有完成：${error instanceof Error ? error.message : String(error)}` };
     } finally {
       clearTimeout(timer);
@@ -89,9 +90,7 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
     const row = await db.selectFrom('erp_credential').selectAll().where('account_id', '=', accountId).executeTakeFirst();
     if (!row || !row.password_sealed) throw new AuthRefusal(400, 'erp_credentials_none', ERP_CREDENTIAL_ERRORS.nothingSaved);
     const untested = async (message: string) => { await settle(accountId, row.saved_at, { status: 'untested', message, checked: false }); return view(accountId); };
-    const holder = await holderOf(db, accountId);
-    if (holder === null) return untested(ERP_CREDENTIAL_ERRORS.notPaired);
-    if (holder !== 'local_executor') return untested(ERP_CREDENTIAL_ERRORS.notLocalExecutor);
+    if (!(await hasPairing(db, accountId))) return untested(ERP_CREDENTIAL_ERRORS.notPaired);
     if (erpBusy(accountId)) return untested(ERP_CREDENTIAL_ERRORS.erpInUse);
     const password = vault?.open(accountId, row.password_sealed) ?? null;
     if (password === null) throw new AuthRefusal(503, 'erp_credentials_unavailable', ERP_CREDENTIAL_ERRORS.unavailable);
@@ -132,14 +131,16 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
       return view(accountId);
     },
 
-    /** Whether this account's 去报销 runs in a 本地执行器, which needs the 凭据. */
-    needed: async (accountId: string) => (await holderOf(db, accountId)) === 'local_executor',
-
-    /** The 凭据 a job of this account signs in with: only authorised ones, only for a 本地执行器. */
-    async forJob(accountId: string): Promise<ErpCredentials | null> {
-      if (!vault || (await holderOf(db, accountId)) !== 'local_executor') return null;
+    /**
+     * The 凭据 a job of this account signs in with: only authorised ones. `untested` also gives saved ones no 试登录
+     * has passed yet: the server's own executor (development, e2e) has no 本地执行器 to try them on, and signs in with
+     * them as it finds them. Refused ones never go, and a refusal in the job deletes them as anywhere else.
+     */
+    async forJob(accountId: string, { untested = false }: { untested?: boolean } = {}): Promise<ErpCredentials | null> {
+      if (!vault) return null;
       const row = await db.selectFrom('erp_credential').selectAll().where('account_id', '=', accountId).executeTakeFirst();
-      if (!row || row.status !== 'authorised' || !row.password_sealed || refused.get(accountId) === row.saved_at) return null;
+      const usable = row?.status === 'authorised' || (untested && row?.status === 'untested');
+      if (!row || !usable || !row.password_sealed || refused.get(accountId) === row.saved_at) return null;
       const password = vault.open(accountId, row.password_sealed);
       return password === null ? null : { account: row.erp_account, password };
     },
@@ -161,9 +162,8 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
 }
 
 // 去报销's check before any job exists (`app.ts`, inside the accepted change, so it reads through that transaction):
-// an account whose pairing is a 本地执行器 needs authorised 凭据 and a key to open them. Any other pairing needs none.
+// the 本地执行器 signs in itself, so it needs authorised 凭据 and a key to open them.
 export async function erpCredentialsReady(tx: Db, accountId: string, keyed: boolean): Promise<boolean> {
-  if ((await holderOf(tx, accountId)) !== 'local_executor') return true;
   if (!keyed) return false;
   const row = await tx.selectFrom('erp_credential').select(['status', 'password_sealed']).where('account_id', '=', accountId).executeTakeFirst();
   return row?.status === 'authorised' && !!row.password_sealed;

@@ -21,7 +21,6 @@ const STEP_ACTIONS: Readonly<Record<StepKind, readonly TaskAction[]>> = {
   resolve_preparation: ASSIGNING,
   confirm_review: [...ASSIGNING, 'confirm_review'],
   choose_action: [...ASSIGNING, 'start_erp_write'],
-  erp_login: ['confirm_login', 'cancel_erp_write'],
   // On the reconcile and done pages the dispositions follow the reconcile verdict (wait = reconcile again).
   reconcile: [],
   hand_off: [],
@@ -32,8 +31,8 @@ const RECONCILE_WRITES = { wait: 'reconcile', hand_off: 'hand_off', refill: 'ref
 export function allowedActionsOf(snapshot: TaskSnapshot): TaskAction[] {
   const { stage, step, erp, reconcile } = snapshot;
   if (stage === 'voided') return [];
-  // This task's own write or inventory is running: only the two login-pause actions (listed under erp_login).
-  const running = erp.status === 'running' || erp.status === 'waiting_login' || snapshot.inventory.status === 'running';
+  // This task's own write or inventory is running: nothing but its own job moves it.
+  const running = erp.status === 'running' || snapshot.inventory.status === 'running';
   const allowed = new Set<TaskAction>(STEP_ACTIONS[step.kind]);
   if (step.kind === 'reconcile' || step.kind === 'hand_off') for (const code of reconcile.allowedActions) allowed.add(RECONCILE_WRITES[code]);
   // A cross-task duplicate invoice stops the whole batch: no step, the way out is excluding that material.

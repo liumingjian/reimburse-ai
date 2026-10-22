@@ -7,7 +7,6 @@ export const GOLDEN_SCENARIOS = [
   'review',
   'choose-action',
   'catalog-mismatch',
-  'erp-login-wall',
   'erp-stopped-before-write',
   'erp-unknown',
   'reconcile-readback-mismatch',

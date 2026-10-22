@@ -28,7 +28,7 @@ describe('an uploaded original is never served as the type the browser claimed',
     alice = await server.signIn('alice');
   });
 
-  it('stores and serves the type its extension says, with nosniff', async () => {
+  it('stores and serves the type its 本地执行器 says, with nosniff', async () => {
     const client = api(() => alice);
     const { task } = await client.createTask();
     // The upload claims `text/html`: served back as that, it would run as this origin for everyone sharing the blob.

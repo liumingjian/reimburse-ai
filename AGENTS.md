@@ -36,7 +36,7 @@ When the maintainer asks for QA on the Mac, launch the dev-mode instance (`qa/de
 
 - `10.250.0.222`: the server only (QA/POC, `/deploy-intranet`). It never drives ERP. Reach it from the Mac through
   rexec; the agent server has no route to it.
-- ERP is driven from each employee's own PC, by the 本地执行器 or the browser extension (ADR-0033).
+- ERP is driven only by the 本地执行器 on each employee's own PC (ADR-0037).
 - The Mac mini is the test environment: tests, QA and ERP spikes, through rexec.
 
 ### Domain docs

@@ -12,20 +12,20 @@ runs on the Mac through the `rexec` skill (this server is too small to build or 
 
 - **Surface:** the web UI (`web/`) served same-origin by the server (`server/src/run.ts`), plus its HTTP API.
 - **Server:** `server/dist/e2e-main.mjs`, the production server plus scripted ERP doubles picked by `BAOX_ERP_FAKE`:
-  `login_wall`, `uncertain_save`, `catalog_mismatch` (`server/src/e2e-main.ts`). Without a fake, ERP jobs go to the
+  `drafted`, `not_signed_in`, `uncertain_save`, `catalog_mismatch` (`server/src/e2e-main.ts`). Without a fake, ERP jobs go to the
   CDP executor with `BAOX_ERP_CHROMIUM=off`, so 去报销 finds no browser and stops before any attempt.
 - **Not here:**
   - The real ERP (金蝶 K3Cloud): `pnpm test:erp-live`, which needs the maintainer's ERP session.
-  - The browser extension transport (production 去报销): `server/src/erp-remote-executor.test.ts`.
+  - The 本地执行器 channel transport (production 去报销): `server/src/erp-remote-executor.test.ts`.
   - The maintainer's long-lived QA instance: `qa/dev.sh` and `qa/run.mjs`, which use `~/.baox-qa`. Never point this
     skill at them.
 
 ## Launch
 
 ```bash
-rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run login-wall'   # installs, builds, boots, drives, tears down
-rexec --background --timeout 1800 '.claude/skills/verify/verify.sh run login-wall && .claude/skills/verify/verify.sh run reconcile-uncertain --no-build'
-rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run login-wall --fake catalog_mismatch'   # override the fake
+rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run drafted'   # installs, builds, boots, drives, tears down
+rexec --background --timeout 1800 '.claude/skills/verify/verify.sh run drafted && .claude/skills/verify/verify.sh run reconcile-uncertain --no-build'
+rexec --background --timeout 1500 '.claude/skills/verify/verify.sh run drafted --fake catalog_mismatch'   # override the fake
 ```
 
 - `run` installs and builds first: `pnpm install --frozen-lockfile`, then
@@ -57,7 +57,7 @@ about verify servers still alive from a killed run. Run it first whenever a run 
 
 ## Drive
 
-`drive.mjs` runs one scenario: `export const fake = 'login_wall' | 'uncertain_save' | 'catalog_mismatch' | null`, and
+`drive.mjs` runs one scenario: `export const fake = 'drafted' | 'not_signed_in' | 'uncertain_save' | 'catalog_mismatch' | null`, and
 `export default async (v) => {...}`. The kit `v`:
 
 | member | what it does |
@@ -75,7 +75,7 @@ about verify servers still alive from a killed run. Run it first whenever a run 
 **Stable handles** used by the shipped scenarios (taken from `web/e2e/server/*.spec.ts`):
 
 - **Buttons:** `getByRole('button', { name: '去报销', exact: true })`, `'新建报销任务'`, `'创建并上传材料'`,
-  `'开始材料盘点'`, `'取消去报销'`.
+  `'开始材料盘点'`; the link `'查看完成结果'`.
 - **Dialogs and regions:** `getByRole('dialog', { name: '新建报销任务' })`, `getByRole('region', { name: '处置' })`.
 - **Form fields:** `getByLabel('常驻城市')`, `getByLabel('拖入文件，或点击选择', { exact: true })`.
 - **Test ids:** `getByTestId('reconcile-bucket' | 'reconcile-status' | 'erp-text' | 'review-purpose')`.

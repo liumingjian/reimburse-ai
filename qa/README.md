@@ -37,20 +37,19 @@ so the rexec job ends and does not hold the workspace. The first `up` in a fresh
 can take minutes; give that Bash call a long timeout, or split it as `rexec --background 'qa/dev.sh up'` then
 `rexec wait <ID>`.
 
-**The dev instance drives the ERP differently from production.** `dev-main.ts` sends ERP write (去报销) jobs through
-the CDP executor into a dedicated Chromium it launches itself (`BAOX_ERP_CHROMIUM`). The production build (`main.ts`,
-§1 above, and the intranet deploy) sends them to the paired browser extension (浏览器扩展) in the employee's own browser.
-The fill steps are the same executor code, but pairing, the extension's confirmation prompts, the employee browser's
-session and cookies, and the extension transport are not exercised in dev mode. QA of those goes through the
-production-build launch in §1 with the extension loaded and paired.
+**Dev QA runs the production path and needs the account's ERP 凭据 saved.** Every 去报销 signs in with the 报销系统
+account and password saved on the 设置页 and ends at 暂存, ERP 草稿已交接 (ADR-0037); there is no 「我已登录，继续」 and
+no bill handed over unsaved. `up` keeps a credential key in `~/.baox-qa-dev/erp-credential-key`, so the 设置页 can save
+the 凭据; save them before the first 去报销, or the job stops at its sign-in with nothing written. `BAOX_DEV_ERP` picks
+where the job runs (`server/src/dev-executors.ts`; `status` names the mode):
 
-**The 本地执行器 and 暂存 need `BAOX_DEV_ERP=paired`.** By default `dev-main.ts` wires the CDP executor, and the
-server adds the 暂存 step (`draft`, `server/src/erp/remote-executor.ts`) only to jobs it sends to a paired 本地执行器,
-so a 去报销 never 暂存s and never ends in ERP 草稿已交接. `rexec --background 'BAOX_DEV_ERP=paired qa/dev.sh up'`
-leaves ERP jobs to the server's own routing, as the production build does (`server/src/dev-executors.ts`): a paired
-本地执行器 then 暂存s a real draft in the ERP under baox's marker, and with nothing paired a 去报销 waits for one. Say
-both before the maintainer starts that round. `up` keeps a credential key in `~/.baox-qa-dev/erp-credential-key`, so
-the 设置页 can save the ERP 凭据 the 本地执行器 signs in with; `status` names the mode. The install itself runs either way: `up` builds
+- `cdp` (the default): the CDP executor in a dedicated, headed Chromium the server launches on this Mac
+  (`BAOX_ERP_CHROMIUM`), so the maintainer can watch it sign in, fill and 暂存. With nothing paired the saved 凭据 stay
+  untried on the 设置页 (no 本地执行器 to run the 试登录); this executor signs in with them anyway, and a password ERP
+  refuses is deleted as in production. The pairing, the 本地执行器 program and its channel transport are not exercised.
+- `paired`: `rexec --background 'BAOX_DEV_ERP=paired qa/dev.sh up'` leaves ERP jobs to the server's own routing, as the
+  production build does: the paired 本地执行器 runs them, and with nothing paired 去报销 is refused with a link to the
+  设置页. Say so before the maintainer starts that round. The install itself runs either way: `up` builds
 the 本地执行器 program from the tree and caches Node's runtimes in `~/.baox-qa-dev/runtimes`, and Vite passes
 `/install`, `/uninstall` and the channel WebSocket through to the server (`web/src/dev-proxy.ts`). So the 设置页's
 install command, pairing (47319 included) and self-update (`sync` rebuilds the program when executor code changes)
@@ -133,7 +132,7 @@ QA_BASE=http://127.0.0.1:4399 QA_MATERIALS=/tmp/baox-qa-mats QA_HEADLESS=1 pnpm 
 任务本身不被改动。驱动会把这几点分别记成 `ok` 或 `DEFECT`。
 
 `erp-write` 这一段并不只管「浏览器关着」这一条路：它是整个驱动里唯一会点 去报销 的地方，专用浏览器
-开着的时候，它点的就是一次真写入。写入走到底（`erp.status` 变 `done`，单据填好、交给本人自己按保存）
+开着的时候，它点的就是一次真写入。写入走到底（`erp.status` 变 `done`，单据已暂存，ERP 草稿已交接，由本人检查后自己提交）
 记 `ok`；预算用完还在 `running` 记 `WARN`（实测一次真写入约 141 秒，预算 300 秒）；只有 `aborted`
 ——也就是写入结果不确定——才是 `DEFECT`。
 

@@ -24,7 +24,22 @@ const WHY_NO_RECORDING = {
 // Raised 48 → 51 for 暂存 (ADR-0029): the 保存 split button's group, what 暂存 does to the form, and View / the query by
 // 事由. Each was measured once live (S5, S9, 2026-10-12); recording them means leaving a draft per recording run.
 // Raised 51 → 52 for 自动重新去报销 (ADR-0034): the query by 发票号码 that finds a bill holding an invoice.
-const UNVERIFIED_CEILING = 52;
+// Raised 52 → 54 for the main menu (QA 2026-10-19): its 员工服务 accordion and the selected node's right panel, and the
+// loading overlay that takes clicks after sign-in. Both measured live that day; the recordings start on a console
+// whose shortcut skips the menu, and the overlay is a moment no recording holds.
+// Raised 54 → 55 for the same overlay taking a 新增行 click (QA 2026-10-19, 1 of 13 live): a moment no recording holds.
+// Raised 55 → 56 for the entry page that loads blank until it is loaded again (live 2026-10-20, 2 of 21 sign-ins).
+// Raised 56 → 58 for a lookup ERP dropped unresolved and a cover over a fresh row (live 2026-10-20, 4 of 10 fills).
+// Raised 58 → 59 for a lookup that resolves after its commit under the overlay (live 2026-10-20, 20 writes timed).
+// Raised 59 → 61 for a click on 不生成费用明细 that opened no assistant, and an assistant window up before its iframe
+// attaches (live 2026-10-21, 1 of 10 runs): moments no recording holds.
+// Raised 61 → 62 for a main menu card that stays empty until the page is loaded again (live 2026-10-21, 1 of 10 runs).
+// Raised 62 → 63 for a 发票无忧助手 window that opens blank (live 2026-10-21, 1 of 10 runs).
+// Raised 63 → 64 for loading the entry page again signing the session out (live 2026-10-21, once).
+// Raised 64 → 65 for a blank assistant window that stays up on its × (live 2026-10-21, once).
+// Raised 65 → 66 for ERP's computed 申请报销金额 trailing a money cell by seconds (live 2026-10-21, 1 of 10 runs).
+// Raised 66 → 67 for a money commit ERP's model never takes until it is written again (live 2026-10-21, 3 of 10).
+const UNVERIFIED_CEILING = 67;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

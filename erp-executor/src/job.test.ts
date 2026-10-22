@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { stageInPage } from './invoice-files';
 import { runFillJob } from './job';
 import { erpInvoiceTypeOf, ERP_INVOICE_TYPES } from './invoice-type';
 import { writeHeader } from './erpform';
@@ -71,13 +70,13 @@ async function uploadAndImport(page: WritePage, invoices: typeof INVOICES, budge
 }
 
 describe('fill job through the protocol on the fake ERP', () => {
-  it('hands over a filled, unsaved form, starting an attempt before import and fill', async () => {
+  it('暂存s the filled form, starting an attempt before import, fill and 暂存', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'handed_over', billNo: null, code: null });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted', billNo: null, code: null });
 
     const attempts = server.attempts;
-    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill']);
+    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill', 'save']);
     for (const attempt of attempts) {
       expect(attempt.compatibility).toEqual({ erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' });
       expect(attempt.erpAccount).toEqual({ displayName: '刘明建', account: 'luo.liu', tenant: 'tenant-a' });
@@ -89,8 +88,8 @@ describe('fill job through the protocol on the fake ERP', () => {
 
     const events = server.events;
     expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_hand_over']);
-    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'handed_over' });
-    expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow']);
+    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'drafted' });
+    expect(fake.mutations.map((m) => m.kind).filter((k, i, all) => all.indexOf(k) === i)).toEqual(['import', 'header', 'cell', 'option', 'addRow', 'draft']);
   });
 
   // 去报销进度 (#420): the 填写明细 step carries `{ done, total }` so the page can show 「填写明细 3/8」. `total` goes out
@@ -98,7 +97,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('reports 填写明细 progress once per 明细 row, with the total known before the first row', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'handed_over' });
+    expect(result).toMatchObject({ status: 'drafted' });
     const total = approvedPreview(taskId).lines.length;
     const fill = server.events.flatMap((e) => (e.type === 'step' && e.step === 'fill' ? [[e.status, e.progress ?? null]] : []));
     expect(fill).toEqual([
@@ -108,6 +107,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     ]);
   });
 
+  // One whole job per ERP invoice type: 20 s alone on the Mac, past 60 s inside the full suite (2026-10-21).
   it('writes every confirmed ERP invoice type through the simulated ERP dropdown and reads it back', async () => {
     for (const invoiceType of ERP_INVOICE_TYPES) {
       const selected = erpInvoiceTypeOf('定额发票', invoiceType);
@@ -117,10 +117,10 @@ describe('fill job through the protocol on the fake ERP', () => {
       }));
       const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
       const result = await run(fake, channelFor(undefined, stubServer({ taskId, preview })));
-      expect(result, `${invoiceType}: ${JSON.stringify(result)}`).toMatchObject({ type: 'result', status: 'handed_over' });
+      expect(result, `${invoiceType}: ${JSON.stringify(result)}`).toMatchObject({ type: 'result', status: 'drafted' });
       expect(column(fake, 'detail', 3)).toEqual([invoiceType, invoiceType]);
     }
-  });
+  }, 120_000);
 
   // A write is not verified by reading back the cell it was typed into. Live 2026-09-20 three of eleven rows read
   // back both money cells correctly and still carried a 申请报销金额 that was not 费用金额 + 税额, so the bill was
@@ -152,7 +152,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // so it could not have helped: by the time the modal mattered, that moment had long passed.
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, noticeReturnsAfterUpload: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
   });
 
   it('answers ERP\'s idle-timeout prompt with 不退出 and carries on, instead of dying under its overlay', async () => {
@@ -162,7 +162,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // Here the prompt covers the very control the navigation clicks first, so without the answer nothing opens.
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, idlePromptCovers: 'span[data-action="open-list"]' }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Answered with the button that KEEPS the session: 继续退出 hides the console shortcuts for good, so a run
     // that got as far as 交接单据 cannot have clicked it. And the cover is gone because the prompt was answered,
     // not because something else happened to move it.
@@ -179,7 +179,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // survives with it in place — which is the discrimination the test is for. (Checked both ways by hand.)
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyModelLagTicks: 40 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Both rows add up in ERP's own column: nothing was typed into a cell and lost on the way to the model.
     // Checked against the form's own 费用金额 and 税额 rather than against numbers copied out of the fixture,
     // so the assertion still means "ERP agrees with itself" if the fixture amounts ever change.
@@ -187,6 +187,27 @@ describe('fill job through the protocol on the fake ERP', () => {
     const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
   });
+
+  // Live 2026-10-21, the next round (3 of 10 first fills): with 30 s to settle, 申请报销金额 still stood empty (or at
+  // the net alone) — the model had never taken the amount the cell showed, and the re-run's form took it at once.
+  it('types a money value ERP\'s model never took once more, and goes on when ERP\'s arithmetic then agrees', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyCommitsLost: 1 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted' });
+    const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
+    const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
+    expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
+  });
+
+  // Live 2026-10-21 (1 of 10 runs): row 2's 申请报销金额 was still empty past the ~3 s the gate gave it, and the first
+  // fill stopped on money_model_not_settled; the automatic re-run's form took the same row at once.
+  it('gives ERP\'s computed column seconds to catch up on a slow ERP, not a fixed handful of reads', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyModelLagMs: 5000 }));
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: { ...FAST_PACE, longMs: 10_000 }, probeWaitMs: 0,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted' });
+  }, 120_000);
 
   // Live 2026-09-20, with the owner reporting that BOTH money cells fill by hand on this very form: the fill lost
   // 税额 every single time while the identical clicks, keys and Enter, typed by hand with a pause before the
@@ -198,10 +219,10 @@ describe('fill job through the protocol on the fake ERP', () => {
   // an unwitnessed commit loses the cell and the bill goes out short. 3 is measured, not picked: a commit on the
   // heels of the last character sits exactly 2 CDP commands behind it, and the wait costs two reads more —
   // checked both ways, the test goes red with the wait taken out and green with it in.
-  it('hands over only after a retained tax editor blurs and the full readback agrees', async () => {
+  it('暂存s only after a retained tax editor blurs and the full readback agrees', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, taxEditorRemainsOpen: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     expect(fake.mutations.some(mutation => mutation.kind === 'save')).toBe(false);
     expect(fake.document.querySelectorAll('.k-grid-edit-row input')).toHaveLength(0);
   }, 60_000);
@@ -209,7 +230,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('waits for the editor to hold the value before committing, so a slow-to-parse cell is not lost', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, editorSettleTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
     const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
     expect(sum!.map(asCents)).toEqual(net!.map((amount, index) => asCents(amount) + asCents(tax![index]!)));
@@ -225,7 +246,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('types again when the editor took nothing, so a control the ERP re-rendered does not lose the field', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, firstTypingLostOn: '项目' }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Every detail row carries the project, read off the form rather than off the fixture.
     const projects = column(fake, 'detail', 1);
     expect(projects!.length).toBeGreaterThan(0);
@@ -240,7 +261,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('opens a dropdown that ignored the first click, instead of refusing over a list that never opened', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, dropdownNeedsSecondClick: true }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     const types = column(fake, 'detail', 3);
     expect(types!.length).toBeGreaterThan(0);
     expect(types!.filter((shown) => String(shown).trim() !== '')).toEqual(types);
@@ -299,7 +320,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(fake.mutations).toEqual([]);
     expect(fake.commands.some((c) => c.method === 'DOM.setFileInputFiles')).toBe(true);
     release();
-    expect((await job).status).toBe('handed_over');
+    expect((await job).status).toBe('drafted');
 
     const at = (label: string) => order.indexOf(label);
     expect(at('attempt:import')).toBe(0);
@@ -307,19 +328,20 @@ describe('fill job through the protocol on the fake ERP', () => {
     const fillWrites = order.map((kind, index) => ({ kind, index })).filter((m) => ['header', 'cell', 'option', 'addRow'].includes(m.kind));
     expect(fillWrites.length).toBeGreaterThan(0);
     expect(Math.min(...fillWrites.map((m) => m.index))).toBeGreaterThan(at('attempt:fill'));
-    // The fill writes are the last thing that happens: the job ends at the hand-over, so there is no save attempt
-    // and no save mutation to order against (ADR-0028).
-    expect(Math.max(...fillWrites.map((m) => m.index))).toBe(order.length - 1);
-    expect(order).not.toContain('attempt:save');
+    // 暂存 comes after every fill write and after its own acknowledged attempt, and it is the last thing that happens;
+    // baox never presses 保存 (ADR-0029).
+    expect(Math.max(...fillWrites.map((m) => m.index))).toBeLessThan(at('attempt:save'));
+    expect(order.indexOf('draft')).toBeGreaterThan(at('attempt:save'));
+    expect(order.indexOf('draft')).toBe(order.length - 1);
     expect(order).not.toContain('save');
   });
 
-  it('pauses for login without any attempt or input when ERP sits on the login page', async () => {
+  it('stops before any attempt or input when ERP sits on the login page and there is nothing to sign in with', async () => {
     const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
     const result = await run(fake);
-    expect(result).toMatchObject({ status: 'waiting_login', code: 'erp_login', capture: null });
-    const events = server.events;
-    expect(events.some((e) => e.type === 'waiting_login')).toBe(true);
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login', capture: null });
+    expect(result.message).toContain('设置页');
+    expect(server.events).toContainEqual({ type: 'step', step: 'login', status: 'failed' });
     expect(server.attempts).toEqual([]);
     expect(inputEvents(fake)).toEqual([]);
   });
@@ -331,9 +353,31 @@ describe('fill job through the protocol on the fake ERP', () => {
       browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
       signIn: async () => { signIns += 1; await fake.login(); return { ok: true }; },
     });
-    expect(result).toMatchObject({ status: 'handed_over', code: null });
+    expect(result).toMatchObject({ status: 'drafted', code: null });
     expect(signIns).toBe(1);
-    expect(server.events.some((e) => e.type === 'waiting_login')).toBe(false);
+  });
+
+  // Live 2026-10-19 09:25 and 2026-10-13 (2 of 10): the entry page loaded blank, neither console nor login, and the job
+  // stopped on erp_login_unknown instead of letting the sign-in load it again.
+  it('hands a blank entry page to the sign-in, which loads it again, instead of stopping on it', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false, entryPageBlank: true }));
+    let signIns = 0;
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => { signIns += 1; await fake.login(); return { ok: true }; },
+    });
+    expect(result).toMatchObject({ status: 'drafted', code: null });
+    expect(signIns).toBe(1);
+  });
+
+  it('says what the page shows when the sign-in found no login form on it either', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ loggedIn: false, entryPageBlank: true }));
+    const result = await runFillJob(fillPlan(taskId), {
+      browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0,
+      signIn: async () => ({ ok: false, code: 'erp_sign_in_no_form', message: '60 秒内没有出现报销系统登录表单。' }),
+    });
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_login_unknown', message: expect.stringContaining('页面是空白的') });
+    expect(server.attempts).toEqual([]);
   });
 
   it('aborts with the sign-in\'s own reason, before any attempt or input, when ERP refuses the login', async () => {
@@ -379,7 +423,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // was dispatched at that point, `document.elementFromPoint` there was null, and the assistant never opened.
     const fake = await createFakeErp(fakeErpOptions({ notFillEntryBelowFold: true, assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -391,7 +435,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('outwaits the blocking overlay a form paints over its own section anchors', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, sectionOverlayTicks: 6 }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -401,7 +445,7 @@ describe('fill job through the protocol on the fake ERP', () => {
   it('outwaits a cover that is over the 发票类型 cell for a moment, instead of refusing on one read', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, invoiceTypeCoverTicks: 30 }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('option');
   });
 
@@ -424,7 +468,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     delete process.env['BAOX_ERP_STOP_BEFORE_IMPORT'];
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
     expect(fake.mutations.map((m) => m.kind)).toContain('import');
   });
 
@@ -444,7 +488,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, formPanelActiveTicks: 12 }));
     const result = await run(fake);
     expect([result.code, result.message]).toEqual([null, null]);
-    expect(result.status).toBe('handed_over');
+    expect(result.status).toBe('drafted');
   });
 
   it('ends as write result unknown when the form instance drifts after the fill attempt is acknowledged', async () => {
@@ -488,29 +532,12 @@ describe('fill job through the protocol on the fake ERP', () => {
 // What ERP does when an invoice the bill already holds is imported again: it rewrites that receipt row (收票行),
 // which it keys by its receipt number (收票单), instead of adding a second one (ADR-0026). Driven through the fill
 // job's own import step, for the reason `uploadAndImport` gives.
-// The browser extension's route (#256): no local path, so the invoices go into the assistant's file input as `File`
-// objects in a `DataTransfer` built inside the page. Same recognition, same upload/import split (ADR-0025).
-describe('invoices put into the page as bytes', () => {
-  const inPage = (fake: FakeErp) =>
-    runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), staging: stageInPage, channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0 });
-  const builtInThePage = (fake: FakeErp) =>
-    fake.commands.filter((c) => c.sessionId !== null && c.method === 'Runtime.evaluate' && String(c.params['expression']).includes('new DataTransfer()'));
-
-  it('are recognised by the assistant and imported, with no path handed to the page', async () => {
-    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
-    const result = await inPage(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ status: 'handed_over' });
-    expect(receiptNumbers(fake)).toEqual(expect.arrayContaining(INVOICES.map((invoice) => invoice.receiptNumber)));
-    expect(fake.commands.filter((c) => c.method === 'DOM.setFileInputFiles')).toEqual([]);
-    // Both invoices are PDFs: one batch, one assignment.
-    expect(builtInThePage(fake)).toHaveLength(1);
-  });
-
-  it('start no attempt when the assistant recognises none of them: an upload consumes nothing', async () => {
+describe('an upload the assistant recognises none of', () => {
+  it('starts no attempt: an upload consumes nothing', async () => {
     const fake = await createFakeErp(fakeErpOptions({ invoices: [] }));
-    const result = await inPage(fake);
+    const result = await runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), channel: channelFor(), pace: FAST_PACE, probeWaitMs: 0 });
     expect(result).toMatchObject({ status: 'aborted', code: 'INVOICE_SELECTION_EMPTY' });
-    expect(builtInThePage(fake)).toHaveLength(1);
+    expect(fake.commands.filter((c) => c.method === 'DOM.setFileInputFiles')).toHaveLength(1);
     expect(server.attempts).toEqual([]);
     expect(fake.mutations).toEqual([]);
   });
@@ -545,7 +572,7 @@ describe('re-importing an invoice the bill already holds', () => {
 
   it('strands no 费用明细行 on a 收票单号 that no longer holds its invoice', async () => {
     const [rail, ride] = INVOICES;
-    // A fill that stopped before the save: 收票行 imported, detail rows written and linked to them.
+    // A fill that stopped before 暂存: 收票行 imported, detail rows written and linked to them.
     const { fake } = await driveTo('filled');
     expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     const total = receiptTotal(fake);
@@ -583,6 +610,52 @@ describe('opening a new 费用报销单', () => {
     const fake = await createFakeErp(fakeErpOptions({ openListDeadClicks: 1 }));
     await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
   });
+
+  // QA 2026-10-19, measured live the same day: ERP reopens the main menu on the second-level node this user last
+  // chose, and on 定制开发 › 日志管理 a click on 员工服务 only expands its row. The executor clicked it three times
+  // (the second collapsed it), then looked 45 s for a 我的费用报销 that was never shown: 匹配 0, about 100 s in.
+  it('goes through 人人报销 when the menu reopens on another node', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' } }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
+
+  it('takes the menu straight to 我的费用报销 when it reopens on 人人报销', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'ERX' } }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+  });
+
+  // Live 2026-10-19: for 2-4 s after sign-in the loading overlay took the click on the menu, and each lost click
+  // cost a whole wait before the next try.
+  it('waits out the loading overlay before it clicks', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' }, consoleBlockerTicks: 30 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000 })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+    expect(fake.swallowedClicks).toBe(0);
+  });
+
+  // Live 2026-10-21 (1 of 10 runs): the menu card opened and stayed empty for the 45 s the run clicked it every 5 s,
+  // and the run stopped on 「点过 ERP 主菜单之后 45 秒内菜单里没有出现「员工服务」」.
+  it('loads the console again when the main menu stays empty, and goes on through the menu it brings', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' }, menuEmptyUntilReload: true }));
+    let signIns = 0;
+    const signIn = async () => { signIns += 1; await fake.login(); return true; };
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 2000, signIn })).resolves.toEqual({ ok: true, form: '费用报销单-新增' });
+    expect(fake.pageLoads).toBe(1);
+    // Live 2026-10-21, the next round: the reload came back to ERP's login form, and the run stopped 132 s in on
+    // 「ERP 主菜单不可唯一定位（匹配 0 个）」.
+    expect(signIns).toBe(1);
+  });
+
+  it('does not load the console again for a menu that fills', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'LOG' } }));
+    await openNewReimbursement(writePage(fake), { timeoutMs: 2000 });
+    expect(fake.pageLoads).toBe(0);
+  });
+
+  it('stops at the step that achieved nothing, naming it', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ menuPath: { selected: 'ERX' }, openListDeadClicks: 1_000 }));
+    await expect(openNewReimbursement(writePage(fake), { timeoutMs: 200 }))
+      .rejects.toMatchObject({ code: 'ERP_NEW_FORM_NOT_OPENED', message: expect.stringContaining('「我的费用报销」') });
+  });
 });
 
 // Live 2026-09-20: a 去报销 wrote 费用明细 row 1 in full — 项目, 费用项目, 发票类型, both dates, both amounts — read
@@ -610,11 +683,43 @@ describe('adding a 费用明细行', () => {
     expect(detailRowCount(fake)).toBe(before);
   });
 
+  // QA 2026-10-19: the loading overlay took the 新增行 click for row 2, and the job stopped 15 s later on a grid of 1 row.
+  it('clicks 新增行 again when ERP\'s loading overlay took the click', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowClicksLost: 1 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    const before = detailRowCount(fake);
+    const added = await addDetailRow(page, { timeoutMs: 2000 });
+    expect(fake.swallowedClicks).toBe(1);
+    expect(detailRowCount(fake)).toBe(before + 1);
+    expect(added).toMatchObject({ ok: true, rowCount: before + 1 });
+  });
+
+  // Live 2026-10-20 runs 7, 8, 10: 「费用项目」/「项目」 read back 「」 or 「select」 after the code was typed and Enter
+  // pressed on a slow ERP, and the first fill went to 写入结果未知 for a field that took on the re-run's form.
+  it('writes a lookup cell again when ERP dropped the code it had not resolved yet', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ lookupCommitsLost: 1 }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted', code: null });
+  });
+
+  // Live 2026-10-20: lookups resolved up to 6.2 s after the commit under ERP's overlay, past which a read-back after
+  // 8 s called a lookup still resolving 「」 and wrote into ERP's own work again.
+  it('waits out a lookup ERP is still resolving, and writes nothing into it again', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ lookupResolveMs: 10_000 }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted', code: null, message: null });
+  });
+
+  // Live 2026-10-20 run 9: 「「项目」的落点…上盖着DIV」 right after 新增行, while ERP re-rendered the grid.
+  it('outwaits a cover over a freshly added row instead of refusing on one read', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ newRowCoverTicks: 50 }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted', code: null, message: null });
+  });
+
   it('carries a whole fill through an ERP that paints the row late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ newRowAppearsAfterTicks: 3 }));
     // The whole fill goes through: the late row is waited for rather than turned into a failure.
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Two lines over one placeholder row: exactly one 新增行, and it was waited for rather than assumed.
     expect(fake.mutations.filter((m) => m.kind === 'addRow')).toEqual([{ kind: 'addRow', detail: '2' }]);
   });
@@ -626,7 +731,7 @@ describe('adding a 费用明细行', () => {
   it('waits for the dropdown item it wants to be reachable, not just painted', async () => {
     const fake = await createFakeErp(fakeErpOptions({ optionItemCoverTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     expect(fake.mutations.filter((m) => m.kind === 'option')).toEqual([
       { kind: 'option', detail: '发票类型=普通发票' }, { kind: 'option', detail: '发票类型=普通发票' },
     ]);
@@ -638,7 +743,7 @@ describe('adding a 费用明细行', () => {
   it('leaves edit mode over a grid that drops its edit row a render late', async () => {
     const fake = await createFakeErp(fakeErpOptions({ editRowLingersTicks: 3 }));
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
   });
 });
 
@@ -673,6 +778,61 @@ describe('choosing the import mode on the 选择发票 menu', () => {
     // is told it is focused too — best-effort there, fatal on the page target.
     expect(fake.commands.filter((c) => c.method === 'Emulation.setFocusEmulationEnabled').map((c) => c.sessionId))
       .toContain('piaozone-session-1');
+  });
+
+  // Live 2026-10-21 (1 of 10 runs): the click on 不生成费用明细 shut the menu and opened no assistant, and the run
+  // waited out 90 s for an iframe that was never coming, then stopped on INVOICE_ASSISTANT_NOT_FOUND.
+  it('opens the menu and clicks 不生成费用明细 again when the click opened no assistant', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, notFillEntryClicksLost: 1 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
+    expect(fake.fillEntryClicks).toBe(2);
+    expect(fake.importMode).toBe('不生成费用明细');
+  });
+
+  it('does not click again while the assistant\'s window is up and only its iframe is slow to attach', async () => {
+    // Late, but inside the third of the budget a window that is up is given to load (667 ms here, 30 s live).
+    const fake = await createFakeErp(fakeErpOptions({ assistantAttachDelayMs: 400 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await openInvoiceAssistant(page, { timeoutMs: 2000 });
+    expect(fake.fillEntryClicks).toBe(1);
+  });
+
+  // Live 2026-10-21 (1 of 10 runs, the next round): the 发票无忧助手 window came up and stayed blank, and the run
+  // waited the rest of the 90 s on it, then stopped on INVOICE_ASSISTANT_NOT_FOUND.
+  it('closes a blank assistant window and opens the assistant again', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, assistantBlankOpens: 1 }));
+    const result = await run(fake);
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'drafted' });
+    expect(fake.assistantOpens).toBe(2);
+    expect(fake.importMode).toBe('不生成费用明细');
+  });
+
+  it('says the assistant opened blank when it never loads', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assistantBlankOpens: 100 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 600 }))
+      .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringContaining('里面的页面都没有加载出来') });
+    expect(fake.assistantOpens).toBeGreaterThan(1);
+  });
+
+  it('says so when a blank assistant window will not close, rather than naming what its overlay covers', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ assistantBlankOpens: 1, assistantBlankWontClose: true }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 2000 }))
+      .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringContaining('点了关闭也没有关掉') });
+  });
+
+  it('names the clicks when no assistant ever opened', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ notFillEntryClicksLost: 100 }));
+    const page = writePage(fake);
+    await openNewReimbursement(page, { timeoutMs: 2000 });
+    await expect(openInvoiceAssistant(page, { timeoutMs: 600 }))
+      .rejects.toMatchObject({ code: 'INVOICE_ASSISTANT_NOT_FOUND', message: expect.stringMatching(/点过「不生成费用明细」\d 次/) });
+    expect(fake.fillEntryClicks).toBeGreaterThan(1);
   });
 });
 

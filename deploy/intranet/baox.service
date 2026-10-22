@@ -15,10 +15,10 @@ Group=baox
 WorkingDirectory=/opt/tools/baox/current/server
 ExecStart=/opt/tools/baox/runtime/node/bin/node /opt/tools/baox/current/server/dist/main.mjs
 
-# The address employees reach the app at, and the most expensive constant of this deployment: every extension zip is
-# stamped with it, and the app compares browsers' Origin and Host against it as literal strings. Written exactly as a
-# browser writes Origin (no default port, no path; the server refuses to start otherwise). Changing it makes every
-# employee reinstall the extension. render-config.mjs keeps it equal to the rendered Caddy site.
+# The address employees reach the app at, and the most expensive constant of this deployment: every 本地执行器
+# install command carries it, and the app compares browsers' Origin and Host against it as literal strings. Written
+# exactly as a browser writes Origin (no default port, no path; the server refuses to start otherwise). Changing it
+# makes every employee install the 本地执行器 again. render-config.mjs keeps it equal to the rendered Caddy site.
 Environment=BAOX_PUBLIC_ORIGIN=http://10.250.0.222:8888
 # Node binds 127.0.0.1:4319; only Caddy on the external port is reachable from the VPN.
 Environment=BAOX_PORT=4319

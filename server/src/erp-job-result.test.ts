@@ -33,8 +33,8 @@ async function started() {
 
 describe('a 去报销 job that ends without sending a result', () => {
   it('ends as aborted when nothing was written, and the task can go again', async () => {
-    // The executor returns a result to the job runner but never emits it, so nothing is recorded.
-    executor = async () => ({ type: 'result', status: 'aborted', code: 'never_emitted', message: null, billNo: null, capture: null });
+    // The executor claims a success to the job runner but never emits it: an unrecorded claim is worth nothing.
+    executor = async () => ({ type: 'result', status: 'drafted', code: null, message: null, billNo: null, capture: null });
     const { scene, stopped } = await started();
 
     expect(stopped).toMatchObject({ stage: 'actions', step: { kind: 'choose_action' }, erp: { status: 'idle' }, confirmation: { status: 'confirmed' } });
@@ -42,6 +42,19 @@ describe('a 去报销 job that ends without sending a result', () => {
     expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
     // Nothing was written, so the task is still fully editable.
     expect((await scene.act('set-home-city', { homeCity: '上海' })).status).toBe(200);
+  });
+
+  // QA 2026-10-19: the 本地执行器 answered an 自动重新去报销 with its busy refusal as the call's answer, no event, and
+  // the employee read 「没有给出结果就结束了（应用出错）」 instead of why.
+  it('keeps the reason of a refusal the executor answered with instead of emitting', async () => {
+    const busy = '这台电脑上的 baox 本地执行器正在运行另一次去报销。';
+    executor = async () => ({ type: 'result', status: 'aborted', code: 'local_executor_busy', message: busy, billNo: null, capture: null });
+    const { stopped } = await started();
+
+    expect(stopped).toMatchObject({ stage: 'actions', erp: { status: 'idle' } });
+    expect(stopped.erp.abortReason).toContain(busy);
+    expect(stopped.erp.abortReason).not.toContain('应用出错');
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
   });
 
   it('ends as 写入结果未知 once an attempt is durable, even when the executor claims it saved', async () => {

@@ -6,7 +6,9 @@
 
 How baox runs on `10.250.0.222` for the browser-extension V1 round (spec #246, ticket #260). The design and its
 reasons are in [browser-extension-v1.md](../design/browser-extension-v1.md#deployment-phase-1-intranet-no-domain); this
-document is the procedure. The files it installs live in [`deploy/intranet/`](../../deploy/intranet/), and each one
+document is the procedure. Since 2026-10-18 the 浏览器扩展 is gone ([ADR-0037](../adr/0037-local-executor-is-the-only-way-to-reimburse.md)):
+employees connect the baox 本地执行器 with the install command on the 设置页
+([ADR-0035](../adr/0035-local-executor-is-installed-separately-and-updates-itself.md)), and the steps below say so. The files it installs live in [`deploy/intranet/`](../../deploy/intranet/), and each one
 carries its own reasons in comments: [`install.sh`](../../deploy/intranet/install.sh),
 [`baox.service`](../../deploy/intranet/baox.service), [`baox-caddy.service`](../../deploy/intranet/baox-caddy.service),
 [`Caddyfile`](../../deploy/intranet/Caddyfile).
@@ -33,14 +35,13 @@ node deploy/intranet/render-config.mjs /tmp/baox-default-config
 BAOX_PUBLIC_ORIGIN=http://10.250.0.222:9999 node deploy/intranet/render-config.mjs /tmp/baox-override-config
 ```
 
-Routine native operator releases render the candidate with the installed service origin, preserving existing
-extension packages and pairings. The 8888 default applies to new configurations. The retired installer cannot
+Routine native operator releases render the candidate with the installed service origin, preserving the installed
+本地执行器s and their pairings. The 8888 default applies to new configurations. The retired installer cannot
 perform an origin migration; changing an existing origin is a separate controlled maintenance operation.
 
-An origin change requires a deliberate employee migration: open the new application address, download its
-extension package, remove the old extension or replace its unpacked directory and reload it, then generate a new
-pairing code and pair again. Check that settings shows the new active address and a connected extension before
-starting ERP filling. A pairing made for the old address is not proof of a connection to the new one.
+An origin change requires a deliberate employee migration: open the new application address, generate the install
+command on its 设置页 and run it again, which reinstalls the 本地执行器 with the new address and pairs it. Check that
+the 设置页 shows the 本地执行器 connected before starting ERP filling. A pairing made for the old address is not proof of a connection to the new one.
 Keep the previous release and origin configuration available until the migration is verified. Do not infer that
 existing employees have migrated from a successful service health probe.
 
@@ -220,9 +221,9 @@ the isolated compiler runtime.
    (the default is `http://10.250.0.222:8888`), sign in with the username and the temporary password from step 2, and
    set your own password when asked. Done when the settings page shows you as administrator.
 
-4. **Walk one colleague's path end to end.** Register a second account, approve it as admin, sign in as it, download
-   the extension from the settings page, load it unpacked in Chrome or Edge, and pair it. Done when the settings page
-   shows the extension as connected.
+4. **Walk one colleague's path end to end.** Register a second account, approve it as admin, sign in as it, generate
+   the 本地执行器's install command on the 设置页 and run it on that colleague's PC. Done when the 设置页 shows the
+   本地执行器 as connected.
 
 ## Upgrade
 
@@ -233,16 +234,15 @@ public-proxy transition. `BAOX_ADMIN_USERNAME` is retained here only as part of 
 For an existing deployment whose origin differs from the new default, follow the migration in
 [External address for new configurations](#external-address-for-new-configurations-270--271). Routine operator releases retain the installed origin.
 
-When the release changes the extension, employees re-download it from the settings page and reload it in the browser
-(the settings page carries the Chinese walkthrough); the server refuses extensions older than
-`EXTENSION_MINIMUM_VERSION`. A controlled repair with the same tarball rebuilds nothing and only restarts.
+When the release changes the 本地执行器, the installed ones update themselves (ADR-0035); the server refuses one older
+than `MINIMUM_EXECUTOR_VERSION`, and a refused 本地执行器 checks for an update at once. A controlled repair with the same tarball rebuilds nothing and only restarts.
 
 **Rollback** is `ln -sfn releases/<older> /opt/tools/baox/current && systemctl restart baox`. It is safe only if the
 newer release added no schema migration: the database is never migrated backwards, and there is no backup to return to.
 
 **Moving to a domain** is an upgrade too. Render `BAOX_PUBLIC_ORIGIN` with the new domain during controlled origin migration, and
-commit the domain redirect in the Caddy template. Every employee then re-downloads the extension and pairs again,
-because the old packages carry the old origin, and every web session resets.
+commit the domain redirect in the Caddy template. Every employee then reruns the install command from the new address,
+because each installed 本地执行器 records the old origin, and every web session resets.
 
 ## Maintenance admission
 
@@ -287,10 +287,10 @@ same command once, to hand the first administrator a temporary password.
 ### Origin
 
 The rendered `BAOX_PUBLIC_ORIGIN` defaults to `http://10.250.0.222:8888`. The app admits exactly that string as
-`Origin` and its host part as `Host` (`server/src/public-origin.ts`), and every extension package is stamped with it at
-download. A spelling the browser never writes, such as `http://10.250.0.222:80`, stops the server at start. Another
+`Origin` and its host part as `Host` (`server/src/public-origin.ts`), and every install command and the 本地执行器 it
+installs carry it. A spelling the browser never writes, such as `http://10.250.0.222:80`, stops the server at start. Another
 address, such as the host's own `192.168.1.222`, starts cleanly and is worse: every request through the VPN address
-answers 403, and every package downloaded meanwhile carries an address employees cannot reach, so each one must be
+answers 403, and every 本地执行器 installed meanwhile records an address employees cannot reach, so each one must be
 reinstalled. `render-config.mjs` resolves the default or explicit override once and renders the service and Caddy
 configuration with the same origin.
 
@@ -298,8 +298,9 @@ configuration with the same origin.
 
 Caddy listens on the configured external origin, `http://10.250.0.222:8888` by default, and forwards to Node on
 `127.0.0.1:4319`. It passes the browser's own `Host` and `Origin` through unchanged, which is Caddy's default, and
-it carries the extension's WebSocket upgrade on
-`/api/extension/channel`, which meets the same `Host` check in the app. It runs as `baox` with only
+it carries the 本地执行器's WebSocket upgrade on
+`/api/extension/channel` (the wire path keeps its old name so installed 本地执行器s still connect), which meets the same
+`Host` check in the app. It runs as `baox` with only
 `CAP_NET_BIND_SERVICE`, with its admin API off; a Caddyfile change takes `systemctl restart baox-caddy`.
 
 ### Service user
@@ -341,7 +342,7 @@ on every start; they are not a data move.
 
 The server holds no project catalog of its own. The check that matters, 报销信息核对 (claim details check) of project
 numbers and expense items against the ERP, runs inside each 去报销 job (`checkCatalog` in `erp-executor/src/job.ts`),
-in the employee's own logged-in ERP tab through the extension. A mismatch shows on the task as usual.
+in the 本地执行器's own browser on the employee's PC, signed in with the hosted ERP 凭据. A mismatch shows on the task as usual.
 
 The production bundle cannot start a browser: nothing it imports reaches `@baox/erp-executor/browser`
 (`server/src/production-entry.test.ts`). `BAOX_CHROMIUM_CDP_PORT`, `BAOX_CHROME` and `BAOX_ERP_CHROMIUM` are read only
@@ -353,7 +354,6 @@ is needed.
 | Symptom | Cause |
 |---|---|
 | Every page answers 403 `forbidden_host` | The browser's address differs from `BAOX_PUBLIC_ORIGIN`, or something between rewrote `Host` |
-| Extension download answers 503 | No extension template at `current/extension/dist`; inspect the candidate build validation. The retired installer cannot repair it. |
 | `journalctl -u baox` shows `already used by another baox server` | A second baox process holds `data/server.lock`; stop it |
 | Downloads are slow or fail | Repair the approved build environment before candidate preparation; the retired installer does not download artifacts. |
 

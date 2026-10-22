@@ -63,13 +63,13 @@ export const HTTP_ENDPOINTS = {
   getLegacyImport: { method: 'GET', path: '/api/legacy-import', body: 'none', fields: [] },
   retryLegacyImport: { method: 'POST', path: '/api/legacy-import/retry', body: 'json', fields: [] },
   skipLegacyImport: { method: 'POST', path: '/api/legacy-import/skip', body: 'json', fields: [] },
-  // 扩展配对 (extension pairing, ADR-0019): GET answers this account's pairing; issuing a 配对码 (pairing code)
+  // 配对 (pairing, ADR-0019): GET answers this account's pairing; issuing a 配对码 (pairing code)
   // answers the pairing with that code in it (this once only) and voids the old pairing at once; revoking answers
-  // the unpaired pairing. Failures are { error }. The extension's own endpoints (EXTENSION_PAIR_PATH) are not in this
+  // the unpaired pairing. Failures are { error }. The 本地执行器's own endpoints (PAIRING_PATH) are not in this
   // table: they carry no session and no page sends them.
-  getExtensionPairing: { method: 'GET', path: '/api/extension/pairing', body: 'none', fields: [] },
-  createExtensionPairingCode: { method: 'POST', path: '/api/extension/pairing/code', body: 'json', fields: ['system'] },
-  revokeExtensionPairing: { method: 'POST', path: '/api/extension/pairing/revoke', body: 'json', fields: [] },
+  getPairing: { method: 'GET', path: '/api/pairing', body: 'none', fields: [] },
+  createPairingCode: { method: 'POST', path: '/api/pairing/code', body: 'json', fields: ['system'] },
+  revokePairing: { method: 'POST', path: '/api/pairing/revoke', body: 'json', fields: [] },
   // ERP 凭据 (ADR-0033): every answer is the ErpCredentialsView, never the password. Saving and 试登录 wait for the
   // 试登录 (up to about five minutes); one that ran and failed is in the view, not an { error }.
   getErpCredentials: { method: 'GET', path: '/api/erp-credentials', body: 'none', fields: [] },
@@ -96,8 +96,6 @@ export const HTTP_ENDPOINTS = {
   excludeMaterial: action('exclude-material', 'materialId', 'stepToken'),
   setTaskHomeCity: action('set-home-city', 'homeCity', 'stepToken'),
   startErpWrite: action('start-erp-write', 'stepToken'),
-  confirmLogin: action('confirm-login', 'stepToken'),
-  cancelErpWrite: action('cancel-erp-write', 'stepToken'),
   reconcile: action('reconcile', 'stepToken'),
   handOff: action('hand-off', 'stepToken'),
   refill: action('refill', 'stepToken'),

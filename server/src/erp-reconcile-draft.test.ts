@@ -7,7 +7,7 @@ import { COMPATIBILITY, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing
 import { dataDirBlobs } from './erp/cdp-executor';
 import type { FillExecutor } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
-import { draftMarkOf } from './erp/remote-executor';
+import { draftMarkOf } from './erp/fill-plan';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type Scene, type ScenarioServer } from './test/scenario';
 import { fakeErpFor } from './test/scene-erp';
@@ -24,11 +24,11 @@ let fake: FakeErp | null = null;
 let reconcilePlans: ReconcilePlan[] = [];
 let lookupFails = false;
 const fillExecutor: FillExecutor = async (plan, channel) => {
-  const mark = draftMarkOf(plan.jobId);
+  const mark = plan.draft.mark;
   // A 事由 ERP stored differently still ends in the marker, or the lookup would find nothing rather than a mismatch.
   const stored = fakeOptions.draftStoresCausa ? { draftStoresCausa: `${fakeOptions.draftStoresCausa} ${mark}` } : {};
   fake = await createFakeErp(fakeErpFor(reached!, { assumeReceiptLink: true, ...fakeOptions, ...stored }));
-  return runFillJob({ ...plan, draft: { mark } }, { browser: fake.browser, blobs: dataDirBlobs(server.dataDir), channel, pace: FAST_PACE, probeWaitMs: 0 });
+  return runFillJob(plan, { browser: fake.browser, blobs: dataDirBlobs(server.dataDir), channel, pace: FAST_PACE, probeWaitMs: 0 });
 };
 const reconcileExecutor: ReconcileExecutor = async (plan, channel) => {
   reconcilePlans.push(plan);

@@ -41,13 +41,13 @@ const run = (fake: FakeErp, channel = channelFor()) =>
   runFillJob(fillPlan(taskId), { browser: fake.browser, blobs: blobSource(), channel, pace: FAST_PACE, probeWaitMs: 0 });
 
 describe('the server channel under a fill job on the fake ERP', () => {
-  it('persists an attempt before import and fill, with what the executor saw, and the job\'s events in order', async () => {
+  it('persists an attempt before import, fill and 暂存, with what the executor saw, and the job\'s events in order', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
-    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'handed_over', billNo: null, code: null });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted', billNo: null, code: null });
 
     const attempts = await jobs.attempts(`job-${taskId}`);
-    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill']);
+    expect(attempts.map((a) => a.action)).toEqual(['import', 'fill', 'save']);
     for (const attempt of attempts) {
       expect(attempt.compatibility).toEqual({ erpBuild: '8.2.830.9', formId: 'ER_ExpReimbursement' });
       expect(attempt.erpAccount).toEqual({ displayName: '刘明建', account: 'luo.liu', tenant: 'tenant-a' });
@@ -59,7 +59,7 @@ describe('the server channel under a fill job on the fake ERP', () => {
 
     const events = await jobs.events(`job-${taskId}`);
     expect(events.filter((e) => e.type === 'readback').map((e) => (e as { stage: string }).stage)).toEqual(['after_import', 'after_fill', 'before_hand_over']);
-    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(events.at(-1)).toMatchObject({ type: 'result', status: 'drafted' });
   });
 
   it('acknowledges attempt_started only once the attempt row is durable', async () => {
@@ -72,8 +72,8 @@ describe('the server channel under a fill job on the fake ERP', () => {
       }
       return reply;
     });
-    expect((await run(fake, channel)).status).toBe('handed_over');
-    expect(durableAtAck).toEqual([true, true]);
+    expect((await run(fake, channel)).status).toBe('drafted');
+    expect(durableAtAck).toEqual([true, true, true]);
   });
 
   // The executor tests stand in for this judge with a recorded preview (erp-executor/src/testing/scenario.ts). If
@@ -95,11 +95,11 @@ describe('the server channel under a fill job on the fake ERP', () => {
   // 「不生成费用明细」 leaves 收票单号 empty on every 费用明细行 — ERP's behaviour, recorded in the research and
   // reproduced by the fake. It used to fail the read-back and end 13 correctly filled rows as 结果不确定. The owner
   // decided 2026-09-20 that the totals are what must agree, so an empty link no longer stops the hand-over (ADR-0023).
-  it('hands over a filled form whose 收票单号 ERP left empty, because the totals still agree', async () => {
+  it('暂存s a filled form whose 收票单号 ERP left empty, because the totals still agree', async () => {
     const fake = await createFakeErp(fakeErpOptions());
     const result = await run(fake);
-    expect(result).toMatchObject({ type: 'result', status: 'handed_over' });
+    expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     expect(fake.mutations.some((m) => m.kind === 'save')).toBe(false);
-    expect((await jobs.attempts(`job-${taskId}`)).map((a) => a.action)).toEqual(['import', 'fill']);
+    expect((await jobs.attempts(`job-${taskId}`)).map((a) => a.action)).toEqual(['import', 'fill', 'save']);
   });
 });

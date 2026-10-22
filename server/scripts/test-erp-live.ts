@@ -178,14 +178,10 @@ try {
   task = await act(task, 'confirm-review', { digest: task.confirmation.digest });
   await openInEgo(`${server.url}/#/task/${task.task.taskId}/erp`);
 
+  // The job runs on the session this harness logged in above and ends at 暂存 (ADR-0037); a session that dropped in
+  // between ends it at its sign-in (this app holds no ERP 凭据), and the run fails.
   task = await act(task, 'start-erp-write');
-  for (;;) {
-    task = await until(task.task.taskId, (s) => s.erp.status !== 'running');
-    if (task.step.kind !== 'erp_login') break;
-    if (password) { say(`ERP asks for a login${task.erp.loginNotice ? ` (${task.erp.loginNotice})` : ''}; signing in again.`); await signIn(); }
-    else await ask.question(`[erp-live] ERP asks for a login${task.erp.loginNotice ? ` (${task.erp.loginNotice})` : ''}. Log in, then press Enter. `);
-    task = await act(task, 'confirm-login');
-  }
+  task = await until(task.task.taskId, (s) => s.erp.status !== 'running');
 
   say(`stage ${task.stage}; draft ${task.erp.draftNo ?? '-'}; read-back ${task.readback.summary ?? task.readback.status}`);
   if (task.erp.abortReason) say(`stopped: ${task.erp.abortReason}`);
@@ -197,7 +193,7 @@ try {
   await report();
   ask.close();
 }
-say(exitCode === 0 ? 'PASS: a real draft was saved and passed the strict read-back.' : `FAIL. Facts kept in ${dataDir}.`);
+say(exitCode === 0 ? 'PASS: a real draft was 暂存d and passed the strict read-back.' : `FAIL. Facts kept in ${dataDir}.`);
 process.exit(exitCode);
 
 // The decisions this run settles, from the persisted job log.

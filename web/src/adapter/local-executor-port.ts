@@ -6,7 +6,7 @@ import {
 // The page's way to the baox 本地执行器 running on this PC (ADR-0035, amended 2026-10-16): its loopback listener on
 // 47319 answers the app's own page only (`local-executor/src/pairing-port.ts`). The 设置页 asks it whom it is paired to,
 // and hands it a fresh 配对码 to redeem, so re-pairing an installed executor is one click instead of a terminal.
-// Injected like the extension bridge (`App`'s `localExecutor`), so tests and the mock hand in their own.
+// Injected (`App`'s `localExecutor`), so tests and the mock hand in their own.
 //
 // Silence is an answer: no executor on this PC, or a browser that refuses to reach loopback, resolves null.
 

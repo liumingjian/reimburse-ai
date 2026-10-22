@@ -5,7 +5,7 @@
 # (server/src/public-origin.ts) judges the browser's own Host and Origin against that origin, so this proxy passes
 # both through untouched. Caddy's
 # reverse_proxy already does: it forwards the incoming Host as-is and never rewrites Origin. Never add
-# `header_up Host ...` here, or every request, the extension's WebSocket upgrade included, is refused with 403.
+# `header_up Host ...` here, or every request, the 本地执行器's WebSocket upgrade included, is refused with 403.
 
 {
 	# No admin API. The host is shared, and any local process could otherwise rewrite this proxy through

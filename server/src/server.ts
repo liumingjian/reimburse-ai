@@ -8,7 +8,7 @@ import type { ReconcileExecutor } from './erp/reconcile-job';
 import type { ParseExecutor } from './parse/executor';
 import { acquireDataDirLock, databasePath, ensureDataDir } from './data-dir';
 import { openDatabase, type Db } from './db/database';
-import { attachExtensionChannel } from './extension/websocket';
+import { attachExecutorHub } from './channel/websocket';
 import { maintenanceSocketPath as defaultMaintenanceSocketPath, startMaintenanceControl, type MaintenanceControl } from './maintenance-control';
 import { parsePublicOrigin } from './public-origin';
 
@@ -31,8 +31,6 @@ export type StartOptions = {
   // `BAOX_PUBLIC_ORIGIN` as written, e.g. `http://10.250.0.222:8888`; absent or empty serves 127.0.0.1 only. An origin
   // this refuses (`public-origin.ts`) stops the server before it listens.
   publicOrigin?: string | null;
-  // The built extension template (`extension/dist`) the settings page's download is assembled from; null serves none.
-  extensionTemplate?: string | null;
   localExecutor?: LocalExecutorDist | null;
   // A host-local credential enables the Unix-socket maintenance controller. Production loads it from a root/baox-owned
   // file; tests pass a value directly. Without it, an older release remains observable as lacking a maintenance gate.
@@ -44,7 +42,7 @@ export type StartOptions = {
 
 export type RunningServer = { url: string; port: number; maintenanceSocketPath: string | null; close: () => Promise<void> };
 
-export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, parser, erpConfig, publicOrigin = null, extensionTemplate = null, localExecutor = null, maintenanceToken = null, maintenanceSocketPath = null, erpCredentialKey = null }: StartOptions): Promise<RunningServer> {
+export async function startServer({ dataDir, port, webDist = null, legacyHome = null, erpExecutor, reconcileExecutor, parser, erpConfig, publicOrigin = null, localExecutor = null, maintenanceToken = null, maintenanceSocketPath = null, erpCredentialKey = null }: StartOptions): Promise<RunningServer> {
   // First, so a misconfigured address never gets as far as the data directory lock.
   const served = publicOrigin ? parsePublicOrigin(publicOrigin) : null;
   ensureDataDir(dataDir);
@@ -56,7 +54,7 @@ export async function startServer({ dataDir, port, webDist = null, legacyHome = 
     release();
     throw error;
   }
-  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, extensionTemplate, localExecutor, erpCredentialKey, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(parser ? { parser } : {}), ...(erpConfig ? { erpConfig } : {}) });
+  const app = createApp({ db, dataDir, webDist, legacyHome, publicOrigin: served, localExecutor, erpCredentialKey, ...(erpExecutor ? { erpExecutor } : {}), ...(reconcileExecutor ? { reconcileExecutor } : {}), ...(parser ? { parser } : {}), ...(erpConfig ? { erpConfig } : {}) });
   let control: MaintenanceControl | null = null;
   let server: ReturnType<typeof serve> | null = null;
   let info: AddressInfo | null = null;
@@ -74,16 +72,16 @@ export async function startServer({ dataDir, port, webDist = null, legacyHome = 
     release();
     throw error;
   }
-  // The 浏览器扩展 channel shares this listening socket: Hono answers the requests, `ws` answers the upgrades
-  // (`extension/websocket.ts`). Attached after listening so nothing can upgrade before the app exists.
-  const detachExtensionChannel = attachExtensionChannel(server!, app.extensionChannel, served);
+  // The 本地执行器 channel shares this listening socket: Hono answers the requests, `ws` answers the upgrades
+  // (`channel/websocket.ts`). Attached after listening so nothing can upgrade before the app exists.
+  const detachExecutorHub = attachExecutorHub(server!, app.executorHub, served);
   return {
     url: `http://${HOST}:${info!.port}`,
     port: info!.port,
     maintenanceSocketPath: socketPath,
     async close() {
       await control?.close();
-      detachExtensionChannel();
+      detachExecutorHub();
       // Open SSE streams would keep the server alive forever.
       if ('closeAllConnections' in server!) server!.closeAllConnections();
       await new Promise<void>((resolve) => server!.close(() => resolve()));

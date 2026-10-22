@@ -20,6 +20,25 @@ const SECTIONS = ['基本信息', '付款信息', '明细信息', '收票信息'
 
 const VIS = `(n) => { const b = n.getBoundingClientRect(); return b.width > 0 && b.height > 0; }`;
 
+/** ERP's loading overlay, shown (live 2026-10-19/20): it takes clicks, and a lookup resolves under it. */
+export const OVERLAY_SHOWN = `[...document.querySelectorAll('.kd-ui-blockingExtention-item')].some((n) => {
+  const b = n.getBoundingClientRect();
+  const s = getComputedStyle(n);
+  return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+})`;
+
+/** At once when the overlay is not up; else once it has stayed away for `quietMs`, or after `maxMs`. */
+async function outwaitOverlay(session: CdpSession, { quietMs, pollMs }: Pace, maxMs: number) {
+  if (!(await evalIn<boolean>(session, OVERLAY_SHOWN).catch(() => false))) return;
+  const deadline = Date.now() + maxMs;
+  let clearSince: number | null = null;
+  while (Date.now() < deadline) {
+    if (await evalIn<boolean>(session, OVERLAY_SHOWN).catch(() => false)) clearSince = null;
+    else if ((clearSince ??= Date.now()) <= Date.now() - quietMs) return;
+    await sleep(pollMs);
+  }
+}
+
 export type FormTab = { label: string; mode: 'new' | 'modify'; x: number; y: number };
 export type GridColumn = { label: string; required?: boolean };
 export type GridRow = { y?: number; kind: 'data' | 'total'; editing?: boolean; values: Record<string, string>; editValues?: Record<string, string> };
@@ -337,13 +356,38 @@ export type CellWrite = {
  * their sum. Where ERP computes something from what was written, that computed value is the witness:
  * `computedTotalProblem` in draft-flow.ts checks it row by row.
  */
-export async function writeCell(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
-  commit = 'Enter', clicks = 3, readyMs = 9000, settleMs = 8000, holdMs = 2500, typeTries = 3, settleFirst = true,
+export async function writeCell(session: CdpSession, write: CellWrite) {
+  const first = await writeCellOnce(session, write);
+  const dropped = !first.ok && 'after' in first && (first.after === '' || first.after === 'select');
+  if (!LOOKUP_COLUMNS.has(write.column) || !dropped) return first;
+  // A lookup cell still empty — or 「select」, its dropdown icon's text, the editor open and empty — once ERP has had
+  // LOOKUP_READBACK_MS is written once more, from an emptied editor, but only after ERP's overlay is gone: live
+  // 2026-10-20 a lookup resolved up to 6.2 s after its commit under that overlay, and a write into a lookup ERP is
+  // still resolving races ERP's own work. Nothing is saved before 暂存, so a second write appends nothing.
+  if (write.settleFirst !== false) await outwaitOverlay(session, write.pace ?? DEFAULT_PACE, LOOKUP_READBACK_MS);
+  return writeCellOnce(session, write);
+}
+
+// The 选择类 (F7) columns ERP resolves from a typed code, and how long their read-back waits for the name: live
+// 2026-10-20 20 writes resolved in 0.25-6.2 s (median 0.55 s), and first fills read 「」 back at 8 s on a slower ERP.
+const LOOKUP_COLUMNS = new Set(['项目', '费用项目']);
+const LOOKUP_READBACK_MS = 30_000;
+
+async function writeCellOnce(session: CdpSession, { which = 0, row = 0, column, value, expect = null,
+  commit = 'Enter', clicks = 3, readyMs = 9000, settleMs, holdMs = 2500, typeTries = 3, settleFirst = true,
   pace = DEFAULT_PACE }: CellWrite) {
+  // How long the read-back waits for the committed value: a lookup's name comes from a server call.
+  const readbackMs = settleMs ?? (LOOKUP_COLUMNS.has(column) ? LOOKUP_READBACK_MS : 8000);
   // Wait for the previous cell's recalculation first: a click during it is swallowed or its editor is taken away.
-  if (settleFirst) await settleGrid(session, which, { quietMs: pace.quietMs, maxMs: pace.quietMs * 10 });
+  // And for a lookup ERP is still resolving in the previous cell: 费用项目 is typed the moment 项目 commits.
+  if (settleFirst) {
+    await settleGrid(session, which, { quietMs: pace.quietMs, maxMs: pace.quietMs * 10 });
+    await outwaitOverlay(session, pace, LOOKUP_READBACK_MS);
+  }
   const at = () => cellTarget(session, { which, row, column, scroll: false });
-  const before = await cellTarget(session, { which, row, column });
+  // Polled, not read once, as `selectOption` does: live 2026-10-20 a 去报销 stopped on 「「项目」的落点…上盖着DIV」
+  // right after 新增行, while ERP was still re-rendering the grid. A cover still there at the end is refused below.
+  const before = await waitFor(() => cellTarget(session, { which, row, column }), (c) => !c.ok || c.onTarget !== false, readyMs, pace.pollMs);
   if (!before.ok) return { ...before, ok: false, column };
   const blocked = reachProblem(`「${column}」`, before);
   if (blocked) return { ok: false, column, target: before, reason: blocked };
@@ -409,7 +453,7 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
   await pressKey(session, commit);
 
   const want = String(value);
-  let after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), settleMs, pace.pollMs);
+  let after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), readbackMs, pace.pollMs);
   // A numeric editor can remain focused after Enter even after ERP computes the
   // row total. Blur that same editor once, without typing again, then require
   // committed cell text as before. An input value alone never proves success.
@@ -417,7 +461,7 @@ export async function writeCell(session: CdpSession, { which = 0, row = 0, colum
     && after.ok && after.text === '' && after.editorBound === true && after.focused === true
     && after.editValue != null && cellMatches(after.editValue, want, expect)) {
     await pressKey(session, 'Tab');
-    after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), settleMs, pace.pollMs);
+    after = await waitFor(at, (c) => c.ok && c.text !== '' && cellMatches(c.text, want, expect), readbackMs, pace.pollMs);
   }
   const matched = after.ok && cellMatches(after.text, want, expect);
   return { ok: matched, column, wrote: want, expect, held,

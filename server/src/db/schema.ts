@@ -34,22 +34,19 @@ export interface SessionTable {
   expires_at: string;
 }
 
-// 扩展配对 (extension pairing, ADR-0019), one row per 应用账号: `account_id` is the primary key, which is how "one
-// active pairing per account" is enforced. The extension holds a random code and later a random token; only their
-// sha256 is stored. Mutable: redeeming clears the code and writes the token, and every connection slides
-// `last_connected_at`. Revoking (or issuing a new 配对码) deletes the row.
-export interface ExtensionPairingTable {
+// 配对 (pairing, ADR-0019, ADR-0037): one 本地执行器 bound to one 应用账号, one row per 应用账号: `account_id` is the
+// primary key, which is how "one active pairing per account" is enforced. The 本地执行器 holds a random code and later
+// a random token; only their sha256 is stored. Mutable: redeeming clears the code and writes the token, and every
+// connection slides `last_connected_at`. Revoking (or issuing a new 配对码) deletes the row.
+export interface PairingTable {
   account_id: string;
   code_sha256: string | null;
   code_expires_at: string | null;
   token_sha256: string | null;
-  // What the extension calls the browser it runs in; shown on the settings page, never acted on.
+  // What the 本地执行器 calls the machine it runs on; shown on the settings page, never acted on.
   browser: string | null;
-  // The version the extension last reported (ADR-0021), refreshed on every connect. Null until something pairs.
+  // The version the 本地执行器 last reported (ADR-0035), refreshed on every connect. Null until something pairs.
   version: string | null;
-  // What paired: 'local_executor' (a baox 本地执行器, sent the ERP 凭据 with each job) or 'extension'. Null for an
-  // extension paired before the column existed, and until something pairs; both read as an extension.
-  holder: string | null;
   // The one-command install (#425): the system the employee picked for this 配对码 ('mac' or 'windows'), and the
   // code's hash kept for the install route after redeeming clears `code_sha256`. Null for a code issued without one.
   install_system: string | null;
@@ -332,15 +329,12 @@ export interface ErpJobTable {
   task_id: string;
   account_id: string;
   kind: 'fill';
-  // 去报销 / 我已登录，继续 / 重新去报销 (ADR-0027). See `erp/fill-jobs.ts` FillTrigger.
-  trigger: 'start' | 'confirm_login' | 'refill' | 'rerun';
+  // 去报销 / 重新去报销 / 自动重新去报销 (ADR-0027, ADR-0034). See `erp/fill-jobs.ts` FillTrigger.
+  trigger: 'start' | 'refill' | 'rerun';
   confirmation_digest: string;
   plan: string;
   revision: number;
   started_at: string;
-  // The 去报销 route the job ran on: the pairing holder when it started (#423), 'local_executor' or 'extension'. Null
-  // for a job from before the column existed; the snapshot then asks the current pairing.
-  route: 'local_executor' | 'extension' | null;
 }
 
 export interface ErpJobCancelTable {
@@ -473,7 +467,7 @@ export interface Schema {
   account: AccountTable;
   account_event: AccountEventTable;
   session: SessionTable;
-  extension_pairing: ExtensionPairingTable;
+  pairing: PairingTable;
   erp_credential: ErpCredentialTable;
   task: TaskTable;
   upload_batch: UploadBatchTable;

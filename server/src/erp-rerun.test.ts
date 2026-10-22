@@ -1,43 +1,43 @@
 import { randomBytes } from 'node:crypto';
-import { EXTENSION_PAIR_PATH, EXTENSION_VERSION, ExtensionPairingSchema, ExtensionTokenSchema, type ExtensionHolder, type TaskSnapshot } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION, PairingViewSchema, PairingTokenSchema, type TaskSnapshot } from '@baox/contract';
 import type { ResultEvent } from '@baox/erp-executor/protocol';
 import { COMPATIBILITY, ERP_ORIGIN } from '@baox/erp-executor/testing/scenario';
 import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FrozenJob } from './erp/fill-plan';
-import { draftMarkOf } from './erp/remote-executor';
+import { draftMarkOf } from './erp/fill-plan';
 import { drafted, gated, readbackMismatch, uncertainDraft } from './erp/testing/fake-executor';
-import { fakeExtension, type FakeExtension, type FillRunner } from './erp/testing/fake-extension';
+import { fakeLocalExecutor, type FakeLocalExecutor, type FillRunner } from './erp/testing/fake-local-executor';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // 自动重新去报销 (ADR-0034, erp-headless-v1.md line 2 item 4): a 去报销 on a baox 本地执行器 that stops after its import
 // or fill, before 暂存, starts over by itself on a fresh 新增单, at most twice in a row, each time asking ERP first
-// whether the bill already landed. Nothing else starts over: not after 暂存, not on the 浏览器扩展.
+// whether the bill already landed. Nothing else starts over: not after 暂存.
 
 let server: ScenarioServer;
 let alice: TestClient;
 beforeEach(async () => {
-  server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: true });
+  server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: true });
   alice = await server.signIn('alice');
 });
 afterEach(() => server.close());
 
-async function executor(scripts: FillRunner[], holder: ExtensionHolder = 'local_executor'): Promise<FakeExtension> {
-  const issued = ExtensionPairingSchema.parse(await (await alice.post('/api/extension/pairing/code', {})).json());
-  const redeemed = await server.app.request(EXTENSION_PAIR_PATH, {
+async function executor(scripts: FillRunner[]): Promise<FakeLocalExecutor> {
+  const issued = PairingViewSchema.parse(await (await alice.post('/api/pairing/code', {})).json());
+  const redeemed = await server.app.request(PAIRING_PATH, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'chrome-extension://kmbhfnaoapecjdgphfnbkejnnojfeeih' },
-    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXTENSION_VERSION, holder }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: issued.code, browser: 'baox 本地执行器（darwin）', version: EXECUTOR_VERSION }),
   });
   let run = 0;
-  const extension = fakeExtension(server.app.extensionChannel, ExtensionTokenSchema.parse(await redeemed.json()).token, {
+  const localExecutor = fakeLocalExecutor(server.app.executorHub, PairingTokenSchema.parse(await redeemed.json()).token, {
     trySignIn: async () => ({ ok: true }),
     fill: (plan, channel, trigger) => scripts[Math.min(run++, scripts.length - 1)]!(plan, channel, trigger),
   });
-  await extension.connect();
+  await localExecutor.connect();
   await alice.post('/api/erp-credentials', { account: 'zhangsan', password: 'erp-Pa55' });
-  return extension;
+  return localExecutor;
 }
 
 // The precondition answered no: a 费用报销单 already holds an invoice, so the re-run stops before uploading.
@@ -56,11 +56,11 @@ async function after(scene: { task: { taskId: string }; settled: () => Promise<T
   await new Promise((resolve) => setTimeout(resolve, 50));
   return { snapshot: await scene.settled(), jobs: (await rows()).map((row) => ({ jobId: row.job_id, trigger: row.trigger, frozen: JSON.parse(row.plan) as FrozenJob })), first: snapshot };
 }
-const fills = (extension: FakeExtension) => extension.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
+const fills = (localExecutor: FakeLocalExecutor) => localExecutor.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
 
 describe('自动重新去报销', () => {
   it('starts over on a fresh form after a stop before 暂存, asks ERP first, and ends at the draft', async () => {
-    const extension = await executor([readbackMismatch, drafted]);
+    const localExecutor = await executor([readbackMismatch, drafted]);
     const scene = await scenario(server, alice).at('actions');
     await scene.accept('start-erp-write');
 
@@ -71,8 +71,8 @@ describe('自动重新去报销', () => {
     const invoiceNos = first!.frozen.judge.invoices.map((invoice) => invoice.identity?.number);
     expect(second!.frozen.plan).toMatchObject({ replaceAbandonedForm: true, rerun: { invoiceNos, marks: [draftMarkOf(first!.jobId)] } });
     expect(second!.frozen.rerunOf).toEqual({ jobId: first!.jobId, code: 'strict_readback_failed', no: 1 });
-    expect(fills(extension).map((fill) => fill.trigger)).toEqual(['start', 'rerun']);
-    expect(fills(extension)[1]!.plan).toMatchObject({ draft: { mark: draftMarkOf(second!.jobId) } });
+    expect(fills(localExecutor).map((fill) => fill.trigger)).toEqual(['start', 'rerun']);
+    expect(fills(localExecutor)[1]!.plan).toMatchObject({ draft: { mark: draftMarkOf(second!.jobId) } });
     expect(snapshot).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted' } });
   });
 
@@ -129,6 +129,23 @@ describe('自动重新去报销', () => {
     expect(snapshot.erp.rerunNotice).toBeNull();
   });
 
+  // QA 2026-10-19: the run that filled stopped on 新增行, its re-run was turned away before it wrote anything, and
+  // 对账 showed the re-run's reason — 「报销系统没有被改动，可以再去报销」 under 「写入结果不确定」.
+  it('tells 对账 why the run that wrote stopped, and the re-run that wrote nothing on a line of its own', async () => {
+    const busy = '这台电脑上的 baox 本地执行器正在运行另一次去报销。';
+    // Answered, never emitted, as the 本地执行器 turns a job away.
+    const turnedAway: FillRunner = async () => ({ type: 'result', status: 'aborted', code: 'local_executor_busy', message: busy, billNo: null, capture: null });
+    await executor([readbackMismatch, turnedAway]);
+    const scene = await scenario(server, alice).at('actions');
+    await scene.accept('start-erp-write');
+
+    const { snapshot } = await after(scene, 2);
+
+    expect(snapshot).toMatchObject({ stage: 'reconcile', erp: { status: 'aborted' } });
+    expect(snapshot.erp.abortReason).toBe('写入报销系统的结果不确定，应用已停止写入，不会重放。原因：ERP 明细「申请报销金额」合计 1000.00 与任务合计 1006.00 不一致');
+    expect(snapshot.erp.rerunNotice).toBe(`应用自动重新去报销了 1 次，但在写入之前就停下了：${busy}`);
+  });
+
   it('never starts over after 暂存 was pressed', async () => {
     await executor([uncertainDraft, drafted]);
     const scene = await scenario(server, alice).at('actions');
@@ -140,19 +157,9 @@ describe('自动重新去报销', () => {
     expect(snapshot).toMatchObject({ stage: 'reconcile', reconcile: { allowedActions: ['wait', 'hand_off'] } });
   });
 
-  it('never starts over on the 浏览器扩展: the employee\'s own tab is theirs', async () => {
-    await executor([readbackMismatch, drafted], 'extension');
-    const scene = await scenario(server, alice).at('actions');
-    await scene.accept('start-erp-write');
-
-    const { jobs } = await after(scene, 2, 500);
-
-    expect(jobs.map((job) => job.trigger)).toEqual(['start']);
-  });
-
   it('stays off when the app is told so', async () => {
     await server.close();
-    server = await scenarioServer({ erpExecutor: 'extension', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: false });
+    server = await scenarioServer({ erpExecutor: 'paired', erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY }, erpCredentialKey: randomBytes(32), autoRerun: false });
     alice = await server.signIn('alice');
     await executor([readbackMismatch, drafted]);
     const scene = await scenario(server, alice).at('actions');

@@ -1,33 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, InlineNotification, RadioButton, RadioButtonGroup } from '@carbon/react';
 import { Copy } from '@carbon/icons-react';
 import { INSTALL_SYSTEMS, LOCAL_EXECUTOR_PAIRING_ERRORS, localExecutorInstallCommand, localExecutorUninstallCommand, type InstallSystem, type LocalExecutorPairAnswer, type LocalExecutorPairingState } from '@baox/contract';
-import { useAppStore, useExtensionPairing, useLocalExecutorPort, useSession } from '../adapter/context';
+import { useAppStore, useLocalExecutorPort, usePairing, useSession } from '../adapter/context';
 import { ActionGroup } from '../shell/ActionGroup';
 import { copyText } from '../shell/clipboard';
 import { ConfirmDialog } from '../shell/Dialog';
 import { ErpCredentialsSection } from './ErpCredentialsSection';
-import { endsOtherMethod, InstallTrouble, SwitchMethodDialog } from './reimburse-method';
 
-// baox 本地执行器 (ADR-0033, ADR-0035 amended 2026-10-17): the program that does 去报销 on this PC in a browser nobody
-// sees, instead of the 浏览器扩展. The employee picks Mac or Windows (neither is picked for them) and pastes the one
+// baox 本地执行器 (ADR-0033, ADR-0035 amended 2026-10-17, ADR-0037): the only way to 去报销, the program that does it on
+// this PC in a browser nobody sees. The employee picks Mac or Windows (neither is picked for them) and pastes the one
 // command this section shows into Terminal or PowerShell; the 配对码 is inside it, and the script installs, pairs and
 // starts the executor. While a 配对码 is pending this section reads the pairing again and again, and turns to 已连接
 // by itself when the pairing lands. A code that expires or is replaced takes its command off the page with one
-// sentence. The command lives in the 设置页 (`InstallCommand`), so flipping to the 浏览器扩展 and back keeps it.
+// sentence. The command lives in the 设置页 (`InstallCommand`), so reading the pairing again keeps it.
 //
 // An executor running on this PC answers on 47319 (`adapter/local-executor-port.ts`): then the section offers one click
 // instead, which issues a code and hands it straight over. It is asked again whenever the employee comes back to the
 // window, since a browser may hold the first question behind its own permission prompt (Chrome's local network
 // access) and answer late or not at all. An executor paired to another 应用账号, and an account connected through
-// another PC's executor, are asked about first. An account has one pairing at a time, so pairing the executor replaces
-// the extension's: with the extension paired, both actions ask first (`SwitchMethodDialog`, #428). 已连接 is the
-// server's word: the pairing's holder is the 本地执行器. Connected, the section offers 撤销配对 (uninstalling never
+// another PC's executor, are asked about first. 已连接 is the server's word: the account's pairing is paired (every
+// pairing is a 本地执行器's, ADR-0037). Connected, the section offers 撤销配对 (uninstalling never
 // revokes, story 35), and generating a new install command moves into 「安装遇到问题？」 and asks first, since it
 // disconnects the executor that works.
 //
 // The section is one sentence, its one action and the 配对码 hint (#429). The 报销系统 account form the executor signs
-// in with sits here too, since only this method uses it; the install steps and the uninstall command are folded into
+// in with sits here too; the install steps and the uninstall command are folded into
 // 「安装遇到问题？」.
 
 export const LOCAL_EXECUTOR_COPY = {
@@ -60,7 +58,6 @@ export const LOCAL_EXECUTOR_COPY = {
   otherPcTitle: '换成这台电脑',
   otherPcBody: '这个账号现在连着另一台电脑上的本地执行器。连接这台电脑的执行器后，那一台就断开了，不能再替你去报销。',
   otherPcConfirm: '换成这台电脑',
-  replaces: '一个账号同时只有一个配对：本地执行器配对后，原来配对的浏览器扩展会断开。',
   revoke: '撤销配对',
   revokeTitle: '撤销配对',
   revokeBody: '撤销之后，本地执行器不能再替你去报销，要重新连接才行。你在这里仍然是登录状态。',
@@ -81,6 +78,10 @@ export const LOCAL_EXECUTOR_COPY = {
   uninstallTitle: '卸载本地执行器',
   uninstallLead: '在终端或 PowerShell 里运行你的系统对应的这条命令。卸载不会动你电脑上原有的运行环境，也不会撤销这里的配对。',
   uninstallCommand: '卸载命令',
+  trouble: '安装遇到问题？',
+  loading: '正在读取配对情况…',
+  loadFailed: '配对情况加载失败',
+  retryLoad: '重新加载',
 } as const;
 
 // How often the pairing is read again while a 配对码 is pending.
@@ -99,12 +100,12 @@ function refusalSentence(answer: Extract<LocalExecutorPairAnswer, { ok: false }>
 
 const unexpired = (expiresAt: string | null) => !expiresAt || Date.parse(expiresAt) > Date.now();
 
-type Agreed = { switched?: boolean; otherPc?: boolean; otherAccount?: boolean };
+type Agreed = { otherPc?: boolean; otherAccount?: boolean };
 
 export function LocalExecutorSection({ command, onCommand }: { command: InstallCommand | null; onCommand: (command: InstallCommand | null) => void }) {
   const store = useAppStore();
   const port = useLocalExecutorPort();
-  const pairing = useExtensionPairing();
+  const pairing = usePairing();
   const accountId = useSession().data?.account?.accountId ?? null;
   // What the executor on this PC said: undefined while asking, null when nothing answered.
   const [probe, setProbe] = useState<LocalExecutorPairingState | null | undefined>(undefined);
@@ -112,7 +113,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
   const [busy, setBusy] = useState<'generate' | 'connect' | 'revoke' | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Which question the employee is answering before an action goes ahead.
-  const [asking, setAsking] = useState<'switchGenerate' | 'switchConnect' | 'otherPc' | 'otherAccount' | 'reinstall' | 'revoke' | null>(null);
+  const [asking, setAsking] = useState<'otherPc' | 'otherAccount' | 'reinstall' | 'revoke' | null>(null);
   const agreedSoFar = useRef<Agreed>({});
   const [copied, setCopied] = useState<boolean | null>(null);
   // Re-renders once a pending 配对码 reaches its expiry.
@@ -147,14 +148,14 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
   }, [reprobe]);
 
   const view = pairing.data;
-  const connected = view?.status === 'paired' && view.holder === 'local_executor';
+  const connected = view?.status === 'paired';
   const thisPcHolds = probe?.paired === true && probe.accountId === accountId;
   const waiting = view?.status === 'waiting' && unexpired(view.codeExpiresAt);
   const pending = command !== null && waiting && view.codeExpiresAt === command.expiresAt;
 
   useEffect(() => {
     if (!waiting) return;
-    const timer = setInterval(() => void store.loadExtensionPairing(), LOCAL_EXECUTOR_POLL_MS);
+    const timer = setInterval(() => void store.loadPairing(), LOCAL_EXECUTOR_POLL_MS);
     return () => clearInterval(timer);
   }, [waiting, store]);
 
@@ -172,10 +173,6 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
 
   const generate = async (agreed: boolean) => {
     if (!system) return;
-    if (!agreed && endsOtherMethod(view, 'local_executor')) {
-      setAsking('switchGenerate');
-      return;
-    }
     if (!agreed && connected) {
       setAsking('reinstall');
       return;
@@ -184,7 +181,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
     setBusy('generate');
     setError(null);
     setCopied(null);
-    const outcome = await store.extensionPairingAction((adapter) => adapter.createExtensionPairingCode({ system }));
+    const outcome = await store.pairingAction((adapter) => adapter.createPairingCode({ system }));
     setBusy(null);
     if (!outcome.ok) {
       setError(outcome.error.message);
@@ -196,10 +193,6 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
 
   const connect = async (agreed: Agreed = {}) => {
     agreedSoFar.current = agreed;
-    if (!agreed.switched && endsOtherMethod(view, 'local_executor')) {
-      setAsking('switchConnect');
-      return;
-    }
     if (!agreed.otherPc && connected && !thisPcHolds) {
       setAsking('otherPc');
       return;
@@ -211,7 +204,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
     setAsking(null);
     setBusy('connect');
     setError(null);
-    const outcome = await store.extensionPairingAction((adapter) => adapter.createExtensionPairingCode());
+    const outcome = await store.pairingAction((adapter) => adapter.createPairingCode());
     const code = outcome.ok ? outcome.pairing.code : null;
     if (!outcome.ok || !code) {
       setBusy(null);
@@ -232,7 +225,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
       return;
     }
     setProbe({ paired: true, accountId: answer.accountId });
-    await store.awaitExtensionConnected();
+    await store.awaitPairingConnected();
     setBusy(null);
   };
 
@@ -241,7 +234,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
   const revoke = async () => {
     setBusy('revoke');
     setError(null);
-    const outcome = await store.extensionPairingAction((adapter) => adapter.revokeExtensionPairing());
+    const outcome = await store.pairingAction((adapter) => adapter.revokePairing());
     setBusy(null);
     if (!outcome.ok) {
       setError(outcome.error.message);
@@ -260,7 +253,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
         <RadioButton id="local-executor-system-mac" value="mac" labelText={LOCAL_EXECUTOR_COPY.systems.mac} />
         <RadioButton id="local-executor-system-windows" value="windows" labelText={LOCAL_EXECUTOR_COPY.systems.windows} />
       </RadioButtonGroup>
-      <ActionGroup caption={endsOtherMethod(view, 'local_executor') ? LOCAL_EXECUTOR_COPY.replaces : undefined}>
+      <ActionGroup>
         <Button kind={command || connected ? 'secondary' : 'primary'} size="md" disabled={system === null || busy !== null} onClick={() => void generate(false)}>
           {LOCAL_EXECUTOR_COPY.generate}
         </Button>
@@ -310,7 +303,7 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
               {LOCAL_EXECUTOR_COPY.connecting}
             </p>
           ) : null}
-          <ActionGroup caption={endsOtherMethod(view, 'local_executor') ? LOCAL_EXECUTOR_COPY.replaces : undefined}>
+          <ActionGroup>
             <Button kind="primary" size="md" disabled={busy !== null} onClick={() => void connect()}>
               {LOCAL_EXECUTOR_COPY.connectHere}
             </Button>
@@ -345,9 +338,6 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
             ))
           : null}
       </InstallTrouble>
-      {asking === 'switchGenerate' || asking === 'switchConnect' ? (
-        <SwitchMethodDialog to="local_executor" onConfirm={() => (asking === 'switchGenerate' ? void generate(true) : agreeAndConnect({ switched: true }))} onCancel={() => setAsking(null)} />
-      ) : null}
       {asking === 'otherPc' ? (
         <ConfirmDialog title={LOCAL_EXECUTOR_COPY.otherPcTitle} confirmLabel={LOCAL_EXECUTOR_COPY.otherPcConfirm} busy={busy === 'connect'} onConfirm={() => agreeAndConnect({ otherPc: true })} onCancel={() => setAsking(null)}>
           <p>{LOCAL_EXECUTOR_COPY.otherPcBody}</p>
@@ -380,5 +370,16 @@ export function LocalExecutorSection({ command, onCommand }: { command: InstallC
         </ConfirmDialog>
       ) : null}
     </section>
+  );
+}
+
+// 「安装遇到问题？」 (#429): the install help, collapsed by default so the section stays one sentence, one action and
+// its 配对码.
+function InstallTrouble({ children }: { children: ReactNode }) {
+  return (
+    <details className="app-install-trouble">
+      <summary>{LOCAL_EXECUTOR_COPY.trouble}</summary>
+      <div className="app-install-trouble-body">{children}</div>
+    </details>
   );
 }
