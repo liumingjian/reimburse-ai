@@ -251,13 +251,13 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
     expect(snapshot.pendingItems).toEqual([]);
 
     expect(snapshot.lines.map((l) => [l.date, l.city, l.origin, l.destination, l.grossAmount, l.netAmount, l.taxAmount, l.category.code])).toEqual([
-      ['2026-07-02', '西安市', '西安北站-南广场-B1层地下停车场-滴滴车站', '秦陵|秦美裤带面(快速干道店)', '62.70', '60.87', '1.83', 'remote_city_transport'],
-      ['2026-07-03', '西安市', '秦唐大道|中国石油西安临潼秦陵加油站', '临潼区|新丰镇站', '18.90', '18.35', '0.55', 'remote_city_transport'],
+      ['2026-07-02', '西安市', '长乐公园-东广场-B2层地下停车场-网约车站', '华清|老街油泼面(环山路北店)', '62.70', '60.87', '1.83', 'remote_city_transport'],
+      ['2026-07-03', '西安市', '华清东路|中国石化西安临潼骊山加油站', '临潼区|雨金镇站', '18.90', '18.35', '0.55', 'remote_city_transport'],
     ]);
     for (const line of snapshot.lines) expect(line).toMatchObject({ voucherMaterialId: invoice.materialId, referenceMaterialIds: [itinerary.materialId] });
     expect(snapshot.events.map((e) => [e.summary, e.evidenceNote])).toEqual([
-      ['滴滴 · 西安北站-南广场-B1层地下停车场-滴滴车站 → 秦陵|秦美裤带面(快速干道店)', '打车发票与行程单配对：62.70 + 18.90 = 81.60，按分守恒'],
-      ['滴滴 · 秦唐大道|中国石油西安临潼秦陵加油站 → 临潼区|新丰镇站', null],
+      ['滴滴 · 长乐公园-东广场-B2层地下停车场-网约车站 → 华清|老街油泼面(环山路北店)', '打车发票与行程单配对：62.70 + 18.90 = 81.60，按分守恒'],
+      ['滴滴 · 华清东路|中国石化西安临潼骊山加油站 → 临潼区|雨金镇站', null],
     ]);
   });
 
@@ -271,8 +271,8 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
     const itinerary = byFileName(snapshot, uploads.itinerary.name);
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', kindLabel: '曹操出行行程单', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
     expect(snapshot.events.map((e) => e.summary)).toEqual([
-      '曹操出行 · 西安北站-南广场-B1层地下停车场-滴滴车站 → 秦陵|秦美裤带面(快速干道店)',
-      '曹操出行 · 秦唐大道|中国石油西安临潼秦陵加油站 → 临潼区|新丰镇站',
+      '曹操出行 · 长乐公园-东广场-B2层地下停车场-网约车站 → 华清|老街油泼面(环山路北店)',
+      '曹操出行 · 华清东路|中国石化西安临潼骊山加油站 → 临潼区|雨金镇站',
     ]);
   });
 

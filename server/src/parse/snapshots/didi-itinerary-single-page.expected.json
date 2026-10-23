@@ -1,5 +1,5 @@
 {
-  "about": "#449: a real single-page 滴滴出行-行程单 (sample C, unwrapped cells), phone number and QR link redacted. The table prints MM-DD HH:MM plus a weekday; each leg's year comes from 行程起止日期 (year_from_range). 里程 and 备注 are not read.",
+  "about": "#449: a real single-page 滴滴出行-行程单 (sample C, unwrapped cells), phone number and QR link redacted, every 起点 and 终点 replaced by a made-up address of the same length. The table prints MM-DD HH:MM plus a weekday; each leg's year comes from 行程起止日期 (year_from_range). 里程 and 备注 are not read.",
   "outcome": "recognised",
   "layout": "ride_itinerary/didi",
   "missing": [],
@@ -12,15 +12,15 @@
     "segments[0].time": "23:20",
     "segments[0].carType": "特惠快车",
     "segments[0].city": "西安市",
-    "segments[0].origin": "西安北站-南广场-B1层地下停车场-滴滴车站",
-    "segments[0].destination": "秦陵|秦美裤带面(快速干道店)",
+    "segments[0].origin": "长乐公园-东广场-B2层地下停车场-网约车站",
+    "segments[0].destination": "华清|老街油泼面(环山路北店)",
     "segments[0].amount": "62.70",
     "segments[1].date": "2026-07-03",
     "segments[1].time": "08:00",
     "segments[1].carType": "惊喜特价",
     "segments[1].city": "西安市",
-    "segments[1].origin": "秦唐大道|中国石油西安临潼秦陵加油站",
-    "segments[1].destination": "临潼区|新丰镇站",
+    "segments[1].origin": "华清东路|中国石化西安临潼骊山加油站",
+    "segments[1].destination": "临潼区|雨金镇站",
     "segments[1].amount": "18.90"
   }
 }

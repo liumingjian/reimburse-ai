@@ -1,12 +1,12 @@
 {
-  "about": "A 华住 结账单 (桔子 brand, Apache FOP PDF) whose text layer prints each label alone and its full-width colon and value as one run beside it (`入住日期` then `： 2026-08-11`). The value kept its colon, so both dates were missing and 房间号 read `：8513` (#447). 客人姓名 and 付款合计 are not labels this 版式 reads. Captured from the real PDF; guest name, 确认码 and the hotel phone number redacted.",
+  "about": "A 华住 结账单 (桔子 brand, Apache FOP PDF) whose text layer prints each label alone and its full-width colon and value as one run beside it (`入住日期` then `： 2026-08-11`). The value kept its colon, so both dates were missing and 房间号 read `：6207` (#447). 客人姓名 and 付款合计 are not labels this 版式 reads. Captured from the real PDF; guest name, 确认码, room number and the hotel phone number redacted.",
   "outcome": "recognised",
   "layout": "hotel_folio/labelled",
   "missing": [],
   "findings": [],
   "facts": {
     "hotelName": "桔子北京通州宋庄安贞医院酒店",
-    "roomNumber": "8513",
+    "roomNumber": "6207",
     "checkIn": "2026-08-11",
     "checkOut": "2026-08-13",
     "folioTotal": "675.30"
