@@ -51,6 +51,38 @@ describe('ride_itinerary/didi', () => {
     expect(dispatch(caseDoc('fixture-m06-caocao-itinerary'), LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
   });
 
+  it('reads the 第三方网约车服务提供方 title the same way and names the carrier it prints: 曹操出行行程单', () => {
+    // The real 曹操 face prints this title as one run, with an em dash, over the same header and table.
+    const doc = edited({ '滴滴出行-行程单': '第三方网约车服务提供方曹操出行—行程单' });
+    expect(LAYOUTS.filter((layout) => layout.recognise(doc)).map((layout) => layout.name)).toEqual(['didi']);
+    const outcome = recognised(doc);
+    expect(outcome).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', kindLabel: '曹操出行行程单', missing: [], findings: [] });
+    expect(values(outcome)).toEqual({
+      applyDate: '2026-10-13',
+      segmentCount: '2',
+      itineraryTotal: '81.60',
+      'segments[0].date': '2026-07-02',
+      'segments[0].time': '23:20',
+      'segments[0].carType': '特惠快车',
+      'segments[0].city': '西安市',
+      'segments[0].origin': '西安北站-南广场-B1层地下停车场-滴滴车站',
+      'segments[0].destination': '秦陵|秦美裤带面(快速干道店)',
+      'segments[0].amount': '62.70',
+      'segments[1].date': '2026-07-03',
+      'segments[1].time': '08:00',
+      'segments[1].carType': '惊喜特价',
+      'segments[1].city': '西安市',
+      'segments[1].origin': '秦唐大道|中国石油西安临潼秦陵加油站',
+      'segments[1].destination': '临潼区|新丰镇站',
+      'segments[1].amount': '18.90',
+    });
+  });
+
+  it('a third-party title without a carrier, or not ending in 行程单, is not taken', () => {
+    expect(didiItinerary.recognise(edited({ '滴滴出行-行程单': '第三方网约车服务提供方—行程单' }))).toBe(false);
+    expect(didiItinerary.recognise(edited({ '滴滴出行-行程单': '第三方网约车服务提供方曹操出行' }))).toBe(false);
+  });
+
   it('needs the title and the table header: either alone is not a 滴滴 行程单', () => {
     expect(didiItinerary.recognise(edited({ '滴滴出行-行程单': '行程单' }))).toBe(false);
     expect(didiItinerary.recognise(edited({ 终点: '目的地' }))).toBe(false);

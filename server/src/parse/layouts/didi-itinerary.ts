@@ -20,9 +20,14 @@ const VERSION = '1';
 const SOURCE = ruleSource(KIND, NAME);
 export const YEAR_SOURCE = ruleSource(KIND, NAME, 'year_from_range');
 
-// The faces this 版式 reads, by their title: the carrier named on the face gives the display name. #451 adds the
-// 第三方网约车服务提供方<carrier>—行程单 title here, with the carrier taken from the title.
-const FACES: readonly { title: RegExp; carrier: (match: RegExpExecArray) => string }[] = [{ title: /^滴滴出行-行程单$/, carrier: () => '滴滴' }];
+// The faces this 版式 reads, by their title: the carrier named on the face gives the display name (`<carrier>行程单`),
+// which the allocation notes also name. Besides its own face, the 滴滴 platform issues the 行程单 of a third-party carrier
+// booked through it (曹操出行 and others), titled `第三方网约车服务提供方<carrier>—行程单` over the same header and table
+// (#451). A carrier's own face (the synthetic m06, titled just `行程单`) is not one of these.
+const FACES: readonly { title: RegExp; carrier: (match: RegExpExecArray) => string }[] = [
+  { title: /^滴滴出行-行程单$/, carrier: () => '滴滴' },
+  { title: /^第三方网约车服务提供方(.+?)[-‐–—―]+行程单$/, carrier: (match) => match[1] ?? '' },
+];
 
 // Header fields, each printed as one bulleted line (`· 申请日期：2026-10-13`); matched against row spans, fully anchored.
 const BULLET = '[·•]?';

@@ -261,6 +261,21 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
     ]);
   });
 
+  it('a third-party 行程单 issued through 滴滴 is named by its carrier, in its display name and in the notes of its lines (#451)', async () => {
+    const doc = caseDoc(DIDI);
+    const title = '第三方网约车服务提供方曹操出行—行程单';
+    const thirdParty = { ...doc, observations: doc.observations.map((o) => (o.raw === '滴滴出行-行程单' ? { ...o, text: normalise(title), raw: title } : o)) };
+    const uploads = await bootWith(thirdParty);
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [uploads.invoice, uploads.itinerary] });
+    const invoice = byFileName(snapshot, uploads.invoice.name);
+    const itinerary = byFileName(snapshot, uploads.itinerary.name);
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', kindLabel: '曹操出行行程单', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
+    expect(snapshot.events.map((e) => e.summary)).toEqual([
+      '曹操出行 · 西安北站-南广场-B1层地下停车场-滴滴车站 → 秦陵|秦美裤带面(快速干道店)',
+      '曹操出行 · 秦唐大道|中国石油西安临潼秦陵加油站 → 临潼区|新丰镇站',
+    ]);
+  });
+
   it('a refused 滴滴 行程单 (its legs disagree with 共N笔) is not paired, even though its 合计 matches the invoice', async () => {
     const doc = caseDoc(DIDI);
     const refused = { ...doc, observations: doc.observations.map((o) => (o.raw === '· 共2笔行程， 合计81.60元' ? { ...o, text: normalise('· 共3笔行程， 合计81.60元'), raw: '· 共3笔行程， 合计81.60元' } : o)) };
