@@ -201,7 +201,7 @@
           "label": "酒店名称",
           "value": "全季酒店（上海某某店）",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -210,7 +210,7 @@
           "label": "入住人",
           "value": "林颂宜",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -219,7 +219,7 @@
           "label": "房号",
           "value": "1208",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -228,7 +228,7 @@
           "label": "入住日期",
           "value": "2026-08-09",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -237,7 +237,7 @@
           "label": "离店日期",
           "value": "2026-08-22",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -246,7 +246,7 @@
           "label": "天数",
           "value": "13",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -255,7 +255,7 @@
           "label": "房价",
           "value": "280.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -264,7 +264,7 @@
           "label": "消费合计",
           "value": "3640.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         },
@@ -273,7 +273,7 @@
           "label": "已付款",
           "value": "3640.00",
           "source": "rule:hotel_folio/labelled",
-          "parserVersion": "2",
+          "parserVersion": "4",
           "evidence": "explicit",
           "editClass": "fact_locked"
         }
