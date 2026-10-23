@@ -93,6 +93,8 @@ function kit(page, url) {
   };
   const v = {
     page, url, api, expect, fake, out,
+    // The server's own data directory (`baox.sqlite` in it), for a scenario that seeds what no page can write.
+    dataDir,
     fixture: (file) => join(FIXTURES, file),
     step: async (label, body) => {
       transcript(`step  ${label}`);
