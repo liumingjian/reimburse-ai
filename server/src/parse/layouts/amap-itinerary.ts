@@ -1,6 +1,6 @@
 import { cents, money } from '../../money-date';
-import { compact, joinedRows, matchSpan, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
-import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
+import { allJoinedRows, compact, matchSpan, type TextObservation } from '../doc';
+import { evidenceRef, ruleSource, type Candidate, type Finding, type Layout } from '../layout';
 import { cellRaw, cellText, itineraryTable } from './itinerary-table';
 
 // `ride_itinerary/amap`: the 高德行程单 (Amap ride itinerary), a reference material listing each ride leg. PDF and image
@@ -30,7 +30,6 @@ const TIME = /^(\d{4}-\d{2}-\d{2})(\d{2}:\d{2})$/;
 const AMOUNT_UNIT = /元$/;
 
 const COLUMNS: readonly [RegExp, Column][] = [
-  [/^序号$/, 'no'],
   [/^车型$/, 'carType'],
   [/^上车时间$/, 'time'],
   [/^城市$/, 'city'],
@@ -38,28 +37,16 @@ const COLUMNS: readonly [RegExp, Column][] = [
   [/^终点$/, 'destination'],
   [/^金额/, 'amount'],
 ];
-type Column = 'no' | 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'amount';
+type Column = 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'amount';
 // The leg table, read by the shared 行程单 table reader. The per-column policy says whether a cell may absorb text from
 // the lines below it, within its leg's row band: real itineraries wrap a long address, and they wrap 上车时间 between
 // its date and its `HH:MM`. The remaining columns stay on the leg's own baseline, so a neighbouring row's text can never
 // drift into them.
 const TABLE = itineraryTable<Column>({
   columns: COLUMNS,
-  required: ['no', 'time', 'origin', 'destination', 'amount'],
-  index: 'no',
+  required: ['time', 'origin', 'destination', 'amount'],
   wrapping: new Set(['time', 'origin', 'destination', 'amount']),
 });
-
-const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
-  observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join('') }] : [];
-
-// Every page's joined rows in reading order. A layout anchor is matched against these: the pattern stays fully
-// anchored, only the haystack widens from one text run to the whole visual row (ADR-0017).
-function allRows(doc: ParseDoc): JoinedRow[] {
-  const out: JoinedRow[] = [];
-  for (let page = 1; page <= doc.pageCount; page += 1) out.push(...joinedRows(doc, page));
-  return out;
-}
 
 export const amapItinerary: Layout = {
   kind: KIND,
@@ -76,14 +63,14 @@ export const amapItinerary: Layout = {
     const candidates: Candidate[] = [];
     const findings: Finding[] = [];
     const add = (key: string, value: string | null | undefined, evidence: readonly TextObservation[]) => {
-      if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: ref(evidence) });
+      if (value) candidates.push({ key, value, source: SOURCE, parserVersion: VERSION, evidence: 'explicit', refs: evidenceRef(evidence) });
     };
 
     // The 申请时间 header field and the 共计N单行程 summary are matched against row spans, not against one text run and
     // not against the whole row: a real itinerary prints several fields on one baseline and splits a label from its
     // value, so the narrowest contiguous run of a row is the only haystack that holds exactly one field (ADR-0017:
     // the haystack narrows, the patterns stay fully anchored).
-    const lines = allRows(doc);
+    const lines = allJoinedRows(doc);
     const apply = matchSpan(lines, APPLY_DATE);
     if (apply) add('applyDate', apply.match[1], apply.span.observations);
 

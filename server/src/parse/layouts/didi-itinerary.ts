@@ -1,6 +1,6 @@
-import { cents, money } from '../../money-date';
-import { compact, joinedRows, matchSpan, type JoinedRow, type ParseDoc, type TextObservation } from '../doc';
-import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout } from '../layout';
+import { cents, isoDate, money } from '../../money-date';
+import { allJoinedRows, compact, matchSpan, type ParseDoc, type TextObservation } from '../doc';
+import { evidenceRef, ruleSource, type Candidate, type Finding, type Layout } from '../layout';
 import { cellRaw, cellText, itineraryTable } from './itinerary-table';
 
 // `ride_itinerary/didi`: the 行程单 the 滴滴 platform issues (#445). Same slots as the 高德 行程单 (`amap-itinerary.ts`),
@@ -38,13 +38,12 @@ const SUMMARY = new RegExp(`^${BULLET}共(\\d+)笔行程,合计([\\d,]+\\.\\d{2}
 const TIME = /^(\d{2})-(\d{2})(\d{2}:\d{2})(?:周[一二三四五六日天])?$/;
 const AMOUNT_UNIT = /元$/;
 
-type Column = 'no' | 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'distance' | 'amount' | 'note';
+type Column = 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'distance' | 'amount' | 'note';
 // 里程 and 备注 get columns of their own so their text never lands in a neighbouring column; nothing reads them.
 // Every column may wrap (车型, 上车时间 with its weekday, 城市, addresses). A long 行程单 runs over several pages, the
 // header repeated on each and the 序号 continuing; the trust rule below judges the joined list (#450).
 const TABLE = itineraryTable<Column>({
   columns: [
-    [/^序号$/, 'no'],
     [/^车型$/, 'carType'],
     [/^上车时间$/, 'time'],
     [/^城市$/, 'city'],
@@ -54,23 +53,13 @@ const TABLE = itineraryTable<Column>({
     [/^金额/, 'amount'],
     [/^备注$/, 'note'],
   ],
-  required: ['no', 'time', 'origin', 'destination', 'amount'],
-  index: 'no',
+  required: ['time', 'origin', 'destination', 'amount'],
   wrapping: new Set(['carType', 'time', 'city', 'origin', 'destination', 'distance', 'amount', 'note']),
   repeatedHeader: true,
 });
 
-const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
-  observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join('') }] : [];
-
-function allRows(doc: ParseDoc): JoinedRow[] {
-  const out: JoinedRow[] = [];
-  for (let page = 1; page <= doc.pageCount; page += 1) out.push(...joinedRows(doc, page));
-  return out;
-}
-
 // The carrier named by the face's title, or null when the document carries no title this 版式 reads.
-function carrierOf(doc: ParseDoc): string | null {
+function titledCarrier(doc: ParseDoc): string | null {
   for (const o of doc.observations) {
     const text = compact(o.text);
     for (const face of FACES) {
@@ -82,21 +71,23 @@ function carrierOf(doc: ParseDoc): string | null {
 }
 
 type YearRange = { from: string; to: string };
-type LegDate = { date: string } | { date: null; reason: 'no_range' | 'outside' | 'ambiguous' };
+type Undecided = 'no_range' | 'outside' | 'ambiguous';
+type LegDate = { date: string } | { date: null; reason: Undecided };
 
-const validDate = (iso: string) => {
-  const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
-  const date = new Date(Date.UTC(y, m - 1, d));
-  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+// Why a leg's year was not decided, for its refusal; `range` is 行程起止日期 as printed.
+const UNDECIDED: Readonly<Record<Undecided, (range: string) => string>> = {
+  no_range: () => '定不了年份：行程起止日期没读到',
+  outside: (range) => `不在行程起止日期 ${range} 内，定不了年份`,
+  ambiguous: (range) => `在行程起止日期 ${range} 内对得上不止一个年份，没有采用`,
 };
 
 // `year_from_range`: the one year that puts `MM-DD` inside 行程起止日期 (ISO dates compare as strings).
-function yearFromRange(monthDay: string, range: YearRange | null): LegDate {
+function yearFromRange(month: number, day: number, range: YearRange | null): LegDate {
   if (!range) return { date: null, reason: 'no_range' };
   const fits: string[] = [];
   for (let year = Number(range.from.slice(0, 4)); year <= Number(range.to.slice(0, 4)); year += 1) {
-    const date = `${year}-${monthDay}`;
-    if (validDate(date) && date >= range.from && date <= range.to) fits.push(date);
+    const date = isoDate(year, month, day);
+    if (date && date >= range.from && date <= range.to) fits.push(date);
   }
   const [only] = fits;
   if (fits.length === 1 && only) return { date: only };
@@ -110,18 +101,18 @@ export const didiItinerary: Layout = {
   label: '滴滴行程单',
 
   recognise(doc) {
-    return carrierOf(doc) !== null && TABLE.hasHeader(doc);
+    return titledCarrier(doc) !== null && TABLE.hasHeader(doc);
   },
 
   parse(doc) {
-    const kindLabel = `${carrierOf(doc) ?? '滴滴'}行程单`;
+    const kindLabel = `${titledCarrier(doc) ?? '滴滴'}行程单`;
     const candidates: Candidate[] = [];
     const findings: Finding[] = [];
     const add = (key: string, value: string | null | undefined, evidence: readonly TextObservation[], source = SOURCE) => {
-      if (value) candidates.push({ key, value, source, parserVersion: VERSION, evidence: source === SOURCE ? 'explicit' : 'derived', refs: ref(evidence) });
+      if (value) candidates.push({ key, value, source, parserVersion: VERSION, evidence: source === SOURCE ? 'explicit' : 'derived', refs: evidenceRef(evidence) });
     };
 
-    const lines = allRows(doc);
+    const lines = allJoinedRows(doc);
     const apply = matchSpan(lines, APPLY_DATE);
     if (apply) add('applyDate', apply.match[1], apply.span.observations);
 
@@ -139,7 +130,7 @@ export const didiItinerary: Layout = {
     const parsed = TABLE.legs(doc).map(({ index, cells }) => {
       const time = TIME.exec(cellText(cells.time));
       const monthDay = time ? `${time[1]}-${time[2]}` : null;
-      const date = monthDay ? yearFromRange(monthDay, range) : null;
+      const date = time ? yearFromRange(Number(time[1]), Number(time[2]), range) : null;
       const amount = cents(cellText(cells.amount).replace(AMOUNT_UNIT, ''));
       return { index, cells, monthDay, date, time: time?.[3] ?? null, amount: amount !== null && amount > 0 ? amount : null };
     });
@@ -153,15 +144,7 @@ export const didiItinerary: Layout = {
       const no = i + 1;
       if (leg.index !== no) refuse(`segment_index_unexpected.${no}`, `第 ${no} 段的序号读成了 ${leg.index}；整块不采用。`);
       if (!leg.date) refuse(`segment_field_unreadable.${no}.date`, `第 ${no} 段的上车时间没读到；整块不采用。`);
-      else if (leg.date.date === null) {
-        const why =
-          leg.date.reason === 'no_range'
-            ? `定不了年份：行程起止日期没读到`
-            : leg.date.reason === 'outside'
-              ? `不在行程起止日期 ${rangeText} 内，定不了年份`
-              : `在行程起止日期 ${rangeText} 内对得上不止一个年份，没有采用`;
-        refuse(`segment_year_undecided.${no}`, `第 ${no} 段的上车日期 ${leg.monthDay} ${why}；整块不采用。`);
-      }
+      else if (leg.date.date === null) refuse(`segment_year_undecided.${no}`, `第 ${no} 段的上车日期 ${leg.monthDay} ${UNDECIDED[leg.date.reason](rangeText)}；整块不采用。`);
       if (leg.amount === null) refuse(`segment_field_unreadable.${no}.amount`, `第 ${no} 段的金额没读到；整块不采用。`);
     });
     // The sum is judged only when every amount was read: a missing amount is already named above.

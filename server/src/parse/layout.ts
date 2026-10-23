@@ -1,11 +1,16 @@
 import type { EvidenceState, MaterialKind } from '@baox/contract';
-import type { ParseDoc } from './doc';
+import type { ParseDoc, TextObservation } from './doc';
 
 // The contract of a 版式 (layout) parser (ADR-0017). A layout belongs to one 材料种类 (material kind), recognises on
 // hard anchors only, and extracts candidates. It never decides roles, events or pending items: the kind and the
 // inventory view do. Adding a layout = one module exporting a `Layout` + one line in `layouts/index.ts`.
 
 export type EvidenceRef = { page: number; observationIds: string[]; text: string };
+
+// The evidence of a value read from these observations: one ref on the first one's page, naming each and their printed
+// text joined. None for no observation.
+export const evidenceRef = (observations: readonly TextObservation[]): EvidenceRef[] =>
+  observations.length ? [{ page: observations[0]?.page ?? 1, observationIds: observations.map((o) => o.id), text: observations.map((o) => o.raw).join('') }] : [];
 
 export type Candidate = {
   // A slot key of the kind (`slots.ts`); segment slots are keyed `segments[i].<field>`.

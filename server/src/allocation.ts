@@ -135,7 +135,7 @@ export type TransportPlan = {
 
 // The carrier a line's summary names: the one in the 行程单's display name, so a third-party carrier issued through 滴滴
 // shows as itself (#451). A 行程单 named otherwise (e.g. one filled in by hand) says 打车.
-const carrierOf = (kindLabel: string) => /^(.+)行程单$/.exec(kindLabel)?.[1] ?? '打车';
+const summaryBrand = (kindLabel: string) => /^(.+)行程单$/.exec(kindLabel)?.[1] ?? '打车';
 export const ALLOCATION_GIVE_UP_NOTE = '放弃后这张发票不形成明细：请把它连同行程单排除，或补充能逐段核对的行程单后重新盘点。';
 
 const arrow = (from: string | null, to: string | null) => (from && to ? `${from} → ${to}` : null);
@@ -216,7 +216,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
       continue;
     }
 
-    const brand = carrierOf(itinerary.kindLabel);
+    const brand = summaryBrand(itinerary.kindLabel);
     const expression = result.legs.length === 1 ? `1 段行程 ${result.legs[0]?.gross ?? ''} 与发票一致` : `${result.legs.map((l) => l.gross).join(' + ')} = ${invoice.values['totalAmount'] ?? ''}，按分守恒`;
     const note = result.source === 'user_allocation' ? `打车发票与行程单配对：逐段金额由你确认，${expression}` : `打车发票与行程单配对：${expression}`;
     plan.lines.set(
