@@ -8,6 +8,7 @@ import {
   type AttemptStartedEvent, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan,
   type ReadbackEvent, type ReadbackVerdict, type ResultEvent,
 } from '@baox/erp-executor/protocol';
+import { storedEvents } from './stored-event';
 
 type ErpTables = {
   erp_job_event: { event_id: string; job_id: string; task_id: string; seq: number; type: string; payload: string; created_at: string };
@@ -72,7 +73,7 @@ export function createErpJobs(db: Db, { now = () => new Date() }: { now?: () => 
 
     async events(jobId: string): Promise<ExecutorEvent[]> {
       const rows = await erp.selectFrom('erp_job_event').select(['payload']).where('job_id', '=', jobId).orderBy('seq').execute();
-      return rows.map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
+      return storedEvents(rows);
     },
   };
 }

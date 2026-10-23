@@ -7,10 +7,11 @@ import type { Db } from '../db/database';
 import type { ErpHandOffTable, ErpJobTable } from '../db/schema';
 import type { ErpFacts, ErpPhase } from '../task-policy';
 import type { FrozenJob } from './fill-plan';
-import { ExecutorEventSchema, type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
+import { type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Preconditions, type ReadbackEvent, type ResultEvent } from '@baox/erp-executor/protocol';
 import type { DraftLookup } from '@baox/erp-executor/draft';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { reconcileFromEvents } from './reconcile-job';
+import { storedEvents } from './stored-event';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
 // the terminal it can prove. `saved`: the draft saved exactly as approved (已保存, identity holds, strict per-line
@@ -61,7 +62,7 @@ export type ErpRecord = {
 export const NO_ERP: ErpRecord = { facts: null, attempted: false, job: null, frozen: null, events: [], result: null, writerResult: null, erpAccount: null, preview: null, attempt: null, draftMark: null, reconcile: null, handOff: null };
 
 const eventsOf = async (tx: Db, jobId: string): Promise<ExecutorEvent[]> =>
-  (await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', jobId).orderBy('seq').execute()).map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
+  storedEvents(await tx.selectFrom('erp_job_event').select('payload').where('job_id', '=', jobId).orderBy('seq').execute());
 const lastResult = (events: readonly ExecutorEvent[]): ResultEvent | null => [...events].reverse().find((event): event is ResultEvent => event.type === 'result') ?? null;
 
 /**
