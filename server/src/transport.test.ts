@@ -273,3 +273,51 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
     expect(snapshot.lines).toEqual([]);
   });
 });
+
+// #450: the redacted capture of a real two-page 滴滴出行-行程单 (20 legs, wrapped cells, 北京 and 洛阳, 合计 387.24) pairs
+// with a ride-hailing invoice of that 价税合计 (m03 with its amounts set, 3% 增值税) and gives one line per leg, each
+// with its own date and city: legs are never merged by city or day.
+describe('ride-hailing invoice + two-page 滴滴 itinerary', () => {
+  const CASE = 'didi-itinerary-two-page-wrapped';
+
+  it('gives one line per leg across both pages, 北京 and 洛阳 legs each with their own city', async () => {
+    const invoice: Upload = { ...sample('m03'), name: '滴滴打车_发票.pdf', bytes: Buffer.concat([sample('m03').bytes, Buffer.from('\n% didi-invoice-two-page')]) };
+    const itinerary: Upload = { ...sample('m04'), name: '滴滴出行行程报销单.pdf', bytes: Buffer.concat([sample('m04').bytes, Buffer.from('\n% didi-itinerary-two-page')]) };
+    const m03 = Object.entries(loadParsePresets()).find(([name]) => name.startsWith('m03'))?.[1].outcome;
+    if (m03?.outcome !== 'recognised') throw new Error('missing recognised preset for m03');
+    const amounts: Readonly<Record<string, string>> = { netAmount: '375.96', taxAmount: '11.28', totalAmount: '387.24' };
+    const invoiceOutcome: ParseOutcome = { ...m03, candidates: m03.candidates.map((c) => (amounts[c.key] ? { ...c, value: amounts[c.key] ?? c.value } : c)) };
+    const itineraryOutcome = await parseMaterial({ materialId: CASE, fileName: `${CASE}.pdf`, mime: 'application/pdf', bytes: new Uint8Array() }, snapshotReaders(caseDoc(CASE)));
+    await rebooted({ parser: presetParser({ [sha256(invoice.bytes)]: invoiceOutcome, [sha256(itinerary.bytes)]: itineraryOutcome }) });
+
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [invoice, itinerary] });
+    const voucher = byFileName(snapshot, invoice.name);
+    const reference = byFileName(snapshot, itinerary.name);
+    expect(reference).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', status: 'ok', linkedMaterialIds: [voucher.materialId] });
+    expect(snapshot.pendingItems).toEqual([]);
+    const [BJ, LY] = ['北京市', '洛阳市'];
+    expect(snapshot.lines.map((l) => [l.date, l.city, l.grossAmount])).toEqual([
+      ['2026-07-17', BJ, '23.30'],
+      ['2026-07-17', BJ, '42.70'],
+      ['2026-07-18', LY, '18.01'],
+      ['2026-07-18', LY, '8.97'],
+      ['2026-07-19', LY, '10.03'],
+      ['2026-07-19', LY, '8.85'],
+      ['2026-07-19', LY, '9.65'],
+      ['2026-07-19', LY, '11.01'],
+      ['2026-07-20', LY, '15.89'],
+      ['2026-08-02', BJ, '30.90'],
+      ['2026-08-10', BJ, '46.00'],
+      ['2026-08-11', BJ, '15.70'],
+      ['2026-08-12', BJ, '14.20'],
+      ['2026-08-12', BJ, '16.10'],
+      ['2026-08-13', BJ, '51.20'],
+      ['2026-08-13', BJ, '19.00'],
+      ['2026-09-03', LY, '16.19'],
+      ['2026-09-04', LY, '6.99'],
+      ['2026-09-05', LY, '6.66'],
+      ['2026-09-07', LY, '15.89'],
+    ]);
+    for (const line of snapshot.lines) expect(line).toMatchObject({ voucherMaterialId: voucher.materialId, referenceMaterialIds: [reference.materialId], category: { code: 'remote_city_transport' } });
+  });
+});

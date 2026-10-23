@@ -36,6 +36,27 @@ const RANGE = '· 行程起止日期：2026-07-02 至 2026-07-03';
 const SUMMARY = '· 共2笔行程， 合计81.60元';
 const range = (from: string, to: string) => ({ [RANGE]: `· 行程起止日期：${from} 至 ${to}` });
 
+// #450: the two-page capture (`../snapshots/didi-itinerary-two-page-wrapped` scores every leg it reads) is judged as one
+// list: the legs of page 2 count toward 共20笔 and must carry on the 序号 of page 1.
+describe('ride_itinerary/didi, a table over two pages', () => {
+  const TWO_PAGES = 'didi-itinerary-two-page-wrapped';
+  const refusal = (doc: ParseDoc) => {
+    const outcome = recognised(doc);
+    return { codes: outcome.findings.map((f) => f.code), legs: legKeys(outcome).length };
+  };
+
+  it('refuses the legs when page 2 is missing: 10 legs read against 共20笔', () => {
+    const doc = caseDoc(TWO_PAGES);
+    expect(refusal({ ...doc, pageCount: 1, observations: doc.observations.filter((o) => o.page === 1) })).toEqual({ codes: ['segment_rows_incomplete', 'segment_total_mismatch'], legs: 0 });
+  });
+
+  it('refuses the legs when page 2 restarts its 序号 instead of carrying on', () => {
+    const doc = caseDoc(TWO_PAGES);
+    const restarted = { ...doc, observations: doc.observations.map((o) => (o.page === 2 && o.raw === '11' ? { ...o, text: '1', raw: '1' } : o)) };
+    expect(refusal(restarted)).toEqual({ codes: ['segment_index_unexpected.11'], legs: 0 });
+  });
+});
+
 describe('ride_itinerary/didi', () => {
   it('recognises a 滴滴出行-行程单 as the only layout and names it 滴滴行程单; the year of each leg date is derived', () => {
     const doc = caseDoc(BASE);

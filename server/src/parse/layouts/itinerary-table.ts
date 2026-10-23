@@ -6,7 +6,9 @@ import { compact, rows, type ParseDoc, type TextObservation } from '../doc';
 // amount formats stay in the layout.
 //
 // How a table is read:
-// - The header is the first row (in page order, top to bottom) whose cells match the required columns.
+// - The header is the first row (in page order, top to bottom) whose cells match the required columns. A table that
+//   repeats its header on every page (`repeatedHeader`) is read page by page instead: each page's own header (its
+//   column centres may shift between pages) reads the legs below it on that page, and the pages' legs join in page order.
 // - Every observation below the header belongs to the header column whose centre is nearest (within the midpoints to
 //   its neighbours).
 // - Each numeric cell in the index column anchors one leg. A leg's band runs from midway to the leg above (or to the
@@ -24,6 +26,9 @@ export type ItineraryTableSpec<C extends string> = {
   index: C;
   // The columns whose cells may wrap onto the lines below, within the leg's band.
   wrapping: ReadonlySet<C>;
+  // The table runs over several pages, its header printed again at the top of each. Without it only the first header's
+  // page is read.
+  repeatedHeader?: boolean;
 };
 
 // One leg row: its printed 序号 and the observations of each other column, top to bottom. A column with nothing in the
@@ -54,25 +59,32 @@ export const cellRaw = (list: readonly TextObservation[] | undefined): string | 
 type Header<C extends string> = { y: number; page: number; columns: { key: C; center: number }[] };
 
 export function itineraryTable<C extends string>(spec: ItineraryTableSpec<C>): ItineraryTable<C> {
-  const header = (doc: ParseDoc): Header<C> | null => {
-    for (let page = 1; page <= doc.pageCount; page += 1) {
-      for (const row of rows(doc, page)) {
-        const columns = row.flatMap((o) => {
-          const key = spec.columns.find(([pattern]) => pattern.test(compact(o.text)))?.[1];
-          return key ? [{ key, center: center(o) }] : [];
-        });
-        if (spec.required.every((key) => columns.some((c) => c.key === key))) return { y: row[0]?.y ?? 0, page, columns };
-      }
+  // The first header row on one page, top to bottom.
+  const headerOn = (doc: ParseDoc, page: number): Header<C> | null => {
+    for (const row of rows(doc, page)) {
+      const columns = row.flatMap((o) => {
+        const key = spec.columns.find(([pattern]) => pattern.test(compact(o.text)))?.[1];
+        return key ? [{ key, center: center(o) }] : [];
+      });
+      if (spec.required.every((key) => columns.some((c) => c.key === key))) return { y: row[0]?.y ?? 0, page, columns };
     }
     return null;
   };
+  // The headers whose legs are read, in page order: the first one, or one per page for a repeated header.
+  const headers = (doc: ParseDoc): Header<C>[] => {
+    const out: Header<C>[] = [];
+    for (let page = 1; page <= doc.pageCount; page += 1) {
+      const head = headerOn(doc, page);
+      if (!head) continue;
+      out.push(head);
+      if (!spec.repeatedHeader) break;
+    }
+    return out;
+  };
 
   return {
-    hasHeader: (doc) => header(doc) !== null,
-    legs(doc) {
-      const head = header(doc);
-      return head ? legsBelow(doc, head, spec) : [];
-    },
+    hasHeader: (doc) => headers(doc).length > 0,
+    legs: (doc) => headers(doc).flatMap((head) => legsBelow(doc, head, spec)),
   };
 }
 
