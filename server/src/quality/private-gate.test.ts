@@ -141,6 +141,10 @@ describe('pnpm test:private (#196)', () => {
     expect(REQUIRED_EXPECTATIONS['vat_invoice/einvoice']).toEqual(['invoiceNumber', 'issueDate', 'itemName', 'netAmount', 'taxAmount', 'totalAmount']);
   });
 
+  it('requires a 滴滴 行程单 sample to write down its header and the city of its first leg, the same as 高德 (#449)', () => {
+    expect(REQUIRED_EXPECTATIONS['ride_itinerary/didi']).toEqual(['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].city']);
+  });
+
   it('skips cleanly (exit 0) when BAOX_PRIVATE_CORPUS is unset', async () => {
     const { code, report } = await run(undefined);
     expect(code).toBe(0);
