@@ -40,7 +40,8 @@ const AMOUNT_UNIT = /元$/;
 
 type Column = 'no' | 'carType' | 'time' | 'city' | 'origin' | 'destination' | 'distance' | 'amount' | 'note';
 // 里程 and 备注 get columns of their own so their text never lands in a neighbouring column; nothing reads them.
-// Every column may wrap (车型, 上车时间 with its weekday, 城市, addresses): #450 reads such tables.
+// Every column may wrap (车型, 上车时间 with its weekday, 城市, addresses). A long 行程单 runs over several pages, the
+// header repeated on each and the 序号 continuing; the trust rule below judges the joined list (#450).
 const TABLE = itineraryTable<Column>({
   columns: [
     [/^序号$/, 'no'],
@@ -56,6 +57,7 @@ const TABLE = itineraryTable<Column>({
   required: ['no', 'time', 'origin', 'destination', 'amount'],
   index: 'no',
   wrapping: new Set(['carType', 'time', 'city', 'origin', 'destination', 'distance', 'amount', 'note']),
+  repeatedHeader: true,
 });
 
 const ref = (observations: readonly TextObservation[]): EvidenceRef[] =>
