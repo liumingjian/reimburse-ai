@@ -193,6 +193,31 @@ describe('hotel_folio/labelled reads each value by position from its label', () 
     expect(recognised(below(1.2 * H)).missing).toEqual(['checkOut']);
   });
 
+  it('drops one leading colon from a value read beside or below its label, for every field (#447)', () => {
+    // The 华住 text layer prints the label alone and its colon with the value as one run: `入住日期` then `： 2026-08-09`.
+    const beside = photo([
+      ['房间号', '： 0816'],
+      ['入住日期', '： 2026-08-09'],
+      ['离店日期', ':2026-08-22'],
+      ['消费合计', '：3,640.00'],
+    ]);
+    expect(values(recognised(beside))).toEqual({ roomNumber: '0816', checkIn: '2026-08-09', checkOut: '2026-08-22', folioTotal: '3640.00' });
+    const below = photo(
+      [
+        ['房号', '0816'],
+        ['消费合计', '3640.00'],
+        ['入住日期', '2026-08-09'],
+      ],
+      [box('离店日期', 40, 500), box('： 2026-08-22', 40, 500 - 0.5 * H - H)],
+    );
+    expect(values(recognised(below))).toMatchObject({ checkOut: '2026-08-22' });
+  });
+
+  it('reads a colon with no value after it as no value, and drops only one colon', () => {
+    expect(recognised(photo(STAY('：', '2026-08-22'))).missing).toEqual(['checkIn']);
+    expect(recognised(photo(STAY('：：2026-08-09', '2026-08-22'))).missing).toEqual(['checkIn']);
+  });
+
   it('never reads another label as a value', () => {
     // 入住日期 has no value on its row; the box below it is the 离店日期 label, which is not its value.
     const doc = photo(

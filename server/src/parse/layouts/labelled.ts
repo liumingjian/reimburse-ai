@@ -15,7 +15,7 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'hotel_folio';
 const NAME = 'labelled';
-const VERSION = '2';
+const VERSION = '3';
 const SOURCE = ruleSource(KIND, NAME);
 const LABEL = '酒店结账单';
 
@@ -114,9 +114,13 @@ const labelOf = (doc: ParseDoc, field: Field): { box: TextObservation; label: st
 
 type Read = { text: string; raw: string; observations: TextObservation[] };
 
+// A value in a run of its own, without the one colon some text layers print with it rather than with the label
+// (华住's `入住日期` then `： 2026-07-03`, #447). Only one: a second colon is not a value shape any field reads.
+const uncolon = (text: string) => compact(text).replace(/^[:：]/, '');
+
 // A field's value: in the label's own run when OCR or the text layer kept them together; else the nearest box right of
-// the label within its row band; else the box directly below it within the gap. A box that is itself a label is never
-// a value.
+// the label within its row band; else the box directly below it within the gap, less a leading colon. A box that is
+// itself a label is never a value.
 function valueOf(doc: ParseDoc, field: Field): Read | null {
   const found = labelOf(doc, field);
   if (!found) return null;
@@ -134,7 +138,9 @@ function valueOf(doc: ParseDoc, field: Field): Read | null {
     })
     .sort((a, b) => b.y - a.y)[0];
   const value = right ?? below;
-  return value ? { text: compact(value.text), raw: compact(value.raw), observations: [box, value] } : null;
+  if (!value) return null;
+  const text = uncolon(value.text);
+  return text ? { text, raw: uncolon(value.raw), observations: [box, value] } : null;
 }
 
 function validDate(year: number, month: number, day: number): boolean {
