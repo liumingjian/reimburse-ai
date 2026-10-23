@@ -132,13 +132,13 @@ export type TransportPlan = {
   notes: Map<string, string>;
 };
 
-const BRANDS: Readonly<Record<string, string>> = { amap: '高德' };
+const BRANDS: Readonly<Record<string, string>> = { amap: '高德', didi: '滴滴' };
 export const ALLOCATION_GIVE_UP_NOTE = '放弃后这张发票不形成明细：请把它连同行程单排除，或补充能逐段核对的行程单后重新盘点。';
 
 const arrow = (from: string | null, to: string | null) => (from && to ? `${from} → ${to}` : null);
 const push = <T>(map: Map<string, T[]>, key: string, value: T) => map.set(key, [...(map.get(key) ?? []), value]);
 
-// Pairs ride-hailing 全电发票 with 高德 itineraries and decides their per-leg lines or allocation items.
+// Pairs ride-hailing 全电发票 with 行程单 (高德, 滴滴) and decides their per-leg lines or allocation items.
 // `answers`: per invoice materialId, the per-leg totals the user gave on its allocation item (#187).
 export function planTransport(materials: readonly TransportMaterial[], answers: ReadonlyMap<string, readonly string[]> = new Map()): TransportPlan {
   const plan: TransportPlan = { lines: new Map(), items: new Map(), links: new Map(), notes: new Map() };
