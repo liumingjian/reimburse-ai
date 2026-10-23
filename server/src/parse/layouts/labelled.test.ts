@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { KINDS } from '../../kind-policy';
 import { dispatch, type Recognised } from '../dispatch';
 import type { ParseDoc, TextObservation } from '../doc';
-import { caseDoc } from '../testing/snapshot-cases';
+import { caseDoc, huazhuStay } from '../testing/snapshot-cases';
 import { LAYOUTS } from '.';
 import { labelled } from './labelled';
 
@@ -264,16 +264,9 @@ describe('hotel_folio/labelled date shapes', () => {
 });
 
 describe('hotel_folio/labelled date order (#448)', () => {
-  // The real 华住 结账单 (`hotel-folio-huazhu-colon-run`, 入住 2026-08-11, 离店 2026-08-13) with its date value runs
-  // edited: p1.10 is the 入住 value, p1.12 the 离店 value, each printed as `： <date>`.
-  const huazhu = (checkIn: string, checkOut: string): ParseDoc => {
-    const doc = caseDoc('hotel-folio-huazhu-colon-run');
-    const runs: Record<string, string> = { 'p1.10': `： ${checkIn}`, 'p1.12': `： ${checkOut}` };
-    return { ...doc, observations: doc.observations.map((o) => (runs[o.id] ? { ...o, text: runs[o.id] ?? '', raw: runs[o.id] ?? '' } : o)) };
-  };
-
+  // The real 华住 结账单 (入住 2026-08-11, 离店 2026-08-13 as printed) with its stay dates reprinted (`huazhuStay`).
   it('keeps a same-day stay as printed and adds a non-blocking advisory to check the original', () => {
-    const outcome = recognised(huazhu('2026-07-03', '2026-07-03'));
+    const outcome = recognised(huazhuStay('2026-07-03', '2026-07-03'));
     expect(outcome.missing).toEqual([]);
     expect(values(outcome)).toMatchObject({ checkIn: '2026-07-03', checkOut: '2026-07-03' });
     expect(values(outcome)).not.toHaveProperty('nights');
@@ -281,14 +274,14 @@ describe('hotel_folio/labelled date order (#448)', () => {
   });
 
   it('blocks a 离店 earlier than 入住, keeping both dates as printed', () => {
-    const outcome = recognised(huazhu('2026-08-13', '2026-08-11'));
+    const outcome = recognised(huazhuStay('2026-08-13', '2026-08-11'));
     expect(values(outcome)).toMatchObject({ checkIn: '2026-08-13', checkOut: '2026-08-11' });
     expect(outcome.findings).toEqual([{ kind: 'validation', code: 'dates_reversed', message: '离店日期 2026-08-11 早于入住日期 2026-08-13，日期颠倒。' }]);
   });
 
   it('flags neither on a normal stay, nor when a date is missing', () => {
-    expect(recognised(huazhu('2026-08-11', '2026-08-12')).findings).toEqual([]);
-    const oneDate = recognised(huazhu('2026-08-11', '无'));
+    expect(recognised(huazhuStay('2026-08-11', '2026-08-12')).findings).toEqual([]);
+    const oneDate = recognised(huazhuStay('2026-08-11', '无'));
     expect(oneDate.missing).toEqual(['checkOut']);
     expect(oneDate.findings).toEqual([]);
   });

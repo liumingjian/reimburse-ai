@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { dispatch, type Recognised } from '../dispatch';
-import { normalise, type ParseDoc } from '../doc';
-import { caseDoc } from '../testing/snapshot-cases';
+import { dispatch, type ParseOutcome, type Recognised } from '../dispatch';
+import type { ParseDoc } from '../doc';
+import { caseDoc, editedCase } from '../testing/snapshot-cases';
 import { LAYOUTS } from '.';
 import { didiItinerary } from './didi-itinerary';
 
 // The 滴滴 行程单 版式 (#449). The base document is a real single-page 滴滴出行-行程单, captured redacted
 // (`../snapshots/didi-itinerary-single-page`, which also scores every fact it reads). The cases below edit its runs to
 // reach what no real sample shows: a range crossing New Year, a year that does not fit uniquely, a count or a total that
-// disagrees with the legs.
+// disagrees with the legs. Every case is judged on the parse outcome, the way the inventory sees it.
 
 vi.mock('unpdf', () => {
   throw new Error('a layout test loaded pdfjs: read the document from a snapshot case');
@@ -18,8 +18,9 @@ const BASE = 'didi-itinerary-single-page';
 const SOURCE = 'rule:ride_itinerary/didi';
 const YEAR = 'rule:ride_itinerary/didi.year_from_range';
 
+const outcomeOf = (doc: ParseDoc): ParseOutcome => dispatch(doc, LAYOUTS);
 function recognised(doc: ParseDoc): Recognised {
-  const outcome = dispatch(doc, LAYOUTS);
+  const outcome = outcomeOf(doc);
   if (outcome.outcome !== 'recognised') throw new Error(`expected recognised, got ${JSON.stringify(outcome)}`);
   return outcome;
 }
@@ -27,14 +28,12 @@ const values = (outcome: Recognised) => Object.fromEntries(outcome.candidates.ma
 const legKeys = (outcome: Recognised) => outcome.candidates.filter((c) => c.key.startsWith('segments['));
 
 // The base document with whole runs replaced, each found by its printed text.
-function edited(replacements: Readonly<Record<string, string>>): ParseDoc {
-  const doc = caseDoc(BASE);
-  for (const from of Object.keys(replacements)) if (!doc.observations.some((o) => o.raw === from)) throw new Error(`no run prints ${from}`);
-  return { ...doc, observations: doc.observations.map((o) => (replacements[o.raw] === undefined ? o : { ...o, text: normalise(replacements[o.raw] ?? ''), raw: replacements[o.raw] ?? '' })) };
-}
+const edited = (replacements: Readonly<Record<string, string>>): ParseDoc => editedCase(BASE, replacements);
+const TITLE = '滴滴出行-行程单';
 const RANGE = '· 行程起止日期：2026-07-02 至 2026-07-03';
 const SUMMARY = '· 共2笔行程， 合计81.60元';
 const range = (from: string, to: string) => ({ [RANGE]: `· 行程起止日期：${from} 至 ${to}` });
+const UNRECOGNISED = { outcome: 'unrecognised', reason: 'no_layout' };
 
 // #450: the two-page capture (`../snapshots/didi-itinerary-two-page-wrapped` scores every leg it reads) is judged as one
 // list: the legs of page 2 count toward 共20笔 and must carry on the 序号 of page 1.
@@ -51,32 +50,28 @@ describe('ride_itinerary/didi, a table over two pages', () => {
   });
 
   it('refuses the legs when page 2 restarts its 序号 instead of carrying on', () => {
-    const doc = caseDoc(TWO_PAGES);
-    const restarted = { ...doc, observations: doc.observations.map((o) => (o.page === 2 && o.raw === '11' ? { ...o, text: '1', raw: '1' } : o)) };
-    expect(refusal(restarted)).toEqual({ codes: ['segment_index_unexpected.11'], legs: 0 });
+    // p2.10 is page 2's first 序号, printed 11.
+    expect(refusal(editedCase(TWO_PAGES, { 'p2.10': '1' }))).toEqual({ codes: ['segment_index_unexpected.11'], legs: 0 });
   });
 });
 
 describe('ride_itinerary/didi', () => {
   it('recognises a 滴滴出行-行程单 as the only layout and names it 滴滴行程单; the year of each leg date is derived', () => {
-    const doc = caseDoc(BASE);
-    expect(LAYOUTS.filter((layout) => layout.recognise(doc)).map((layout) => layout.name)).toEqual(['didi']);
-    const outcome = recognised(doc);
+    const outcome = recognised(caseDoc(BASE));
     expect(outcome).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', parserVersion: didiItinerary.version, kindLabel: '滴滴行程单', missing: [], findings: [] });
     for (const c of outcome.candidates) expect(c.source).toBe(c.key.endsWith('.date') ? YEAR : SOURCE);
     expect(outcome.candidates.find((c) => c.key === 'segments[0].date')).toMatchObject({ evidence: 'derived' });
   });
 
-  it('does not take the synthetic 曹操 行程单 (m06, titled just 行程单) or the 高德 one', () => {
-    for (const name of ['fixture-m06-caocao-itinerary', 'fixture-m04-amap-itinerary', 'fixture-m05-caocao-invoice']) expect(didiItinerary.recognise(caseDoc(name))).toBe(false);
-    expect(dispatch(caseDoc('fixture-m06-caocao-itinerary'), LAYOUTS)).toMatchObject({ outcome: 'unrecognised', reason: 'no_layout' });
+  it('leaves the synthetic 曹操 行程单 (m06, titled just 行程单) unrecognised, and the 高德 行程单 and a 曹操 invoice to their own layouts', () => {
+    expect(outcomeOf(caseDoc('fixture-m06-caocao-itinerary'))).toMatchObject(UNRECOGNISED);
+    expect(outcomeOf(caseDoc('fixture-m04-amap-itinerary'))).toMatchObject({ outcome: 'recognised', kind: 'ride_itinerary', layout: 'amap' });
+    expect(outcomeOf(caseDoc('fixture-m05-caocao-invoice'))).toMatchObject({ outcome: 'recognised', kind: 'vat_invoice' });
   });
 
   it('reads the 第三方网约车服务提供方 title the same way and names the carrier it prints: 曹操出行行程单', () => {
     // The real 曹操 face prints this title as one run, with an em dash, over the same header and table.
-    const doc = edited({ '滴滴出行-行程单': '第三方网约车服务提供方曹操出行—行程单' });
-    expect(LAYOUTS.filter((layout) => layout.recognise(doc)).map((layout) => layout.name)).toEqual(['didi']);
-    const outcome = recognised(doc);
+    const outcome = recognised(edited({ [TITLE]: '第三方网约车服务提供方曹操出行—行程单' }));
     expect(outcome).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', kindLabel: '曹操出行行程单', missing: [], findings: [] });
     expect(values(outcome)).toEqual({
       applyDate: '2026-10-13',
@@ -100,13 +95,13 @@ describe('ride_itinerary/didi', () => {
   });
 
   it('a third-party title without a carrier, or not ending in 行程单, is not taken', () => {
-    expect(didiItinerary.recognise(edited({ '滴滴出行-行程单': '第三方网约车服务提供方—行程单' }))).toBe(false);
-    expect(didiItinerary.recognise(edited({ '滴滴出行-行程单': '第三方网约车服务提供方曹操出行' }))).toBe(false);
+    expect(outcomeOf(edited({ [TITLE]: '第三方网约车服务提供方—行程单' }))).toMatchObject(UNRECOGNISED);
+    expect(outcomeOf(edited({ [TITLE]: '第三方网约车服务提供方曹操出行' }))).toMatchObject(UNRECOGNISED);
   });
 
   it('needs the title and the table header: either alone is not a 滴滴 行程单', () => {
-    expect(didiItinerary.recognise(edited({ '滴滴出行-行程单': '行程单' }))).toBe(false);
-    expect(didiItinerary.recognise(edited({ 终点: '目的地' }))).toBe(false);
+    expect(outcomeOf(edited({ [TITLE]: '行程单' }))).toMatchObject(UNRECOGNISED);
+    expect(outcomeOf(edited({ 终点: '目的地' }))).toMatchObject(UNRECOGNISED);
   });
 
   it('a range crossing New Year gives each leg its own year', () => {
@@ -141,6 +136,15 @@ describe('ride_itinerary/didi', () => {
       ['validation', 'segment_year_undecided.2'],
     ]);
     expect(outcome.findings[0]?.message).toBe('第 1 段的上车日期 07-02 定不了年份：行程起止日期没读到；整块不采用。');
+  });
+
+  it('a 行程起止日期 printed reversed decides no year, and each leg names the reversed range', () => {
+    const outcome = recognised(edited(range('2026-07-03', '2026-07-02')));
+    expect(outcome.findings).toEqual([
+      { kind: 'validation', code: 'segment_year_undecided.1', message: '第 1 段的上车日期 07-02 定不了年份：行程起止日期 2026-07-03 至 2026-07-02 起止颠倒；整块不采用。' },
+      { kind: 'validation', code: 'segment_year_undecided.2', message: '第 2 段的上车日期 07-03 定不了年份：行程起止日期 2026-07-03 至 2026-07-02 起止颠倒；整块不采用。' },
+    ]);
+    expect(legKeys(outcome)).toEqual([]);
   });
 
   it('a declared count that disagrees with the legs refuses them with both counts', () => {

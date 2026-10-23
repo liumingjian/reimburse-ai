@@ -8,7 +8,8 @@ import { cellRaw, cellText, itineraryTable } from './itinerary-table';
 // `segments[i].<field>` (date, time, carType, city, origin, destination, amount). 里程 and 备注 are printed but not read.
 //
 // The table prints a leg's 上车时间 as `MM-DD HH:MM` plus a weekday, without the year. The year is derived from the header's
-// 行程起止日期 (`year_from_range`): the one year that puts the date inside the range. None or several: no date.
+// 行程起止日期 (`year_from_range`): the one year that puts the date inside the range. None or several, or a range not
+// read or printed reversed: no date.
 //
 // Trust rule, stricter than 高德: the legs are adopted only as a whole, when their 序号 run 1..n, n is the declared
 // 共N笔, every leg has a date and an amount, and the amounts sum to the declared 合计 to the cent. Otherwise no leg is
@@ -71,12 +72,13 @@ function titledCarrier(doc: ParseDoc): string | null {
 }
 
 type YearRange = { from: string; to: string };
-type Undecided = 'no_range' | 'outside' | 'ambiguous';
+type Undecided = 'no_range' | 'reversed' | 'outside' | 'ambiguous';
 type LegDate = { date: string } | { date: null; reason: Undecided };
 
 // Why a leg's year was not decided, for its refusal; `range` is 行程起止日期 as printed.
 const UNDECIDED: Readonly<Record<Undecided, (range: string) => string>> = {
   no_range: () => '定不了年份：行程起止日期没读到',
+  reversed: (range) => `定不了年份：行程起止日期 ${range} 起止颠倒`,
   outside: (range) => `不在行程起止日期 ${range} 内，定不了年份`,
   ambiguous: (range) => `在行程起止日期 ${range} 内对得上不止一个年份，没有采用`,
 };
@@ -84,6 +86,7 @@ const UNDECIDED: Readonly<Record<Undecided, (range: string) => string>> = {
 // `year_from_range`: the one year that puts `MM-DD` inside 行程起止日期 (ISO dates compare as strings).
 function yearFromRange(month: number, day: number, range: YearRange | null): LegDate {
   if (!range) return { date: null, reason: 'no_range' };
+  if (range.from > range.to) return { date: null, reason: 'reversed' };
   const fits: string[] = [];
   for (let year = Number(range.from.slice(0, 4)); year <= Number(range.to.slice(0, 4)); year += 1) {
     const date = isoDate(year, month, day);
@@ -117,7 +120,7 @@ export const didiItinerary: Layout = {
     if (apply) add('applyDate', apply.match[1], apply.span.observations);
 
     const rangeMatch = matchSpan(lines, RANGE);
-    const range = rangeMatch?.match[1] && rangeMatch.match[2] && rangeMatch.match[1] <= rangeMatch.match[2] ? { from: rangeMatch.match[1], to: rangeMatch.match[2] } : null;
+    const range = rangeMatch?.match[1] && rangeMatch.match[2] ? { from: rangeMatch.match[1], to: rangeMatch.match[2] } : null;
     const rangeText = range ? `${range.from} 至 ${range.to}` : '';
 
     const summary = matchSpan(lines, SUMMARY);

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inlineExecutor, type ParseExecutor } from './parse/executor';
 import type { ParseOutcome } from './parse/dispatch';
-import { normalise, type ParseDoc } from './parse/doc';
+import type { ParseDoc } from './parse/doc';
 import { parseMaterial } from './parse/material';
 import { snapshotReaders } from './parse/snapshot';
-import { caseDoc } from './parse/testing/snapshot-cases';
+import { caseDoc, editedCase } from './parse/testing/snapshot-cases';
 import { api, byFileName, sample, type Upload } from './test/api';
 import type { TestClient, TestServerOptions } from './test/harness';
 import { loadParsePresets, presetParser, sha256 } from './test/parse-presets';
@@ -219,27 +219,25 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
   });
 });
 
-// #449: a 滴滴 行程单 goes through the same pairing and per-leg lines as a 高德 one. Its parse outcome is the real layout
-// reading the redacted capture of a real single-page 滴滴出行-行程单 (two legs in 西安, 合计 81.60); the invoice is m03
-// with its amounts set to that 合计. Both uploads are fixture bytes with a trailing comment, so only the preset decides
-// what they read as.
+// #449, #450: a 滴滴 行程单 goes through the same pairing and per-leg lines as a 高德 one. Its parse outcome is the real
+// layout reading a redacted capture of a real 滴滴出行-行程单; the invoice is m03 with its amounts set to that 行程单's
+// 合计. Both uploads are fixture bytes with a trailing comment, so only the preset decides what they read as.
+async function bootDidi(doc: ParseDoc, amounts: { netAmount: string; taxAmount: string; totalAmount: string }): Promise<{ invoice: Upload; itinerary: Upload }> {
+  const invoice: Upload = { ...sample('m03'), name: '滴滴打车_发票.pdf', bytes: Buffer.concat([sample('m03').bytes, Buffer.from(`\n% didi-invoice ${amounts.totalAmount}`)]) };
+  const itinerary: Upload = { ...sample('m04'), name: '滴滴出行行程报销单.pdf', bytes: Buffer.concat([sample('m04').bytes, Buffer.from(`\n% didi-itinerary ${amounts.totalAmount}`)]) };
+  const m03 = Object.entries(loadParsePresets()).find(([name]) => name.startsWith('m03'))?.[1].outcome;
+  if (m03?.outcome !== 'recognised') throw new Error('missing recognised preset for m03');
+  const set: Readonly<Record<string, string>> = amounts;
+  const invoiceOutcome: ParseOutcome = { ...m03, candidates: m03.candidates.map((c) => (set[c.key] ? { ...c, value: set[c.key] ?? c.value } : c)) };
+  const itineraryOutcome = await parseMaterial({ materialId: 'didi-itinerary', fileName: itinerary.name, mime: 'application/pdf', bytes: new Uint8Array() }, snapshotReaders(doc));
+  await rebooted({ parser: presetParser({ [sha256(invoice.bytes)]: invoiceOutcome, [sha256(itinerary.bytes)]: itineraryOutcome }) });
+  return { invoice, itinerary };
+}
+
+// The single-page capture: two legs in 西安, 合计 81.60.
 describe('ride-hailing invoice + 滴滴 itinerary', () => {
   const DIDI = 'didi-itinerary-single-page';
-
-  async function didiOutcome(doc: ParseDoc): Promise<ParseOutcome> {
-    return parseMaterial({ materialId: DIDI, fileName: `${DIDI}.pdf`, mime: 'application/pdf', bytes: new Uint8Array() }, snapshotReaders(doc));
-  }
-
-  async function bootWith(doc: ParseDoc): Promise<{ invoice: Upload; itinerary: Upload }> {
-    const invoice: Upload = { ...sample('m03'), name: '滴滴打车_发票.pdf', bytes: Buffer.concat([sample('m03').bytes, Buffer.from('\n% didi-invoice')]) };
-    const itinerary: Upload = { ...sample('m04'), name: '滴滴出行行程报销单.pdf', bytes: Buffer.concat([sample('m04').bytes, Buffer.from('\n% didi-itinerary')]) };
-    const m03 = Object.entries(loadParsePresets()).find(([name]) => name.startsWith('m03'))?.[1].outcome;
-    if (m03?.outcome !== 'recognised') throw new Error('missing recognised preset for m03');
-    const amounts: Readonly<Record<string, string>> = { netAmount: '79.22', taxAmount: '2.38', totalAmount: '81.60' };
-    const invoiceOutcome: ParseOutcome = { ...m03, candidates: m03.candidates.map((c) => (amounts[c.key] ? { ...c, value: amounts[c.key] ?? c.value } : c)) };
-    await rebooted({ parser: presetParser({ [sha256(invoice.bytes)]: invoiceOutcome, [sha256(itinerary.bytes)]: await didiOutcome(doc) }) });
-    return { invoice, itinerary };
-  }
+  const bootWith = (doc: ParseDoc) => bootDidi(doc, { netAmount: '79.22', taxAmount: '2.38', totalAmount: '81.60' });
 
   it('pairs with the invoice whose 价税合计 equals its 合计 and gives one line per leg, each with its own city; notes name 滴滴', async () => {
     const uploads = await bootWith(caseDoc(DIDI));
@@ -262,10 +260,7 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
   });
 
   it('a third-party 行程单 issued through 滴滴 is named by its carrier, in its display name and in the notes of its lines (#451)', async () => {
-    const doc = caseDoc(DIDI);
-    const title = '第三方网约车服务提供方曹操出行—行程单';
-    const thirdParty = { ...doc, observations: doc.observations.map((o) => (o.raw === '滴滴出行-行程单' ? { ...o, text: normalise(title), raw: title } : o)) };
-    const uploads = await bootWith(thirdParty);
+    const uploads = await bootWith(editedCase(DIDI, { '滴滴出行-行程单': '第三方网约车服务提供方曹操出行—行程单' }));
     const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [uploads.invoice, uploads.itinerary] });
     const invoice = byFileName(snapshot, uploads.invoice.name);
     const itinerary = byFileName(snapshot, uploads.itinerary.name);
@@ -277,9 +272,7 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
   });
 
   it('a refused 滴滴 行程单 (its legs disagree with 共N笔) is not paired, even though its 合计 matches the invoice', async () => {
-    const doc = caseDoc(DIDI);
-    const refused = { ...doc, observations: doc.observations.map((o) => (o.raw === '· 共2笔行程， 合计81.60元' ? { ...o, text: normalise('· 共3笔行程， 合计81.60元'), raw: '· 共3笔行程， 合计81.60元' } : o)) };
-    const uploads = await bootWith(refused);
+    const uploads = await bootWith(editedCase(DIDI, { '· 共2笔行程， 合计81.60元': '· 共3笔行程， 合计81.60元' }));
     const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: [uploads.invoice, uploads.itinerary] });
     const invoice = byFileName(snapshot, uploads.invoice.name);
     const itinerary = byFileName(snapshot, uploads.itinerary.name);
@@ -287,23 +280,28 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
     expect(invoice).toMatchObject({ linkedMaterialIds: [], pendingItemIds: [`category_city_missing.${invoice.materialId}`] });
     expect(snapshot.lines).toEqual([]);
   });
+
+  it('a 行程起止日期 printed reversed raises one 待确认项 titled for the undecided year, which names the reversed range', async () => {
+    const uploads = await bootWith(editedCase(DIDI, { '· 行程起止日期：2026-07-02 至 2026-07-03': '· 行程起止日期：2026-07-03 至 2026-07-02' }));
+    const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: [uploads.invoice, uploads.itinerary] });
+    const itinerary = byFileName(snapshot, uploads.itinerary.name);
+    expect(snapshot.pendingItems.filter((item) => item.materialId === itinerary.materialId)).toEqual([
+      expect.objectContaining({
+        itemId: `validation_failure.${itinerary.materialId}.segment_year_undecided`,
+        title: `「${uploads.itinerary.name}」逐段明细的上车日期定不了年份`,
+        why: expect.stringContaining('行程起止日期 2026-07-03 至 2026-07-02 起止颠倒'),
+      }),
+    ]);
+  });
 });
 
-// #450: the redacted capture of a real two-page 滴滴出行-行程单 (20 legs, wrapped cells, 北京 and 洛阳, 合计 387.24) pairs
-// with a ride-hailing invoice of that 价税合计 (m03 with its amounts set, 3% 增值税) and gives one line per leg, each
-// with its own date and city: legs are never merged by city or day.
+// #450: the two-page capture (20 legs, wrapped cells, 北京 and 洛阳, 合计 387.24) pairs with a ride-hailing invoice of that
+// 价税合计 (3% 增值税) and gives one line per leg, each with its own date and city: legs are never merged by city or day.
 describe('ride-hailing invoice + two-page 滴滴 itinerary', () => {
   const CASE = 'didi-itinerary-two-page-wrapped';
 
   it('gives one line per leg across both pages, 北京 and 洛阳 legs each with their own city', async () => {
-    const invoice: Upload = { ...sample('m03'), name: '滴滴打车_发票.pdf', bytes: Buffer.concat([sample('m03').bytes, Buffer.from('\n% didi-invoice-two-page')]) };
-    const itinerary: Upload = { ...sample('m04'), name: '滴滴出行行程报销单.pdf', bytes: Buffer.concat([sample('m04').bytes, Buffer.from('\n% didi-itinerary-two-page')]) };
-    const m03 = Object.entries(loadParsePresets()).find(([name]) => name.startsWith('m03'))?.[1].outcome;
-    if (m03?.outcome !== 'recognised') throw new Error('missing recognised preset for m03');
-    const amounts: Readonly<Record<string, string>> = { netAmount: '375.96', taxAmount: '11.28', totalAmount: '387.24' };
-    const invoiceOutcome: ParseOutcome = { ...m03, candidates: m03.candidates.map((c) => (amounts[c.key] ? { ...c, value: amounts[c.key] ?? c.value } : c)) };
-    const itineraryOutcome = await parseMaterial({ materialId: CASE, fileName: `${CASE}.pdf`, mime: 'application/pdf', bytes: new Uint8Array() }, snapshotReaders(caseDoc(CASE)));
-    await rebooted({ parser: presetParser({ [sha256(invoice.bytes)]: invoiceOutcome, [sha256(itinerary.bytes)]: itineraryOutcome }) });
+    const { invoice, itinerary } = await bootDidi(caseDoc(CASE), { netAmount: '375.96', taxAmount: '11.28', totalAmount: '387.24' });
 
     const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [invoice, itinerary] });
     const voucher = byFileName(snapshot, invoice.name);
