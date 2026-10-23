@@ -114,6 +114,7 @@ const VALIDATION_TITLES: Readonly<Record<string, string>> = {
   segment_index_unexpected: '逐段明细的序号不对',
   segment_field_unreadable: '逐段明细没有完整读到',
   route_incomplete: '行程路线没有完整读到',
+  dates_reversed: '入住和离店日期颠倒',
 };
 const validationTitle = (code: string) => VALIDATION_TITLES[code.split('.')[0] ?? code] ?? '金额核对不通过';
 

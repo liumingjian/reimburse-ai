@@ -15,7 +15,7 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'hotel_folio';
 const NAME = 'labelled';
-const VERSION = '3';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 const LABEL = '酒店结账单';
 
@@ -220,8 +220,17 @@ export const labelled: Layout = {
     const total = amount('folioTotal');
     amount('paidAmount');
 
-    // Deterministic checks: the dates span the printed nights; the charge rows add up to 消费合计, to the cent.
+    // Deterministic checks: the dates are in order; the dates span the printed nights; the charge rows add up to
+    // 消费合计, to the cent.
     const { checkIn, checkOut } = dates;
+    // A check-in after midnight prints the same day for 入住 and 离店 (#448): the printed dates stand, nothing is
+    // shifted, and the employee is asked to check the original. 离店 before 入住 is no stay at all: blocking.
+    if (checkIn && checkOut && checkIn === checkOut) {
+      findings.push({ kind: 'advisory', code: 'same_day_stay', message: `入住与离店同日（${checkIn}），可能为凌晨入住，请核对原件。` });
+    }
+    if (checkIn && checkOut && checkOut < checkIn) {
+      findings.push({ kind: 'validation', code: 'dates_reversed', message: `离店日期 ${checkOut} 早于入住日期 ${checkIn}，日期颠倒。` });
+    }
     const nights = nightsText ? Number(nightsText) : null;
     if (checkIn && checkOut && nights !== null && daysBetween(checkIn, checkOut) !== nights) {
       findings.push({ kind: 'validation', code: 'nights_mismatch', message: `入住 ${checkIn} 到离店 ${checkOut} 是 ${daysBetween(checkIn, checkOut)} 晚，结账单写的是 ${nights} 晚。` });
