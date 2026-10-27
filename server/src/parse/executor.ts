@@ -43,11 +43,16 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
   let nextId = 0;
   // OCR lives in the worker, so it goes when the worker goes.
   let ocrLoaded = false;
-  const waiting = new Map<number, (outcome: ParseOutcome) => void>();
+  // Each request with the worker it was posted to: a worker that dies fails only its own requests. A released worker
+  // exits a moment after `terminate()`, by which time the next one may already hold a new run's work.
+  const waiting = new Map<number, { resolve: (outcome: ParseOutcome) => void; target: Worker }>();
 
-  const failAll = (reason: string) => {
-    for (const resolve of waiting.values()) resolve({ outcome: 'failed', retryable: true, reason });
-    waiting.clear();
+  const fail = (reason: string, target?: Worker) => {
+    for (const [id, request] of waiting) {
+      if (target && request.target !== target) continue;
+      request.resolve({ outcome: 'failed', retryable: true, reason });
+      waiting.delete(id);
+    }
   };
 
   const scheduleRelease = () => {
@@ -65,17 +70,17 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
     const spawned = new Worker(entry.url, { execArgv: entry.execArgv });
     spawned.on('message', ({ id, outcome, ocrLoaded: loaded }: WorkerReply) => {
       if (worker === spawned) ocrLoaded = loaded;
-      waiting.get(id)?.(outcome);
+      waiting.get(id)?.resolve(outcome);
       waiting.delete(id);
       if (waiting.size === 0) scheduleRelease();
     });
-    spawned.on('error', (error) => failAll(`parse worker failed: ${error.message}`));
+    spawned.on('error', (error) => fail(`parse worker failed: ${error.message}`, spawned));
     spawned.on('exit', (code) => {
       if (worker === spawned) {
         worker = null;
         ocrLoaded = false;
       }
-      failAll(`parse worker exited (${code})`);
+      fail(`parse worker exited (${code})`, spawned);
     });
     spawned.unref();
     return spawned;
@@ -90,7 +95,7 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
       const id = nextId++;
       const target = worker;
       return new Promise<ParseOutcome>((resolve) => {
-        waiting.set(id, resolve);
+        waiting.set(id, { resolve, target });
         target.postMessage({ id, input } satisfies WorkerRequest);
       });
     },
@@ -99,7 +104,7 @@ export function workerExecutor({ idleMs = 2000 }: { idleMs?: number } = {}): Par
       const current = worker;
       worker = null;
       ocrLoaded = false;
-      failAll('parse worker closed');
+      fail('parse worker closed');
       if (current) await current.terminate();
     },
   };
