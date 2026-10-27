@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inlineExecutor, type ParseExecutor } from './parse/executor';
-import { api, byFileName, sample } from './test/api';
+import type { ParseOutcome } from './parse/dispatch';
+import type { ParseDoc } from './parse/doc';
+import { parseMaterial } from './parse/material';
+import { snapshotReaders } from './parse/snapshot';
+import { caseDoc, editedCase } from './parse/testing/snapshot-cases';
+import { api, byFileName, sample, type Upload } from './test/api';
 import type { TestClient, TestServerOptions } from './test/harness';
-import { presetParser } from './test/parse-presets';
+import { loadParsePresets, presetParser, sha256 } from './test/parse-presets';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
 
 // Slice 05 (#184) through `app.request()`: rail e-tickets, a ride-hailing invoice paired with its 高德 itinerary, and
@@ -211,5 +216,121 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
     expect(orphan.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${m05.materialId}`]);
     expect(orphan.lines).toEqual([]);
     expect(orphan.inventory.ungroupedMaterialIds).toEqual([itinerary.materialId, m05.materialId]);
+  });
+});
+
+// #449, #450: a 滴滴 行程单 goes through the same pairing and per-leg lines as a 高德 one. Its parse outcome is the real
+// layout reading a redacted capture of a real 滴滴出行-行程单; the invoice is m03 with its amounts set to that 行程单's
+// 合计. Both uploads are fixture bytes with a trailing comment, so only the preset decides what they read as.
+async function bootDidi(doc: ParseDoc, amounts: { netAmount: string; taxAmount: string; totalAmount: string }): Promise<{ invoice: Upload; itinerary: Upload }> {
+  const invoice: Upload = { ...sample('m03'), name: '滴滴打车_发票.pdf', bytes: Buffer.concat([sample('m03').bytes, Buffer.from(`\n% didi-invoice ${amounts.totalAmount}`)]) };
+  const itinerary: Upload = { ...sample('m04'), name: '滴滴出行行程报销单.pdf', bytes: Buffer.concat([sample('m04').bytes, Buffer.from(`\n% didi-itinerary ${amounts.totalAmount}`)]) };
+  const m03 = Object.entries(loadParsePresets()).find(([name]) => name.startsWith('m03'))?.[1].outcome;
+  if (m03?.outcome !== 'recognised') throw new Error('missing recognised preset for m03');
+  const set: Readonly<Record<string, string>> = amounts;
+  const invoiceOutcome: ParseOutcome = { ...m03, candidates: m03.candidates.map((c) => (set[c.key] ? { ...c, value: set[c.key] ?? c.value } : c)) };
+  const itineraryOutcome = await parseMaterial({ materialId: 'didi-itinerary', fileName: itinerary.name, mime: 'application/pdf', bytes: new Uint8Array() }, snapshotReaders(doc));
+  await rebooted({ parser: presetParser({ [sha256(invoice.bytes)]: invoiceOutcome, [sha256(itinerary.bytes)]: itineraryOutcome }) });
+  return { invoice, itinerary };
+}
+
+// The single-page capture: two legs in 西安, 合计 81.60.
+describe('ride-hailing invoice + 滴滴 itinerary', () => {
+  const DIDI = 'didi-itinerary-single-page';
+  const bootWith = (doc: ParseDoc) => bootDidi(doc, { netAmount: '79.22', taxAmount: '2.38', totalAmount: '81.60' });
+
+  it('pairs with the invoice whose 价税合计 equals its 合计 and gives one line per leg, each with its own city; notes name 滴滴', async () => {
+    const uploads = await bootWith(caseDoc(DIDI));
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [uploads.invoice, uploads.itinerary] });
+    const invoice = byFileName(snapshot, uploads.invoice.name);
+    const itinerary = byFileName(snapshot, uploads.itinerary.name);
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', kindLabel: '滴滴行程单', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
+    expect(invoice).toMatchObject({ role: 'primary_voucher', status: 'ok', linkedMaterialIds: [itinerary.materialId] });
+    expect(snapshot.pendingItems).toEqual([]);
+
+    expect(snapshot.lines.map((l) => [l.date, l.city, l.origin, l.destination, l.grossAmount, l.netAmount, l.taxAmount, l.category.code])).toEqual([
+      ['2026-07-02', '西安市', '长乐公园-东广场-B2层地下停车场-网约车站', '华清|老街油泼面(环山路北店)', '62.70', '60.87', '1.83', 'remote_city_transport'],
+      ['2026-07-03', '西安市', '华清东路|中国石化西安临潼骊山加油站', '临潼区|雨金镇站', '18.90', '18.35', '0.55', 'remote_city_transport'],
+    ]);
+    for (const line of snapshot.lines) expect(line).toMatchObject({ voucherMaterialId: invoice.materialId, referenceMaterialIds: [itinerary.materialId] });
+    expect(snapshot.events.map((e) => [e.summary, e.evidenceNote])).toEqual([
+      ['滴滴 · 长乐公园-东广场-B2层地下停车场-网约车站 → 华清|老街油泼面(环山路北店)', '打车发票与行程单配对：62.70 + 18.90 = 81.60，按分守恒'],
+      ['滴滴 · 华清东路|中国石化西安临潼骊山加油站 → 临潼区|雨金镇站', null],
+    ]);
+  });
+
+  it('a third-party 行程单 issued through 滴滴 is named by its carrier, in its display name and in the notes of its lines (#451)', async () => {
+    const uploads = await bootWith(editedCase(DIDI, { '滴滴出行-行程单': '第三方网约车服务提供方曹操出行—行程单' }));
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [uploads.invoice, uploads.itinerary] });
+    const invoice = byFileName(snapshot, uploads.invoice.name);
+    const itinerary = byFileName(snapshot, uploads.itinerary.name);
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', kindLabel: '曹操出行行程单', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
+    expect(snapshot.events.map((e) => e.summary)).toEqual([
+      '曹操出行 · 长乐公园-东广场-B2层地下停车场-网约车站 → 华清|老街油泼面(环山路北店)',
+      '曹操出行 · 华清东路|中国石化西安临潼骊山加油站 → 临潼区|雨金镇站',
+    ]);
+  });
+
+  it('a refused 滴滴 行程单 (its legs disagree with 共N笔) is not paired, even though its 合计 matches the invoice', async () => {
+    const uploads = await bootWith(editedCase(DIDI, { '· 共2笔行程， 合计81.60元': '· 共3笔行程， 合计81.60元' }));
+    const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: [uploads.invoice, uploads.itinerary] });
+    const invoice = byFileName(snapshot, uploads.invoice.name);
+    const itinerary = byFileName(snapshot, uploads.itinerary.name);
+    expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', status: 'pending', linkedMaterialIds: [] });
+    expect(invoice).toMatchObject({ linkedMaterialIds: [], pendingItemIds: [`category_city_missing.${invoice.materialId}`] });
+    expect(snapshot.lines).toEqual([]);
+  });
+
+  it('a 行程起止日期 printed reversed raises one 待确认项 titled for the undecided year, which names the reversed range', async () => {
+    const uploads = await bootWith(editedCase(DIDI, { '· 行程起止日期：2026-07-02 至 2026-07-03': '· 行程起止日期：2026-07-03 至 2026-07-02' }));
+    const { reached: snapshot } = await scenario(server, signedIn).at('pending', { materials: [uploads.invoice, uploads.itinerary] });
+    const itinerary = byFileName(snapshot, uploads.itinerary.name);
+    expect(snapshot.pendingItems.filter((item) => item.materialId === itinerary.materialId)).toEqual([
+      expect.objectContaining({
+        itemId: `validation_failure.${itinerary.materialId}.segment_year_undecided`,
+        title: `「${uploads.itinerary.name}」逐段明细的上车日期定不了年份`,
+        why: expect.stringContaining('行程起止日期 2026-07-03 至 2026-07-02 起止颠倒'),
+      }),
+    ]);
+  });
+});
+
+// #450: the two-page capture (20 legs, wrapped cells, 北京 and 洛阳, 合计 387.24) pairs with a ride-hailing invoice of that
+// 价税合计 (3% 增值税) and gives one line per leg, each with its own date and city: legs are never merged by city or day.
+describe('ride-hailing invoice + two-page 滴滴 itinerary', () => {
+  const CASE = 'didi-itinerary-two-page-wrapped';
+
+  it('gives one line per leg across both pages, 北京 and 洛阳 legs each with their own city', async () => {
+    const { invoice, itinerary } = await bootDidi(caseDoc(CASE), { netAmount: '375.96', taxAmount: '11.28', totalAmount: '387.24' });
+
+    const { reached: snapshot } = await scenario(server, signedIn).at('project', { materials: [invoice, itinerary] });
+    const voucher = byFileName(snapshot, invoice.name);
+    const reference = byFileName(snapshot, itinerary.name);
+    expect(reference).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', status: 'ok', linkedMaterialIds: [voucher.materialId] });
+    expect(snapshot.pendingItems).toEqual([]);
+    const [BJ, LY] = ['北京市', '洛阳市'];
+    expect(snapshot.lines.map((l) => [l.date, l.city, l.grossAmount])).toEqual([
+      ['2026-07-17', BJ, '23.30'],
+      ['2026-07-17', BJ, '42.70'],
+      ['2026-07-18', LY, '18.01'],
+      ['2026-07-18', LY, '8.97'],
+      ['2026-07-19', LY, '10.03'],
+      ['2026-07-19', LY, '8.85'],
+      ['2026-07-19', LY, '9.65'],
+      ['2026-07-19', LY, '11.01'],
+      ['2026-07-20', LY, '15.89'],
+      ['2026-08-02', BJ, '30.90'],
+      ['2026-08-10', BJ, '46.00'],
+      ['2026-08-11', BJ, '15.70'],
+      ['2026-08-12', BJ, '14.20'],
+      ['2026-08-12', BJ, '16.10'],
+      ['2026-08-13', BJ, '51.20'],
+      ['2026-08-13', BJ, '19.00'],
+      ['2026-09-03', LY, '16.19'],
+      ['2026-09-04', LY, '6.99'],
+      ['2026-09-05', LY, '6.66'],
+      ['2026-09-07', LY, '15.89'],
+    ]);
+    for (const line of snapshot.lines) expect(line).toMatchObject({ voucherMaterialId: voucher.materialId, referenceMaterialIds: [reference.materialId], category: { code: 'remote_city_transport' } });
   });
 });

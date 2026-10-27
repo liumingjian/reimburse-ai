@@ -76,6 +76,14 @@ export function joinedRows(doc: ParseDoc, page = 1, tolerance = 3): JoinedRow[] 
   }));
 }
 
+// Every page's joined rows in reading order, for an anchor whose page is not fixed (a 行程单's header fields): the
+// pattern stays fully anchored, only the haystack widens from one page to the whole document.
+export function allJoinedRows(doc: ParseDoc, tolerance = 3): JoinedRow[] {
+  const out: JoinedRow[] = [];
+  for (let page = 1; page <= doc.pageCount; page += 1) out.push(...joinedRows(doc, page, tolerance));
+  return out;
+}
+
 // A contiguous run of one row's observations, read as a single string. A face that prints two labelled fields side by
 // side (the 铁路电子客票 box: `乘车日期：…` next to `开车时间：…`) and splits a label from its value gives an anchor
 // neither a single observation nor the whole joined row to match: the span is the haystack that holds both.

@@ -25,3 +25,10 @@ export const daysBetween = (from: string, to: string): number => Math.round((Dat
 
 // Strict `0.00`-shaped money (a resolved slot value) as integer cents; null otherwise. See `cents` above.
 export const slotCents = (value: string | undefined): number | null => (value !== undefined && /^-?\d+\.\d{2}$/.test(value) ? Math.round(Number(value) * 100) : null);
+
+// `YYYY-MM-DD` for a year, month and day that make a calendar date (no 02-30); null otherwise.
+export function isoDate(year: number, month: number, day: number): string | null {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date.toISOString().slice(0, 10);
+}

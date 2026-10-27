@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { KINDS } from '../../kind-policy';
 import { dispatch, type Recognised } from '../dispatch';
 import type { ParseDoc, TextObservation } from '../doc';
-import { caseDoc } from '../testing/snapshot-cases';
+import { caseDoc, huazhuStay } from '../testing/snapshot-cases';
 import { LAYOUTS } from '.';
 import { labelled } from './labelled';
 
@@ -193,6 +193,31 @@ describe('hotel_folio/labelled reads each value by position from its label', () 
     expect(recognised(below(1.2 * H)).missing).toEqual(['checkOut']);
   });
 
+  it('drops one leading colon from a value read beside or below its label, for every field (#447)', () => {
+    // The 华住 text layer prints the label alone and its colon with the value as one run: `入住日期` then `： 2026-08-09`.
+    const beside = photo([
+      ['房间号', '： 0816'],
+      ['入住日期', '： 2026-08-09'],
+      ['离店日期', ':2026-08-22'],
+      ['消费合计', '：3,640.00'],
+    ]);
+    expect(values(recognised(beside))).toEqual({ roomNumber: '0816', checkIn: '2026-08-09', checkOut: '2026-08-22', folioTotal: '3640.00' });
+    const below = photo(
+      [
+        ['房号', '0816'],
+        ['消费合计', '3640.00'],
+        ['入住日期', '2026-08-09'],
+      ],
+      [box('离店日期', 40, 500), box('： 2026-08-22', 40, 500 - 0.5 * H - H)],
+    );
+    expect(values(recognised(below))).toMatchObject({ checkOut: '2026-08-22' });
+  });
+
+  it('reads a colon with no value after it as no value, and drops only one colon', () => {
+    expect(recognised(photo(STAY('：', '2026-08-22'))).missing).toEqual(['checkIn']);
+    expect(recognised(photo(STAY('：：2026-08-09', '2026-08-22'))).missing).toEqual(['checkIn']);
+  });
+
   it('never reads another label as a value', () => {
     // 入住日期 has no value on its row; the box below it is the 离店日期 label, which is not its value.
     const doc = photo(
@@ -235,6 +260,30 @@ describe('hotel_folio/labelled date shapes', () => {
     expect(outcome.missing).toEqual(['checkIn']);
     expect(outcome.candidates.map((c) => c.key).sort()).toEqual(['checkOut', 'folioTotal', 'nights', 'roomNumber']);
     expect(values(recognised(photo(STAY('2026-08-09', '2026-08-22'))))).not.toHaveProperty('nights');
+  });
+});
+
+describe('hotel_folio/labelled date order (#448)', () => {
+  // The real 华住 结账单 (入住 2026-08-11, 离店 2026-08-13 as printed) with its stay dates reprinted (`huazhuStay`).
+  it('keeps a same-day stay as printed and adds a non-blocking advisory to check the original', () => {
+    const outcome = recognised(huazhuStay('2026-07-03', '2026-07-03'));
+    expect(outcome.missing).toEqual([]);
+    expect(values(outcome)).toMatchObject({ checkIn: '2026-07-03', checkOut: '2026-07-03' });
+    expect(values(outcome)).not.toHaveProperty('nights');
+    expect(outcome.findings).toEqual([{ kind: 'advisory', code: 'same_day_stay', message: '入住与离店同日（2026-07-03），可能为凌晨入住，请核对原件。' }]);
+  });
+
+  it('blocks a 离店 earlier than 入住, keeping both dates as printed', () => {
+    const outcome = recognised(huazhuStay('2026-08-13', '2026-08-11'));
+    expect(values(outcome)).toMatchObject({ checkIn: '2026-08-13', checkOut: '2026-08-11' });
+    expect(outcome.findings).toEqual([{ kind: 'validation', code: 'dates_reversed', message: '离店日期 2026-08-11 早于入住日期 2026-08-13，日期颠倒。' }]);
+  });
+
+  it('flags neither on a normal stay, nor when a date is missing', () => {
+    expect(recognised(huazhuStay('2026-08-11', '2026-08-12')).findings).toEqual([]);
+    const oneDate = recognised(huazhuStay('2026-08-11', '无'));
+    expect(oneDate.missing).toEqual(['checkOut']);
+    expect(oneDate.findings).toEqual([]);
   });
 });
 

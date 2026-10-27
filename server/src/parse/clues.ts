@@ -1,4 +1,4 @@
-import { cents, money } from '../money-date';
+import { cents, isoDate, money } from '../money-date';
 import type { ParseDoc } from './doc';
 
 // What an unrecognised document still says: every amount and every calendar date printed on it, as found anywhere in
@@ -26,10 +26,4 @@ export function cluesOf(doc: ParseDoc): Clues {
     }
   }
   return { amounts: [...amounts].sort(), dates: [...dates].sort() };
-}
-
-function isoDate(year: number, month: number, day: number): string | null {
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
-  return date.toISOString().slice(0, 10);
 }

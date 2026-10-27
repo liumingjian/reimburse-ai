@@ -15,7 +15,7 @@ import { ruleSource, type Candidate, type EvidenceRef, type Finding, type Layout
 
 const KIND = 'hotel_folio';
 const NAME = 'labelled';
-const VERSION = '2';
+const VERSION = '4';
 const SOURCE = ruleSource(KIND, NAME);
 const LABEL = '酒店结账单';
 
@@ -114,9 +114,13 @@ const labelOf = (doc: ParseDoc, field: Field): { box: TextObservation; label: st
 
 type Read = { text: string; raw: string; observations: TextObservation[] };
 
+// A value in a run of its own, without the one colon some text layers print with it rather than with the label
+// (华住's `入住日期` then `： 2026-07-03`, #447). Only one: a second colon is not a value shape any field reads.
+const uncolon = (text: string) => compact(text).replace(/^[:：]/, '');
+
 // A field's value: in the label's own run when OCR or the text layer kept them together; else the nearest box right of
-// the label within its row band; else the box directly below it within the gap. A box that is itself a label is never
-// a value.
+// the label within its row band; else the box directly below it within the gap, less a leading colon. A box that is
+// itself a label is never a value.
 function valueOf(doc: ParseDoc, field: Field): Read | null {
   const found = labelOf(doc, field);
   if (!found) return null;
@@ -134,7 +138,9 @@ function valueOf(doc: ParseDoc, field: Field): Read | null {
     })
     .sort((a, b) => b.y - a.y)[0];
   const value = right ?? below;
-  return value ? { text: compact(value.text), raw: compact(value.raw), observations: [box, value] } : null;
+  if (!value) return null;
+  const text = uncolon(value.text);
+  return text ? { text, raw: uncolon(value.raw), observations: [box, value] } : null;
 }
 
 function validDate(year: number, month: number, day: number): boolean {
@@ -214,8 +220,17 @@ export const labelled: Layout = {
     const total = amount('folioTotal');
     amount('paidAmount');
 
-    // Deterministic checks: the dates span the printed nights; the charge rows add up to 消费合计, to the cent.
+    // Deterministic checks: the dates are in order; the dates span the printed nights; the charge rows add up to
+    // 消费合计, to the cent.
     const { checkIn, checkOut } = dates;
+    // A check-in after midnight prints the same day for 入住 and 离店 (#448): the printed dates stand, nothing is
+    // shifted, and the employee is asked to check the original. 离店 before 入住 is no stay at all: blocking.
+    if (checkIn && checkOut && checkIn === checkOut) {
+      findings.push({ kind: 'advisory', code: 'same_day_stay', message: `入住与离店同日（${checkIn}），可能为凌晨入住，请核对原件。` });
+    }
+    if (checkIn && checkOut && checkOut < checkIn) {
+      findings.push({ kind: 'validation', code: 'dates_reversed', message: `离店日期 ${checkOut} 早于入住日期 ${checkIn}，日期颠倒。` });
+    }
     const nights = nightsText ? Number(nightsText) : null;
     if (checkIn && checkOut && nights !== null && daysBetween(checkIn, checkOut) !== nights) {
       findings.push({ kind: 'validation', code: 'nights_mismatch', message: `入住 ${checkIn} 到离店 ${checkOut} 是 ${daysBetween(checkIn, checkOut)} 晚，结账单写的是 ${nights} 晚。` });

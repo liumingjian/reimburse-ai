@@ -41,6 +41,7 @@ export const REQUIRED_EXPECTATIONS: Readonly<Record<string, readonly string[]>> 
   // pairs it with that invoice. A sidecar naming neither a leg's 城市 nor the header could not see that every real
   // ride invoice was reaching no line at all, so both are required.
   'ride_itinerary/amap': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].city'],
+  'ride_itinerary/didi': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].city'],
   // #212: a folio exists to prove a hotel invoice's stay dates. Both folio photos reached no layout while every scored
   // row stayed green, because no folio sample was in the corpus at all; a folio sample must write both dates down.
   'hotel_folio/labelled': ['checkIn', 'checkOut'],

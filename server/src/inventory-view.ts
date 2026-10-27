@@ -113,7 +113,9 @@ const VALIDATION_TITLES: Readonly<Record<string, string>> = {
   segment_rows_incomplete: '逐段明细没有完整读到',
   segment_index_unexpected: '逐段明细的序号不对',
   segment_field_unreadable: '逐段明细没有完整读到',
+  segment_year_undecided: '逐段明细的上车日期定不了年份',
   route_incomplete: '行程路线没有完整读到',
+  dates_reversed: '入住和离店日期颠倒',
 };
 const validationTitle = (code: string) => VALIDATION_TITLES[code.split('.')[0] ?? code] ?? '金额核对不通过';
 
@@ -561,7 +563,7 @@ export function inventoryView(
   // Invoice ↔ itinerary pairing, per-leg lines and allocation items (#184), over the resolved included materials.
   const transport = planTransport(
     includedWorked.flatMap((w) =>
-      w.resolved && !w.reference ? [{ materialId: w.m.materialId, fileName: w.m.fileName, kind: w.resolved.kind, layout: w.resolved.layout ?? '', values: w.values, ok: !w.items.some(isOpen) }] : [],
+      w.resolved && !w.reference ? [{ materialId: w.m.materialId, fileName: w.m.fileName, kind: w.resolved.kind, layout: w.resolved.layout ?? '', kindLabel: w.resolved.kindLabel, values: w.values, ok: !w.items.some(isOpen) }] : [],
     ),
     allocationAnswers(answers),
   );
