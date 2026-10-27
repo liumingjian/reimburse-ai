@@ -40,3 +40,17 @@ describe('OCR in the parse worker', () => {
     expect(worker.state()).toEqual({ running: false, ocrLoaded: false });
   }, 120_000);
 });
+
+describe('the parse worker released after idling', () => {
+  // A worker released after its idle time exits a moment later. Work posted to the next worker in between (a new
+  // inventory run started right as the last one went idle) is that worker's: the old one's exit must not fail it.
+  it('does not fail work posted to the next worker when it exits', async () => {
+    const worker = workerExecutor({ idleMs: 50 });
+    executor = worker;
+    expect(await worker.parse(input('m01', 'm1'))).toMatchObject({ outcome: 'recognised' });
+    while (worker.state().running) await new Promise((resolve) => setImmediate(resolve));
+
+    expect(await worker.parse(input('m02', 'm2'))).toMatchObject({ outcome: 'recognised', kind: 'hotel_folio' });
+  }, 120_000);
+});
+
