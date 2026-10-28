@@ -15,7 +15,8 @@ import {
 //   5. put the program and the runtime into ~/.baox/local-executor/app, overwriting;
 //   6-7. the program's own `finish-install` (local-executor/src/main.ts): it records the Node in baox-config.json,
 //      writes the LaunchAgent and its launcher exactly as every start does, pairs with the code unless this Mac
-//      already holds this account's pairing, and starts it.
+//      already holds this account's pairing, and starts it;
+//   8. the health check, the program's `await-connected`: 已安装 only once the app sees the started copy's channel.
 //
 // The terminal shows the fixed lines of LOCAL_EXECUTOR_INSTALL_MESSAGES and nothing else: every tool's own output
 // goes to ~/.baox/local-executor/logs/install.log, and each failure ends in the one sentence for it.
@@ -177,10 +178,19 @@ rm -f "$app/baox-config.json"
 say ${sh(SAY.pairing)}
 "$node" --use-system-ca "$app/baox-local-executor.mjs" finish-install --origin "$origin" --platform "$platform" --node "$node" --account "$account" --code "$code" </dev/null >>"$log" 2>&1
 case $? in
-  0) say ${sh(SAY.installed)} ;;
+  0) ;;
   ${EXIT.expired}) fail ${sh(SAY.expired)} ;;
   ${EXIT.unreachable}) fail ${sh(SAY.unreachable)} ;;
   ${EXIT.start}) fail ${sh(SAY.start)} ;;
+  *) fail ${sh(SAY.failed)} ;;
+esac
+
+# 8. The health check: wait until the app sees the started 本地执行器.
+say ${sh(SAY.connecting)}
+"$node" --use-system-ca "$app/baox-local-executor.mjs" await-connected </dev/null >>"$log" 2>&1
+case $? in
+  0) say ${sh(SAY.installed)} ;;
+  ${EXIT.notConnected}) fail ${sh(SAY.notConnected)} ;;
   *) fail ${sh(SAY.failed)} ;;
 esac
 `;
@@ -210,7 +220,10 @@ say ${sh(SAY.uninstalled)}
 //      the program and the browser it drives), a zip install's copy included;
 //   5. into %USERPROFILE%\.baox\local-executor\app, overwriting;
 //   6-7. the program's own `finish-install`, which writes run-baox.cmd, node-path.txt and the Startup entry exactly as
-//      every start does, pairs unless this PC already holds that account's pairing, and starts it.
+//      every start does, and pairs unless this PC already holds that account's pairing;
+//   8. start it from this session, as the Startup entry does at login (`Start-Baox`): a start from the program's own
+//      detached child never ran on a real PC (QA, 2026-10-28), while this Start-Process does;
+//   9. the health check, the program's `await-connected`: 已安装 only once the app sees the started copy's channel.
 //
 // Every line it prints is built from code units (`powershellText`), so the script itself is ASCII. The tools' own
 // output goes to the install log; anything unforeseen ends in SAY.failed.
@@ -238,6 +251,11 @@ function Stop-Baox {
   $rest = @($found | Where-Object { $_.Name -ne 'cmd.exe' })
   foreach ($process in @($loops + $rest)) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
   foreach ($process in $found) { Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue }
+}
+# What the Startup entry runs at login, started now with no window. PowerShell 7 off Windows has no window to hide.
+function Start-Baox {
+  if ($IsWindows -eq $false) { return }
+  Start-Process -WindowStyle Hidden -FilePath (Under $baoxHome 'app' 'run-baox.cmd')
 }
 `;
 
@@ -380,15 +398,31 @@ try {
     Fail ${T(SAY.disk)}
   }
 
-  # 6-7. Pair and start, by the program itself; its output goes to the log.
+  # 6-7. Pair, by the program itself; its output goes to the log.
   Say ${T(SAY.pairing)}
   $global:LASTEXITCODE = 1
   & { $ErrorActionPreference = 'Continue'; & $node --use-system-ca (Under $app 'baox-local-executor.mjs') finish-install --origin $origin --platform win-x64 --node $node --account $account --code $code 2>&1 | ForEach-Object { Log ([string]$_) } }
   switch ($LASTEXITCODE) {
-    0 { Say ${T(SAY.installed)} }
+    0 { }
     ${EXIT.expired} { Fail ${T(SAY.expired)} }
     ${EXIT.unreachable} { Fail ${T(SAY.unreachable)} }
     ${EXIT.start} { Fail ${T(SAY.start)} }
+    default { Fail ${T(SAY.failed)} }
+  }
+
+  # 8. Start it. 9. The health check: wait until the app sees it.
+  Say ${T(SAY.connecting)}
+  try {
+    Start-Baox
+  } catch {
+    Log ($_ | Out-String)
+    Fail ${T(SAY.start)}
+  }
+  $global:LASTEXITCODE = 1
+  & { $ErrorActionPreference = 'Continue'; & $node --use-system-ca (Under $app 'baox-local-executor.mjs') await-connected 2>&1 | ForEach-Object { Log ([string]$_) } }
+  switch ($LASTEXITCODE) {
+    0 { Say ${T(SAY.installed)} }
+    ${EXIT.notConnected} { Fail ${T(SAY.notConnected)} }
     default { Fail ${T(SAY.failed)} }
   }
 } catch {

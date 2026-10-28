@@ -83,7 +83,8 @@ export const PairingTokenSchema = z.object({ token: z.string().min(1), accountId
 export type PairingToken = z.infer<typeof PairingTokenSchema>;
 
 // What the app answers a 本地执行器 that asks with its token (GET PAIRING_PATH): which account it acts for.
-export const PairingIdentitySchema = z.object({ accountId: z.string().min(1), username: z.string().min(1) });
+// `connected`: whether the app sees this account's channel right now. Optional: a server from before it answers none.
+export const PairingIdentitySchema = z.object({ accountId: z.string().min(1), username: z.string().min(1), connected: z.boolean().optional() });
 export type PairingIdentity = z.infer<typeof PairingIdentitySchema>;
 
 // none: no pairing; waiting: a 配对码 (pairing code) is issued and no 本地执行器 has used it yet; paired: paired.

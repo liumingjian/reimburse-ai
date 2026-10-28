@@ -8,8 +8,10 @@
 //                                                it stays up and waits on 47319 for a 配对码 from the 设置页
 //   pair --origin http://<app> <配对码>          pair with the 应用账号 that issued the code
 //   unpair                                       撤销配对, on the app and here
-//   finish-install --origin <app> --platform <p> the install script's last step: record the Node, write the start
-//     --node <path> --account <id> --code <码>   entry, pair (unless already paired to that account), start
+//   finish-install --origin <app> --platform <p> the install script's step 6-7: record the Node, write the start
+//     --node <path> --account <id> --code <码>   entry, pair (unless already paired to that account), start (macOS;
+//                                                on Windows the script starts it)
+//   await-connected                              the install's health check: wait until the app sees the channel
 //   self-check                                   load and answer: what an update asks of a new program first
 //
 // Uninstalling is the /uninstall/<系统> command from the 设置页, which never revokes the pairing (spec #412 story 35);
@@ -18,15 +20,16 @@
 // The ERP 凭据 are the app's to keep (ADR-0033): the employee saves them on the settings page, and each job brings
 // them down with it. This program never asks for them and never writes them anywhere.
 
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync, truncateSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PAIRING_PATH, EXECUTOR_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
+import { PAIRING_PATH, EXECUTOR_VERSION, LOCAL_EXECUTOR_CONFIG_FILE, LOCAL_EXECUTOR_CONNECT_WAIT_SECONDS, LOCAL_EXECUTOR_INSTALL_EXIT, LocalExecutorConfigSchema, type LocalExecutorPlatform } from '@baox/contract';
 import { channelWatch, createChannelClient, type ClientSocket } from '@baox/channel/connection';
 import { serverBlobs } from '@baox/channel/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/channel/pairing';
+import { awaitConnected } from './await-connected';
 import { launchHeadless } from './headless';
 import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
 import { autostartFiles, downloadedRuntimePath, LAUNCH_AGENT, RESTART_EXIT_CODE, type InstallFile } from './install';
@@ -98,26 +101,20 @@ const installFiles = (): InstallFile[] => {
   return autostartFiles({ ...where, node: installedCfg?.node ?? downloadedRuntime, origin: installedCfg?.origin ?? '', runtimePlatform: installedCfg?.platform ?? hostPlatform() });
 };
 
-/** Start the installed copy now, as the login would: no window, and the launcher's restart rule. */
+/** Start the installed copy now on macOS, as the login would: through its LaunchAgent. */
 function startInBackground(files: readonly InstallFile[]): boolean {
-  if (process.platform === 'darwin') {
-    const target = `gui/${process.getuid?.() ?? 0}`;
-    try { execFileSync('launchctl', ['bootout', `${target}/${LAUNCH_AGENT}`], { stdio: 'ignore' }); } catch { /* was not loaded */ }
-    // bootout returns before launchd has let go of the label; bootstrap right after it can fail for a moment.
-    for (let tries = 0; ; tries += 1) {
-      try {
-        execFileSync('launchctl', ['bootstrap', target, files[0]!.path], { stdio: 'ignore' });
-        return true;
-      } catch {
-        if (tries >= 5) return false;
-        execFileSync('sleep', ['1']);
-      }
+  const target = `gui/${process.getuid?.() ?? 0}`;
+  try { execFileSync('launchctl', ['bootout', `${target}/${LAUNCH_AGENT}`], { stdio: 'ignore' }); } catch { /* was not loaded */ }
+  // bootout returns before launchd has let go of the label; bootstrap right after it can fail for a moment.
+  for (let tries = 0; ; tries += 1) {
+    try {
+      execFileSync('launchctl', ['bootstrap', target, files[0]!.path], { stdio: 'ignore' });
+      return true;
+    } catch {
+      if (tries >= 5) return false;
+      execFileSync('sleep', ['1']);
     }
-  } else if (process.platform === 'win32') {
-    const runner = files[0]!.path.replace(/'/g, "''");
-    spawn('powershell', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', `Start-Process -WindowStyle Hidden -FilePath '${runner}'`], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   }
-  return true;
 }
 
 /** Is this stored pairing still one the app knows? Unknown (the app not answering) counts as yes. */
@@ -162,11 +159,27 @@ async function finishInstall(args: string[]) {
       }
       store.writePairing({ origin, token: outcome.token, accountId: outcome.accountId });
     }
-    if (!startInBackground(installFiles())) process.exit(LOCAL_EXECUTOR_INSTALL_EXIT.start);
+    // On Windows the script starts it, with the Start-Process an employee would type: a start from this process's
+    // own detached child never ran on a real PC (QA, 2026-10-28), and nothing here could tell.
+    if (process.platform === 'darwin' && !startInBackground(installFiles())) process.exit(LOCAL_EXECUTOR_INSTALL_EXIT.start);
   } catch (error) {
     console.error(error);
     process.exit(1);
   }
+}
+
+// The install's health check, after the start: 已安装 only once the app sees this PC's channel. Its output goes to the
+// install log; the exit code is what the script turns into its sentence.
+async function awaitInstallConnected() {
+  const pairing = store.readPairing();
+  if (!pairing) {
+    console.error('await-connected: this PC holds no pairing');
+    process.exit(1);
+  }
+  const outcome = await awaitConnected({ pairing, timeoutMs: LOCAL_EXECUTOR_CONNECT_WAIT_SECONDS * 1000 });
+  console.error(`await-connected: ${outcome}`);
+  if (outcome === 'not_connected') process.exit(LOCAL_EXECUTOR_INSTALL_EXIT.notConnected);
+  if (outcome === 'not_paired') process.exit(1);
 }
 
 async function run(args: string[]) {
@@ -297,5 +310,6 @@ if (command === 'self-check') process.stdout.write(`${SELF_CHECK_ANSWER}\n`);
 else if (command === 'pair') await pair(rest);
 else if (command === 'unpair') await unpair();
 else if (command === 'finish-install') await finishInstall(rest);
+else if (command === 'await-connected') await awaitInstallConnected();
 else if (command === 'run') await run(rest);
 else fail('用法：run [--origin http://<应用地址>] | pair --origin http://<应用地址> <配对码> | unpair');

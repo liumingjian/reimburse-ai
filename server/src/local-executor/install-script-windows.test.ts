@@ -87,9 +87,10 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
   let runtimeBytes: Buffer;
   const runtimeSha = () => createHash('sha256').update(runtimeBytes).digest('hex');
   const runtimeSumFile = () => join(dist.runtimes, SERVED, 'win-x64', 'node.exe.sha256');
-  // A node.exe that answers --version, and otherwise notes its arguments and exits as the case asks.
+  // A node.exe that answers --version, and otherwise notes its arguments per program command and exits as the case asks:
+  // STUB_EXIT for finish-install, STUB_CONNECT_EXIT for the health check (await-connected).
   const stubNode = (version: string) =>
-    `#!/bin/sh\nif [ "$1" = --version ]; then echo v${version}; exit 0; fi\nprintf '%s\\n' "$@" > "$STUB_NOTES"\nexit "\${STUB_EXIT:-0}"\n`;
+    `#!/bin/sh\nif [ "$1" = --version ]; then echo v${version}; exit 0; fi\nprintf '%s\\n' "$@" > "$STUB_NOTES-$3"\nif [ "$3" = await-connected ]; then exit "\${STUB_CONNECT_EXIT:-0}"; fi\nexit "\${STUB_EXIT:-0}"\n`;
 
   beforeAll(() => {
     workDir = mkdtempSync(join(tmpdir(), 'baox-ps-install-'));
@@ -138,7 +139,8 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
   const appData = () => join(profile, 'AppData', 'Roaming');
   const startupEntry = () => join(appData(), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'baox-local-executor.cmd');
   const installLog = () => (existsSync(join(executorHome(), 'logs', 'install.log')) ? readFileSync(join(executorHome(), 'logs', 'install.log'), 'utf8').slice(-3000) : 'no install log');
-  const finishArgs = () => readFileSync(notes(), 'utf8').trim().split('\n');
+  const argsOf = (command: string) => readFileSync(`${notes()}-${command}`, 'utf8').trim().split('\n');
+  const finishArgs = () => argsOf('finish-install');
   const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createPairingCode.path, { system: 'windows' })).json()).code!;
 
   /** `irm <app><path> | iex` as the command on the 设置页 runs it: what the employee sees, line by line, and the exit. */
@@ -162,7 +164,7 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
     ownNode('24.9.0');
     const code = await issue();
     const { lines, status } = await run(localExecutorInstallPath(code));
-    expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.installed]);
+    expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.connecting, SAY.installed]);
     expect(status).toBe(0);
     expect(readFileSync(join(appDir(), 'baox-local-executor.mjs'), 'utf8')).toBe(readFileSync(dist.program, 'utf8'));
     expect(existsSync(join(appDir(), 'runtime', 'node.exe'))).toBe(false);
@@ -171,6 +173,18 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
       '--use-system-ca', join(appDir(), 'baox-local-executor.mjs'), 'finish-install', '--origin', origin, '--platform', 'win-x64',
       '--node', join(stubs, 'node.exe'), '--account', alice.account.accountId, '--code', code,
     ]);
+    // 已安装 only after the health check said the app sees it.
+    expect(argsOf('await-connected')).toEqual(['--use-system-ca', join(appDir(), 'baox-local-executor.mjs'), 'await-connected']);
+  }, 60_000);
+
+  it.each([
+    [EXIT.notConnected, SAY.notConnected],
+    [1, SAY.failed],
+  ])('ends a health check exit %s in its one sentence, never in 已安装', async (exit, sentence) => {
+    ownNode('24.9.0');
+    const { lines, status } = await run(localExecutorInstallPath(await issue()), { STUB_CONNECT_EXIT: String(exit) });
+    expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.connecting, sentence]);
+    expect(status).not.toBe(0);
   }, 60_000);
 
   it('downloads the served runtime with its progress, checked by its sha256, when the employee Node is another major version', async () => {
@@ -184,7 +198,7 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
     expect(readFileSync(runtime)).toEqual(runtimeBytes);
     // Windows has no executable bit; here the downloaded file lacks one, so PowerShell refuses to start it, and the
     // run ends in the catch-all sentence. Starting the runtime it downloaded is the next case's, and Windows's.
-    expect(lines).toEqual([SAY.checking, ...downloads, SAY.pairing, process.platform === 'win32' ? SAY.installed : SAY.failed]);
+    expect(lines).toEqual([SAY.checking, ...downloads, SAY.pairing, ...(process.platform === 'win32' ? [SAY.connecting, SAY.installed] : [SAY.failed])]);
     expect(status).toBe(process.platform === 'win32' ? 0 : 1);
   }, 60_000);
 
@@ -196,7 +210,7 @@ describe.runIf(Boolean(pwsh))('the Windows scripts run by pwsh under a temporary
     writeFileSync(join(appDir(), 'baox-local-executor.mjs'), 'old program\n');
     writeFileSync(join(appDir(), 'baox-config.json'), '{}');
     const { lines, status } = await run(localExecutorInstallPath(await issue()));
-    expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.installed]);
+    expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.connecting, SAY.installed]);
     expect(status).toBe(0);
     expect(readFileSync(join(appDir(), 'baox-local-executor.mjs'), 'utf8')).toBe(readFileSync(dist.program, 'utf8'));
     expect(existsSync(join(appDir(), 'baox-config.json'))).toBe(false);
