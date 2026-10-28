@@ -8,6 +8,7 @@ import {
   type AttemptStartedEvent, type ErpAccount, type ExecutorChannel, type ExecutorEvent, type FillPlan,
   type ReadbackEvent, type ReadbackVerdict, type ResultEvent,
 } from '@baox/erp-executor/protocol';
+import { NOT_SIGNED_IN_CODE } from '@baox/erp-executor/job';
 
 type ErpTables = {
   erp_job_event: { event_id: string; job_id: string; task_id: string; seq: number; type: string; payload: string; created_at: string };
@@ -71,13 +72,31 @@ export function createErpJobs(db: Db, { now = () => new Date() }: { now?: () => 
     },
 
     async events(jobId: string): Promise<ExecutorEvent[]> {
-      const rows = await erp.selectFrom('erp_job_event').select(['payload']).where('job_id', '=', jobId).orderBy('seq').execute();
-      return rows.map((row) => ExecutorEventSchema.parse(JSON.parse(row.payload)));
+      return storedEvents(await erp.selectFrom('erp_job_event').select(['payload']).where('job_id', '=', jobId).orderBy('seq').execute());
     },
   };
 }
 
 export type ErpJobs = ReturnType<typeof createErpJobs>;
+
+// Results ADR-0037 took out of the protocol, in today's terms. The executor boundary refuses them, but `erp_job_event`
+// is append-only and keeps the rows written before. A `waiting_login` job paused at the login, before any attempt: it
+// stopped with nothing written, as a login nobody signs in to stops now. A `handed_over` form was filled and handed
+// over unsaved, which is no terminal any more: whether the employee saved it is 对账's to find out.
+const LEGACY_RESULTS: Readonly<Record<string, { status: ResultEvent['status']; code: string }>> = {
+  waiting_login: { status: 'aborted', code: NOT_SIGNED_IN_CODE },
+  handed_over: { status: 'unknown', code: 'handed_over' },
+};
+
+/** A job's stored events, oldest first, read in today's protocol. A legacy login pause (`waiting_login`) says nothing now. */
+export function storedEvents(rows: ReadonlyArray<{ payload: string }>): ExecutorEvent[] {
+  return rows.flatMap(({ payload }) => {
+    const raw = JSON.parse(payload);
+    if (raw.type === 'waiting_login') return [];
+    const legacy = raw.type === 'result' ? LEGACY_RESULTS[raw.status] : undefined;
+    return [ExecutorEventSchema.parse(legacy ? { ...raw, ...legacy } : raw)];
+  });
+}
 
 /** The server's judgement of a raw read-back. The executor never compares; it waits for this verdict. */
 export type ErpJudge = (event: ReadbackEvent, context: { erpAccount: ErpAccount | null }) => ReadbackVerdict | Promise<ReadbackVerdict>;
