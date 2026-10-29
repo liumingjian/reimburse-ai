@@ -178,8 +178,9 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
     // The 应用账号 a 本地执行器 acts for, or null when the pairing is gone (revoked, replaced) or the account can no
     // longer act at all. A deactivated or unapproved account loses its 本地执行器 the way it loses its sessions.
     // Every answer marks the connection: the settings page has no other sign that the pairing is alive. The username is
-    // how the 本地执行器 names the account when asking before it switches to another one (#292).
-    async lookup(token: string | undefined): Promise<{ accountId: string; username: string } | null> {
+    // how the 本地执行器 names the account when asking before it switches to another one (#292). `connected`: whether
+    // the account's channel is live now, which the install waits for (`await-connected`) before it says 已安装.
+    async lookup(token: string | undefined): Promise<{ accountId: string; username: string; connected: boolean } | null> {
       if (!token) return null;
       const tokenSha = sha256(token);
       const row = await db
@@ -190,7 +191,7 @@ export function createPairingService(db: Db, clock: Clock, live: LivePairings = 
         .executeTakeFirst();
       if (!row || row.active !== 1 || row.approved !== 1) return null;
       await optionalWrite(() => db.updateTable('pairing').set({ last_connected_at: iso(clock()) }).where('token_sha256', '=', tokenSha).execute());
-      return { accountId: row.account_id, username: row.username ?? row.account_id };
+      return { accountId: row.account_id, username: row.username ?? row.account_id, connected: live.connected(row.account_id) };
     },
 
     // The version a 本地执行器 reports when it opens its channel (ADR-0021). A 本地执行器 is replaced by unpacking a

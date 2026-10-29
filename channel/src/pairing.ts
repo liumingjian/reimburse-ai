@@ -63,7 +63,7 @@ export async function revokePairing({ origin, token, fetchImpl = fetch }: Revoke
 }
 
 /** paired carries the account's username, to name it by (#292). */
-export type PairingCheck = { state: 'paired'; username: string } | { state: 'not_paired' } | { state: 'unknown' };
+export type PairingCheck = { state: 'paired'; username: string; connected: boolean } | { state: 'not_paired' } | { state: 'unknown' };
 
 export type CheckOptions = { origin: string; token: string; fetchImpl?: typeof fetch; timeoutMs?: number };
 
@@ -80,7 +80,7 @@ export async function checkPairing({ origin, token, fetchImpl = fetch, timeoutMs
     if (response.status === 401) return { state: 'not_paired' };
     if (!response.ok) return { state: 'unknown' };
     const identity = PairingIdentitySchema.safeParse(await response.json().catch(() => null));
-    return identity.success ? { state: 'paired', username: identity.data.username } : { state: 'unknown' };
+    return identity.success ? { state: 'paired', username: identity.data.username, connected: identity.data.connected === true } : { state: 'unknown' };
   } catch {
     return { state: 'unknown' };
   }

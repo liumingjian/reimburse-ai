@@ -57,7 +57,7 @@ describe('配对 (pairing)', () => {
     expect(paired.accountId).toBe(alice.account.accountId);
     // The token is what routes ERP work afterwards, and it names the same 应用账号 without a session anywhere near it.
     // The username is how the 本地执行器 names this account before switching away from it (#292).
-    expect(PairingIdentitySchema.parse(await (await whoami(paired.token)).json())).toEqual({ accountId: alice.account.accountId, username: 'alice' });
+    expect(PairingIdentitySchema.parse(await (await whoami(paired.token)).json())).toEqual({ accountId: alice.account.accountId, username: 'alice', connected: false });
 
     // Single use: the code the employee read is spent, and reading it again pairs nothing.
     const again = await redeem(codeOf(issued));

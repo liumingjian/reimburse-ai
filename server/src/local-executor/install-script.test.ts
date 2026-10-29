@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAdaptorServer } from '@hono/node-server';
 import {
-  PAIRING_PATH, PairingViewSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_MESSAGES as SAY, LocalExecutorConfigSchema,
+  PAIRING_PATH, PairingViewSchema, HTTP_ENDPOINTS, LOCAL_EXECUTOR_INSTALL_EXIT as EXIT, LOCAL_EXECUTOR_INSTALL_MESSAGES as SAY, LocalExecutorConfigSchema,
   localExecutorInstallPath, localExecutorUninstallPath,
 } from '@baox/contract';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -28,7 +28,10 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
   let dist: LocalExecutorDist;
   let runtimeBytes: Buffer;
 
-  const stubNode = (version: string) => `#!/bin/sh\nif [ "$1" = --version ]; then echo v${version}; exit 0; fi\nexec '${process.execPath}' "$@"\n`;
+  // The health check (`await-connected`, unit-tested in local-executor) is answered here: nothing really starts under the
+  // stub launchctl, so no channel ever opens. STUB_CONNECT_EXIT is its answer.
+  const stubNode = (version: string) =>
+    `#!/bin/sh\nif [ "$1" = --version ]; then echo v${version}; exit 0; fi\nif [ "$3" = await-connected ]; then echo "$3" >> "$HOME/await-connected.log"; exit "\${STUB_CONNECT_EXIT:-0}"; fi\nexec '${process.execPath}' "$@"\n`;
 
   beforeAll(() => {
     workDir = mkdtempSync(join(tmpdir(), 'baox-install-script-'));
@@ -85,10 +88,10 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
   const issue = async () => PairingViewSchema.parse(await (await alice.post(HTTP_ENDPOINTS.createPairingCode.path, { system: 'mac' })).json()).code!;
 
   /** What the employee sees in the terminal, line by line, and how it ended. */
-  function run(path: string): Promise<{ lines: string[]; status: number | null }> {
+  function run(path: string, env: Record<string, string> = {}): Promise<{ lines: string[]; status: number | null }> {
     return new Promise((resolve) => {
       const child = spawn('/bin/sh', ['-c', `curl -fsSL '${origin}${path}' | sh`], {
-        env: { HOME: home, PATH: `${stubs}:/usr/bin:/bin:/usr/sbin:/sbin`, LANG: 'en_US.UTF-8', NODE_OPTIONS: '--require /nonexistent.js' },
+        env: { HOME: home, PATH: `${stubs}:/usr/bin:/bin:/usr/sbin:/sbin`, LANG: 'en_US.UTF-8', NODE_OPTIONS: '--require /nonexistent.js', ...env },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let out = '';
@@ -109,7 +112,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
   };
   const pairingFile = () => join(executorHome(), 'pairing.json');
   const serverPairing = async () => (await server.db.selectFrom('pairing').select(['token_sha256']).where('account_id', '=', alice.account.accountId).executeTakeFirst()) ?? null;
-  const DONE = [SAY.checking, SAY.pairing, SAY.installed];
+  const DONE = [SAY.checking, SAY.pairing, SAY.connecting, SAY.installed];
   const DOWNLOAD = /^下载运行环境 (\d+)%$/;
 
   it('uses the employee own Node when it is the served major version and Node.js signed it, installs, pairs and starts', async () => {
@@ -130,6 +133,18 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     expect(launchctl()).toEqual([expect.stringMatching(/^bootout gui\/\d+\/com\.baox\.local-executor$/), expect.stringMatching(/^bootout /), expect.stringMatching(new RegExp(`^bootstrap gui/\\d+ ${agentPlist()}$`))]);
     expect(JSON.parse(readFileSync(pairingFile(), 'utf8'))).toMatchObject({ origin, accountId: alice.account.accountId });
     expect(await serverPairing()).toMatchObject({ token_sha256: expect.any(String) });
+    // 已安装 only after the health check said the app sees it.
+    expect(readFileSync(join(home, 'await-connected.log'), 'utf8').trim()).toBe('await-connected');
+  }, 60_000);
+
+  it.each([
+    [EXIT.notConnected, SAY.notConnected],
+    [1, SAY.failed],
+  ])('ends a health check exit %s in its one sentence, never in 已安装', async (exit, sentence) => {
+    ownNode('24.9.0', true);
+    const { lines, status } = await run(localExecutorInstallPath(await issue()), { STUB_CONNECT_EXIT: String(exit) });
+    expect(lines, installLog()).toEqual([SAY.checking, SAY.pairing, SAY.connecting, sentence]);
+    expect(status).not.toBe(0);
   }, 60_000);
 
   it.each([
@@ -141,7 +156,7 @@ describe.runIf(process.platform === 'darwin')('the Mac install script, run on a 
     expect(status).toBe(0);
     const downloads = lines.filter((line) => DOWNLOAD.test(line));
     expect(downloads.at(-1)).toBe(SAY.downloading(100));
-    expect(lines, installLog()).toEqual([SAY.checking, ...downloads, SAY.pairing, SAY.installed]);
+    expect(lines, installLog()).toEqual([SAY.checking, ...downloads, SAY.pairing, SAY.connecting, SAY.installed]);
     const runtime = join(appDir(), 'runtime', 'node');
     expect(readFileSync(runtime)).toEqual(runtimeBytes);
     expect(installedConfig().node).toBe(runtime);

@@ -106,6 +106,7 @@ export const LOCAL_EXECUTOR_INSTALL_MESSAGES = {
   checking: '检查运行环境',
   downloading: (percent: number) => `下载运行环境 ${percent}%`,
   pairing: '配对',
+  connecting: '启动并连接应用',
   installed: '已安装，可以关掉这个窗口',
   uninstalled: '已卸载，可以关掉这个窗口',
   expired: '配对码已过期，请回设置页重新生成',
@@ -116,12 +117,15 @@ export const LOCAL_EXECUTOR_INSTALL_MESSAGES = {
   download: '运行环境没有下载完整，请再运行一次这条命令',
   disk: '没能写入你的用户目录，请确认磁盘还有空间后再运行一次这条命令',
   start: '已安装，但没能马上启动，请退出登录再登录一次电脑',
+  notConnected: '已安装，但本地执行器没有连上应用，请再运行一次这条命令；还是不行，请联系管理员',
   failed: '安装没有完成，请再运行一次这条命令',
 } as const;
 
-// How the program's install step (`finish-install`, local-executor/src/main.ts) tells the script what went wrong; the
-// script prints the sentence for it.
-export const LOCAL_EXECUTOR_INSTALL_EXIT = { expired: 10, unreachable: 11, start: 12 } as const;
+// How the program's install steps (`finish-install` and `await-connected`, local-executor/src/main.ts) tell the script
+// what went wrong; the script prints the sentence for it. `notConnected`: started, but the app never saw its channel.
+export const LOCAL_EXECUTOR_INSTALL_EXIT = { expired: 10, unreachable: 11, start: 12, notConnected: 13 } as const;
+// How long the install waits for the app to see the started 本地执行器's channel.
+export const LOCAL_EXECUTOR_CONNECT_WAIT_SECONDS = 60;
 
 // Node.js's own Developer ID (checked 2026-10-15): "Developer ID Application: Node.js Foundation (HX7739G8FX)". Both the
 // install script and the executor's start check the employee's Node against it on macOS (ADR-0035).

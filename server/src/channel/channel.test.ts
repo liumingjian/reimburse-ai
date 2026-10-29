@@ -7,6 +7,7 @@ import {
   PAIRING_PATH,
   EXECUTOR_OFFLINE_CODE,
   EXECUTOR_VERSION,
+  PairingIdentitySchema,
   PairingViewSchema,
   PairingTokenSchema,
   type ChannelMessage,
@@ -180,6 +181,19 @@ describe('the 本地执行器 channel', () => {
 
     executor.disconnect();
     expect(await view(alice)).toMatchObject({ status: 'paired', connected: false });
+  });
+
+  it('tells the 本地执行器 itself, by its token, whether the app sees its channel: what the install waits for', async () => {
+    const token = await pair(alice);
+    const lookup = async () => PairingIdentitySchema.parse(await (await server.app.request(PAIRING_PATH, { headers: { authorization: `Bearer ${token}` } })).json());
+    expect(await lookup()).toMatchObject({ accountId: alice.account.accountId, connected: false });
+
+    const executor = fakeLocalExecutor();
+    await executor.say({ type: 'hello', token, version: EXECUTOR_VERSION });
+    expect(await lookup()).toMatchObject({ connected: true });
+
+    executor.disconnect();
+    expect(await lookup()).toMatchObject({ connected: false });
   });
 
   it('refuses to ask a 本地执行器 that is not connected, rather than waiting for one', async () => {
