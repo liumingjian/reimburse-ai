@@ -49,6 +49,8 @@ describe('the Windows scripts, as text', () => {
   it('the install names the platform, clears the code-loading variables and hands the rest to finish-install', () => {
     const { install } = scripts();
     expect(install).toContain("'NODE_OPTIONS'");
+    // Started from PowerShell 7, Windows PowerShell loads only its own modules, or Get-FileHash is missing.
+    expect(install).toContain("$env:PSModulePath = Under $PSHOME 'Modules'");
     expect(install).toContain('/api/local-executor/runtime/win-x64/sha256');
     expect(install).toContain('/install/ABCD2345/program');
     expect(install).toContain('finish-install --origin $origin --platform win-x64 --node $node --account $account --code $code');
@@ -58,6 +60,7 @@ describe('the Windows scripts, as text', () => {
   it('the uninstall stops it, removes the Startup entry and its home, and touches nothing of the pairing or the Node', () => {
     const { uninstall } = scripts();
     expect(uninstall).toContain('Stop-Process');
+    expect(uninstall).toContain("$env:PSModulePath = Under $PSHOME 'Modules'");
     expect(uninstall).toContain("'baox-local-executor.cmd'");
     expect(uninstall).not.toMatch(/unpair|node\.exe/);
   });

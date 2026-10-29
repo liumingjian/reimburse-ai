@@ -233,6 +233,9 @@ $ProgressPreference = 'SilentlyContinue'
 function Say([string]$line) { Write-Host $line }
 function Fail([string]$line) { Write-Host $line; exit 1 }
 function Under([string]$base) { foreach ($part in $args) { $base = [IO.Path]::Combine($base, $part) }; return $base }
+# Pasted into PowerShell 7, the command starts Windows PowerShell with PowerShell 7's module path, where it cannot load
+# its own Get-FileHash and Get-CimInstance (Windows 11, 2026-10-29): it loads its own modules only.
+if ($PSVersionTable.PSEdition -eq 'Desktop') { $env:PSModulePath = Under $PSHOME 'Modules' }
 # Nothing the employee's shell set may make a Node load extra code, or move where the executor lives.
 foreach ($name in @(${[...CODE_LOADING_ENV, 'BAOX_LOCAL_EXECUTOR_HOME', 'BAOX_LOCAL_EXECUTOR_PORT'].map(ps).join(', ')})) { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
 if ($env:OS -ne 'Windows_NT') { Fail ${T(SAY.wrongSystemWindows)} }
@@ -441,7 +444,10 @@ export function windowsUninstallScript(): string {
 try {
   Stop-Baox
   foreach ($entry in $startup) { if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry -Force } }
-  if (Test-Path -LiteralPath $baoxHome) { Remove-Item -LiteralPath $baoxHome -Recurse -Force }
+  # The runtime of a stopped process stays locked for a moment after it is gone (Windows 11, 2026-10-29): try again.
+  for ($try = 1; Test-Path -LiteralPath $baoxHome; $try++) {
+    try { Remove-Item -LiteralPath $baoxHome -Recurse -Force } catch { if ($try -ge 10) { throw }; Start-Sleep -Milliseconds 500 }
+  }
 } catch {
   Fail ${T(SAY.disk)}
 }
