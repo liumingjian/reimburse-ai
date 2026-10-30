@@ -85,6 +85,13 @@ it.each(['voucher', 'stay'])('resolves %s first and preserves the other blocker 
   expect(zeroWorkbook.worksheets[0]!.getCell('E6').value).toBe(0);
   expect((await scene.snapshot()).lines).toEqual(initial.lines);
   expect((await scene.snapshot()).confirmation).toEqual(initial.confirmation);
+  const changed = await scene.accept('set-home-city', { homeCity: '杭州' });
+  const reassigned = await scene.accept('submit-project-assignment', { purpose: '测试出差', projects: Object.fromEntries(changed.lines.map(line => [line.lineId, 'P-2307'])) });
+  const reconfirmed = await scene.accept('confirm-review', { digest: reassigned.confirmation.digest });
+  expect(reconfirmed.reimbursementSummary).toMatchObject({ status: 'unavailable', inputs: expect.arrayContaining([{ kind: 'stay-days', lineId: stay.lineId, label: stay.label, date: stay.date }]) });
+  if (reconfirmed.reimbursementSummary.status !== 'unavailable') throw new Error('missing renewed inputs');
+  expect(reconfirmed.reimbursementSummary.inputs).toHaveLength(2);
+  expect(await scene.refused('resolve-reimbursement-summary', stayChoice)).toEqual({ status: 400, code: 'stale_summary_resolution' });
   await scene.accept('reopen-upload');
   expect((await scene.client.request(generated.url)).status).toBe(404);
   expect((await scene.refused('resolve-reimbursement-summary', { confirmationRevision: revision, stayDays: [{ lineId: stay.lineId, days: 1 }] })).status).toBe(400);
