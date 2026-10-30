@@ -182,8 +182,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
 
   async function resolveReimbursementSummary(taskId: string, input: SummaryResolution): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
-    return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, revision }) => {
-      const loaded = await loadFacts(tx, task);
+    return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, revision, loaded }) => {
       const confirmedRevision = loaded.confirmed?.revision;
       if (confirmedRevision !== input.confirmationRevision) throw new ActionRefusedError({ code: 'stale_summary_resolution', message: '整单确认已变化，请刷新后重新填写。' });
       const empty = { confirmationRevision: input.confirmationRevision, voucherCounts: [], stayDays: [] };
