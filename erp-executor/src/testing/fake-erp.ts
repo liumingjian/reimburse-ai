@@ -58,7 +58,7 @@ export type FakeInvoice = {
 export type FakeReceiptLedger = Map<string, string[]>;
 export type FakeMasterData = { code: string; name: string; documentStatus?: string; forbidStatus?: string };
 export type FakeErpOptions = {
-  /** Owner QA 2026-10-30: ERP displays a committed zero expense-detail tax as an empty cell. */
+  /** @unverified: ERP displays a committed zero detail tax as blank (owner QA 2026-10-30); no typing recording backs it [typing] */
   zeroTaxDisplaysBlank?: boolean;
   origin?: string;
   loggedIn?: boolean;
