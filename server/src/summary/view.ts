@@ -4,10 +4,10 @@ import { summaryReasons } from './data';
 import { loadResolutions, summaryInputs } from './resolutions';
 
 export async function loadSummary(db: Db, taskId: string, accountId: string, confirmation: string, confirmedRevision: number | null, lines: readonly Line[]): Promise<ReimbursementSummary> {
-  if (confirmation !== 'confirmed') return { status: 'unavailable', reasons: ['请先完成整单明细确认。'] };
+  if (confirmation !== 'confirmed') return { status: 'unavailable', cause: 'not-confirmed', reasons: ['请先完成整单明细确认。'] };
   const choices = await loadResolutions(db, taskId, confirmedRevision ?? 0);
   const reasons = summaryReasons(lines, choices);
-  if (reasons.length) return { status: 'unavailable', reasons, confirmationRevision: confirmedRevision ?? 0, inputs: summaryInputs(lines, choices) };
+  if (reasons.length) return { status: 'unavailable', cause: 'unresolved-inputs', reasons, confirmationRevision: confirmedRevision ?? 0, inputs: summaryInputs(lines, choices) };
   const stored = await db.selectFrom('reimbursement_summary').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).orderBy('revision', 'desc').executeTakeFirst();
   if (!stored || stored.confirmation_revision !== confirmedRevision) return { status: 'ready' };
   const resolution = await db.selectFrom('summary_resolution').select('revision').where('task_id', '=', taskId).where('confirmation_revision', '=', confirmedRevision ?? 0).orderBy('revision', 'desc').executeTakeFirst();

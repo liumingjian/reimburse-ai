@@ -40,7 +40,7 @@ it.each(['voucher', 'stay'])('resolves %s first and preserves the other blocker 
   const initial = scene.reached;
   const summary = initial.reimbursementSummary;
   expect(summary.status).toBe('unavailable');
-  if (summary.status !== 'unavailable' || !summary.inputs) throw new Error('missing resolution inputs');
+  if (summary.status !== 'unavailable' || summary.cause !== 'unresolved-inputs') throw new Error('missing resolution inputs');
   expect(summary.inputs.map(input => input.kind).sort()).toEqual(['stay-days','voucher-count']);
   const revision = summary.confirmationRevision;
   const voucher = summary.inputs.find(input => input.kind === 'voucher-count')!;
@@ -89,7 +89,7 @@ it.each(['voucher', 'stay'])('resolves %s first and preserves the other blocker 
   const reassigned = await scene.accept('submit-project-assignment', { purpose: '测试出差', projects: Object.fromEntries(changed.lines.map(line => [line.lineId, 'P-2307'])) });
   const reconfirmed = await scene.accept('confirm-review', { digest: reassigned.confirmation.digest });
   expect(reconfirmed.reimbursementSummary).toMatchObject({ status: 'unavailable', inputs: expect.arrayContaining([{ kind: 'stay-days', lineId: stay.lineId, label: stay.label, date: stay.date }]) });
-  if (reconfirmed.reimbursementSummary.status !== 'unavailable') throw new Error('missing renewed inputs');
+  if (reconfirmed.reimbursementSummary.status !== 'unavailable' || reconfirmed.reimbursementSummary.cause !== 'unresolved-inputs') throw new Error('missing renewed inputs');
   expect(reconfirmed.reimbursementSummary.inputs).toHaveLength(2);
   expect(await scene.refused('resolve-reimbursement-summary', stayChoice)).toEqual({ status: 400, code: 'stale_summary_resolution' });
   await scene.accept('reopen-upload');

@@ -28,8 +28,9 @@ export const SummaryDataSchema = z.object({
   total: AmountSchema, totalVouchers: z.number().int().nonnegative(),
 });
 export type SummaryData = z.infer<typeof SummaryDataSchema>;
-export const ReimbursementSummarySchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('unavailable'), reasons: z.array(z.string()), confirmationRevision: z.number().int().nonnegative().optional(), inputs: z.array(SummaryInputSchema).optional() }),
+export const ReimbursementSummarySchema = z.union([
+  z.object({ status: z.literal('unavailable'), cause: z.literal('not-confirmed'), reasons: z.array(z.string()) }),
+  z.object({ status: z.literal('unavailable'), cause: z.literal('unresolved-inputs'), reasons: z.array(z.string()), confirmationRevision: z.number().int().nonnegative(), inputs: z.array(SummaryInputSchema) }),
   z.object({ status: z.literal('ready') }),
   z.object({ status: z.literal('generated'), data: SummaryDataSchema, url: UrlSchema, previewUrl: UrlSchema, fileName: z.string() }),
 ]);

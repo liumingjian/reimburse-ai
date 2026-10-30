@@ -1,8 +1,8 @@
 # 报销汇总表
 
-状态：设计规则已在三轮访谈中确认，待实施。更新于 2026-10-31。
+状态：已在集成分支实现，待合并 [PR #465](https://github.com/liumingjian/reimburse-ai/pull/465)。更新于 2026-10-31。
 
-实施规格：[GitHub #459](https://github.com/liumingjian/reimburse-ai/issues/459)，已标记 `ready-for-agent`。测试边界已由维护者确认。
+实施规格：[GitHub #459](https://github.com/liumingjian/reimburse-ai/issues/459)，已完成实施。测试边界已由维护者确认。
 
 ## 目的与范围
 
@@ -12,7 +12,7 @@
 
 ## 模板
 
-原件位于维护者机器的 `/Users/lmj/Documents/汇总表.xlsx`。需求访谈只读检查原件，未修改或复制入库。
+原件位于维护者机器的 `/Users/lmj/Documents/汇总表.xlsx`。原件保持不变，清理后的主表模板已随实现入库。
 
 - 采用 `报销单 (2)` 主表，保留财务表单版式、费用栏目及 A4 纵向、水平居中的打印设置。
 - 清除主表历史填写值，移除包含人员名单的 `Sheet2`，不把示例数据当作默认值。
@@ -74,10 +74,8 @@
 - Excel 可按模板版式打印，原件示例姓名、编号、金额和人员名单不出现在输出中。
 - 修改费用明细后不能继续使用旧汇总表，修改报销日期后重复下载仍保留该日期。
 
-## 现有实现与文档差异
+## 实施说明
 
-- 应用账号契约只有账号标识、用户名和角色，没有员工姓名、部门。ERP“个人信息”的姓名和任职资料读取需要新增路径，不能用账号名或材料中的入住人代替。参见 `contract/src/auth.ts` 与 `erp-executor/src/probe.ts`。
-- ERP 身份已有账号与账套信息，凭据按应用账号保存。参见 `erp-executor/src/protocol.ts` 与 `server/src/erp/hosted-sign-in.ts`。
-- 现有住宿晚数字段为可选文本，来自结账单，不保证始终存在。术语表要求同日入住、离店保留票面日期。本设计仅为汇总表新增天数计算，不改材料事实。参见 `server/src/parse/layouts/labelled.ts` 与术语表“结账单”。
-- [本地报销应用](standalone-app.md)此前称一张发票只属于一个分类，但代码逐行推导分类，可能跨本地、外地市内交通。汇总表采用本设计的跨类别张数归属规则。参见 `server/src/allocation.ts` 与 `server/src/inventory-view.ts`。
-- 产品方向原先暂缓明细汇总表并预设 Word 表单。本次设计采用维护者提供的 Excel 模板，替代该项旧取舍。
+- 姓名、部门从 ERP 个人信息读取，随应用账号的 ERP 凭据保存；生成时写入汇总表，允许员工修正打印信息。
+- 同日住宿天数和跨类别张数归属按整单确认版本保存；重新确认后需重新补充，不改材料事实。
+- 本次 Excel 模板方案替代原先暂缓明细汇总表和预设 Word 表单的取舍。

@@ -47,5 +47,5 @@ export function allowedActionsOf(snapshot: TaskSnapshot): TaskAction[] {
 }
 
 export function withAllowedActions(snapshot: TaskSnapshot): TaskSnapshot {
-  return { ...snapshot, reimbursementSummary: snapshot.confirmation.status === 'confirmed' && snapshot.stage !== 'voided' ? { status: 'ready' } : { status: 'unavailable', reasons: ['请先完成整单明细确认。'] }, allowedActions: allowedActionsOf(snapshot) };
+  return { ...snapshot, reimbursementSummary: snapshot.confirmation.status === 'confirmed' && snapshot.stage !== 'voided' ? { status: 'ready' } : { status: 'unavailable', cause: 'not-confirmed', reasons: ['请先完成整单明细确认。'] }, allowedActions: allowedActionsOf(snapshot) };
 }

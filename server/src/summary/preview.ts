@@ -1,27 +1,8 @@
 import JSZip from 'jszip';
 import type { SummaryData } from '@baox/contract';
 import { readFileSync } from 'node:fs';
+import { summaryCells } from './cells';
 const escapeXml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-function uppercase(amount: string): string {
-  const digits = '零壹贰叁肆伍陆柒捌玖';
-  const total = Math.round(Number(amount) * 100);
-  const integer = Math.floor(total / 100);
-  const group = (n: number): string => {
-    let text = ''; let zero = false;
-    for (let pos = 3; pos >= 0; pos -= 1) {
-      const digit = Math.floor(n / 10 ** pos) % 10;
-      if (digit) { if (zero && text) text += '零'; text += `${digits[digit]}${['', '拾', '佰', '仟'][pos]}`; zero = false; } else if (text) zero = true;
-    }
-    return text;
-  };
-  let yuan = ''; let pendingZero = false;
-  for (const [scale, unit] of [[100000000, '亿'], [10000, '万'], [1, '']] as const) {
-    const n = Math.floor(integer / scale) % (scale === 100000000 ? 100000000 : 10000);
-    if (n) { if (yuan && (pendingZero || n < 1000)) yuan += '零'; yuan += group(n) + unit; pendingZero = false; } else if (yuan) pendingZero = true;
-  }
-  const jiao = Math.floor(total / 10) % 10; const fen = total % 10;
-  return `${yuan || '零'}元${!jiao && !fen ? '整' : `${jiao ? `${digits[jiao]}角` : integer && fen ? '零' : ''}${fen ? `${digits[fen]}分` : ''}`}`;
-}
 export async function summaryPreview(data: SummaryData): Promise<string> {
   const zip = await JSZip.loadAsync(readFileSync(new URL('./template.xlsx', import.meta.url)));
   const source = zip.file('xl/worksheets/sheet1.xml');
@@ -38,9 +19,7 @@ export async function summaryPreview(data: SummaryData): Promise<string> {
   const point = (address: string) => { const [, col = 'A', row = '1'] = /([A-Z]+)(\d+)/.exec(address) ?? []; return { col: col.charCodeAt(0) - 65, row: Number(row) - 1 }; };
   const values = new Map<string, string>();
   for (const match of sheet.matchAll(/<c\b([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/c>)/g)) { const address = /\br="([^"]+)"/.exec(match[1] ?? '')?.[1]; const value = /<t[^>]*>([\s\S]*?)<\/t>/.exec(match[2] ?? '')?.[1]; if (address && value) values.set(address, value.replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"')); }
-  values.set('C4', data.name); values.set('F4', data.department); values.set('H3', '报销日期'); values.set('I3', data.reimbursementDate); values.set('C3', data.billIdentifier); values.set('F3', data.businessTripIdentifier);
-  data.rows.forEach((row, index) => { const cells = [['F6','D6'], ['F7','D7'], ['F8','D8'], ['K6','I6'], ['F9','D9']][index]; if (cells && (row.voucherCount || Number(row.amount))) { values.set(cells[0]!, row.amount); values.set(cells[1]!, String(row.voucherCount)); } if (row.days !== null && (row.voucherCount || Number(row.amount))) values.set('E6', String(row.days)); });
-  values.set('D17', data.total); values.set('B18', uppercase(data.total));
+  for (const cell of summaryCells(data)) values.set(cell.address, cell.display);
   const merges = [...sheet.matchAll(/<mergeCell ref="([^"]+)"\s*\/>/g)].map(match => { const [a = 'A1', b = a] = match[1]!.split(':'); return { start: point(a), end: point(b) }; });
   const sum = (sizes: number[], end: number) => sizes.slice(0, end).reduce((a,b) => a+b, 0);
   const parts: string[] = [];

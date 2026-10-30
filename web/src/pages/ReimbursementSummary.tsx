@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { SummaryInput } from '@baox/contract';
-import { Button, TextInput } from '@carbon/react';
+import { Button, NumberInput, Select, SelectItem, TextInput } from '@carbon/react';
 import type { ReimbursementSummary as Summary, SummaryPrintInformation, TaskSnapshot } from '@baox/contract';
 import { useAction } from '../shell/useAction';
 import { ActionError } from '../shell/ActionError';
@@ -42,7 +42,7 @@ export function ReimbursementSummary({ snapshot }: { snapshot: TaskSnapshot }) {
     <h2>报销汇总表</h2>
     {summary.status === 'unavailable' ? <>
       <ul>{summary.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
-      {summary.inputs?.map(input => <SummaryResolutionField key={`${summary.confirmationRevision}:${input.kind}:${input.kind === 'voucher-count' ? input.voucherMaterialId : input.lineId}`} input={input} disabled={action.busy || !snapshot.allowedActions.includes('summary')} save={value => action.run(adapter => adapter.resolveReimbursementSummary(snapshot.task.taskId, { confirmationRevision: summary.confirmationRevision!, voucherCounts: input.kind === 'voucher-count' ? [{ voucherMaterialId: input.voucherMaterialId, category: value }] : [], stayDays: input.kind === 'stay-days' ? [{ lineId: input.lineId, days: Number(value) }] : [] }))} />)}
+      {summary.cause === 'unresolved-inputs' ? summary.inputs.map(input => <SummaryResolutionField key={`${summary.confirmationRevision}:${input.kind}:${input.kind === 'voucher-count' ? input.voucherMaterialId : input.lineId}`} input={input} disabled={action.busy || !snapshot.allowedActions.includes('summary')} save={value => action.run(adapter => adapter.resolveReimbursementSummary(snapshot.task.taskId, { confirmationRevision: summary.confirmationRevision, voucherCounts: input.kind === 'voucher-count' ? [{ voucherMaterialId: input.voucherMaterialId, category: value }] : [], stayDays: input.kind === 'stay-days' ? [{ lineId: input.lineId, days: Number(value) }] : [] }))} />) : null}
       <ActionError message={action.error} />
     </> : <>
       <p>将整单确认的金额汇总到财务表单，下载 Excel 后打印。</p>
@@ -57,7 +57,10 @@ function SummaryResolutionField({ input, disabled, save }: { input: SummaryInput
   const [value, setValue] = useState('');
   const label = input.kind === 'voucher-count' ? `${input.label}：张数归属` : `${input.label}（${input.date}）：同日住宿天数`;
   return <form onSubmit={event => { event.preventDefault(); void save(value); }} style={{ marginBottom: 16 }}>
-    <label>{label}{input.kind === 'voucher-count' ? <select aria-label={label} required value={value} onChange={event => setValue(event.target.value)}><option value="">请选择</option>{input.categories.map(category => <option key={category}>{category}</option>)}</select> : <input aria-label={label} type="number" min={0} step={1} required value={value} onChange={event => setValue(event.target.value)} />}</label>
+    {input.kind === 'voucher-count' ? <Select id={`summary-voucher-${input.voucherMaterialId}`} labelText={label} required value={value} onChange={event => setValue(event.target.value)}>
+      <SelectItem value="" text="请选择" />
+      {input.categories.map(category => <SelectItem key={category} value={category} text={category} />)}
+    </Select> : <NumberInput id={`summary-stay-${input.lineId}`} label={label} min={0} step={1} required allowEmpty value={value} invalidText="请输入有效天数" translateWithId={id => id === 'increment.number' ? '增加天数' : '减少天数'} onChange={(_event, state) => setValue(String(state.value ?? ''))} />}
     <Button type="submit" kind="secondary" disabled={disabled || !value}>确认{input.kind === 'voucher-count' ? '张数归属' : '住宿天数'}</Button>
   </form>;
 }
