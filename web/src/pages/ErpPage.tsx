@@ -8,6 +8,7 @@ import { ActionGroup } from '../shell/ActionGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { DraftReview, UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
+import { ErpDetailActivity } from './ErpDetailActivity';
 
 // The page renders the server's recorded ERP read state. Refresh reads that state only; it never dispatches another
 // fill. Nothing here waits for the employee: the 本地执行器 signs in by itself and ends at 暂存 (ADR-0037).
@@ -83,6 +84,8 @@ export function ErpPage({ snapshot }: { snapshot: TaskSnapshot }) {
       {erp.rerunNotice ? (
         <InlineNotification data-testid="erp-rerun-notice" kind="info" role="status" lowContrast hideCloseButton statusIconDescription="说明" title={erp.rerunNotice} />
       ) : null}
+
+      <ErpDetailActivity activity={erp.detailActivity} running={writing} />
 
       <section className="app-block" aria-label="填报进度">
         {erp.progress ? (

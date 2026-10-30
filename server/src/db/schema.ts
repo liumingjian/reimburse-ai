@@ -56,6 +56,12 @@ export interface PairingTable {
   last_connected_at: string | null;
 }
 
+// Per-account browser preference; missing row means headless. Credential changes leave it intact.
+export interface ErpBrowserSettingTable {
+  account_id: string;
+  browser_mode: 'headless' | 'headed';
+}
+
 // ERP 凭据 (ADR-0033), one row per 应用账号. Mutable: saving replaces the row, a 试登录 updates `status`, `message`
 // and `checked_at`, clearing deletes the row. `password_sealed` is the password encrypted with the server's key
 // (`erp/credential-vault.ts`), bound to the account; null once ERP refused it (`status` 'refused').
@@ -469,6 +475,7 @@ export interface Schema {
   session: SessionTable;
   pairing: PairingTable;
   erp_credential: ErpCredentialTable;
+  erp_browser_setting: ErpBrowserSettingTable;
   task: TaskTable;
   upload_batch: UploadBatchTable;
   blob: BlobTable;

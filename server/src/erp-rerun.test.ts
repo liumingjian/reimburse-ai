@@ -6,7 +6,7 @@ import { EXECUTOR_METHODS, type FillRequest } from '@baox/erp-executor/wire';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FrozenJob } from './erp/fill-plan';
 import { draftMarkOf } from './erp/fill-plan';
-import { drafted, gated, readbackMismatch, uncertainDraft } from './erp/testing/fake-executor';
+import { drafted, gated, readbackMismatch, uncertainDraft, TEST_ERP_ACCOUNT } from './erp/testing/fake-executor';
 import { fakeLocalExecutor, type FakeLocalExecutor, type FillRunner } from './erp/testing/fake-local-executor';
 import type { TestClient } from './test/harness';
 import { scenario, scenarioServer, type ScenarioServer } from './test/scenario';
@@ -58,7 +58,47 @@ async function after(scene: { task: { taskId: string }; settled: () => Promise<T
 }
 const fills = (localExecutor: FakeLocalExecutor) => localExecutor.asked().filter((asked) => asked.method === EXECUTOR_METHODS.fill).map((asked) => asked.payload as FillRequest);
 
+const stoppedAtField = (code: string, column: string): FillRunner => async (plan, channel) => {
+  await channel.emit({ type: 'attempt_started', attemptId: `${plan.jobId}.fill`, action: 'fill',
+    preconditions: { targetId: 'erp-page-1', url: `${plan.erpOrigin}/k3cloud/html5/index.aspx`, formInstanceId: 'form-1', formMode: 'new', billNo: null, receiptRowCount: 1, detailRowCount: 1 },
+    expectedPostconditions: {}, compatibility: plan.compatibility, erpAccount: TEST_ERP_ACCOUNT });
+  const now = new Date().toISOString();
+  const event: ResultEvent = { type: 'result', status: 'unknown', code, message: `填写「${column}」停止`, billNo: null, capture: null,
+    context: { lineId: 'line-1', row: 1, column, action: 'write', startedAt: now, reportedAt: now, attempt: 1 } };
+  await channel.emit(event);
+  return event;
+};
+
 describe('自动重新去报销', () => {
+  it('does not spend a fresh form on an explicit ERP rejection', async () => {
+    const localExecutor = await executor([stoppedAtField('INVOICE_IMPORT_REJECTED', '发票')]);
+    const scene = await scenario(server, alice).at('actions');
+    await scene.accept('start-erp-write');
+    const { snapshot, jobs } = await after(scene, 1);
+    expect(jobs).toHaveLength(1);
+    expect(fills(localExecutor)).toHaveLength(1);
+    expect(snapshot.erp.rerunNotice).toContain('明确拒绝');
+  });
+
+  it('stops when the same field fails for the same reason on the fresh form', async () => {
+    const localExecutor = await executor([stoppedAtField('field_write_failed', '项目')]);
+    const scene = await scenario(server, alice).at('actions');
+    await scene.accept('start-erp-write');
+    const { snapshot, jobs } = await after(scene, 2);
+    expect(jobs).toHaveLength(2);
+    expect(fills(localExecutor)).toHaveLength(2);
+    expect(snapshot.erp.rerunNotice).toContain('同一条明细');
+  });
+
+  it('still permits recovery when a fresh form advances to a different field', async () => {
+    await executor([stoppedAtField('field_write_failed', '项目'), stoppedAtField('field_write_failed', '税额'), drafted]);
+    const scene = await scenario(server, alice).at('actions');
+    await scene.accept('start-erp-write');
+    const { snapshot, jobs } = await after(scene, 3);
+    expect(jobs).toHaveLength(3);
+    expect(snapshot.erp.outcome).toBe('drafted');
+  });
+
   it('starts over on a fresh form after a stop before 暂存, asks ERP first, and ends at the draft', async () => {
     const localExecutor = await executor([readbackMismatch, drafted]);
     const scene = await scenario(server, alice).at('actions');

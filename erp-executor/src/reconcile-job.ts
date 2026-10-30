@@ -58,7 +58,8 @@ export async function runReconcileJob(rawPlan: unknown, ports: ReconcilePorts): 
       if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
       probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
     }
-    if (probe.status === 'not_logged_in' || probe.status === 'no_tab') return await finish('aborted', NOT_SIGNED_IN_CODE, notSignedIn(probe.hint));
+    if (probe.status === 'no_tab') return await finish('aborted', 'erp_no_tab', '报销专用浏览器里没有报销系统页面。请重试；若仍失败，请重新启动本地执行器。');
+    if (probe.status === 'not_logged_in') return await finish('aborted', NOT_SIGNED_IN_CODE, notSignedIn(probe.hint));
     if (probe.status !== 'matched' || !probe.page) return await finish('aborted', `erp_login_${probe.status}`, probe.hint ?? null);
     const { session } = await attach(probe.page as ChromiumPage);
     await step('login', 'done');

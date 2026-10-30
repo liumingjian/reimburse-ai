@@ -34,6 +34,22 @@ const actionButtons = () =>
     .map((button) => button.textContent);
 
 describe('对账', () => {
+  test('保留失败明细的业务序号、字段和最后上报位置', () => {
+    const base = t2Snapshot();
+    const snapshot = { ...base, erp: { ...base.erp, detailActivity: {
+      lineId: 'line-stay', no: 7, row: 4, column: '费用项目', action: 'write' as const,
+      startedAt: '2026-10-30T01:00:00.000Z', reportedAt: '2026-10-30T01:00:00.000Z', attempt: 1,
+      summary: '住宿，2026-10-20，703.00 元', label: '正在填写「费用项目」',
+    } } };
+    const store = new AppStore(createMockAdapter({ seed: null, fault: null }), { validate: false });
+    render(<AppProvider store={store}><ReconcilePage snapshot={snapshot} /></AppProvider>);
+    const activity = screen.getByTestId('erp-detail-activity');
+    expect(activity.textContent).toContain('停止前最后上报位置');
+    expect(activity.textContent).toContain('第 7 条明细');
+    expect(activity.textContent).toContain('费用项目');
+    expect(activity.textContent).toContain('不代表该条材料有误');
+  });
+
   // 内核 classifyReconciliation：只有两种情况转人工（不自洽、身份不成立或逐行不一致的已保存）。
   // 未保存·已导入未写明细什么都没有落库：建议的处置是原地等待，出路是「重新去报销」和「转人工」。
   const CASES: ReadonlyArray<readonly [ReconcileBucket, boolean, string, boolean, readonly string[]]> = [

@@ -50,14 +50,15 @@ export async function queryRows(session: CdpSession, { formId, fieldKeys, filter
 
 export type CatalogProblem = { kind: 'project' | 'expense_item'; code: string; verdict: string; expectedName: string; erpName: string | null };
 
-const statusOf = (row: unknown[]) => ({ number: String(row[0]), name: String(row[1]), audited: row[2] === AUDITED, forbidden: row[3] !== NOT_FORBIDDEN });
+const statusOf = (row: unknown[]) => ({ number: String(row[0]), name: typeof row[1] === 'string' ? row[1].trim() : '', audited: row[2] === AUDITED, forbidden: row[3] !== NOT_FORBIDDEN });
 
 /** Check the plan's catalog entries. `problems` empty means every entry is confirmed. */
 export async function checkCatalog(session: CdpSession, expected: { projects: Array<{ code: string; name: string }>; expenseItems: Array<{ code: string; name: string }> }):
-  Promise<{ ok: true; problems: CatalogProblem[] } | { ok: false; reason: string }> {
+  Promise<{ ok: true; problems: CatalogProblem[]; projects: Array<{ code: string; name: string }> } | { ok: false; reason: string }> {
   const unsafe = [...expected.projects, ...expected.expenseItems].filter((entry) => !isSafeKey(entry.code));
   if (unsafe.length) return { ok: false, reason: `编码里有不能安全查询的字符：${unsafe.map((entry) => entry.code).join('、')}` };
   const problems: CatalogProblem[] = [];
+  const projects: Array<{ code: string; name: string }> = [];
 
   if (expected.expenseItems.length) {
     const list = expected.expenseItems.map((entry) => `'${entry.code}'`).join(',');
@@ -77,8 +78,9 @@ export async function checkCatalog(session: CdpSession, expected: { projects: Ar
     // Several records for one number are never picked between.
     const hit = res.rows.length === 1 ? statusOf(res.rows[0]!) : null;
     const verdict = res.rows.length === 0 ? 'missing' : res.rows.length > 1 ? 'ambiguous'
-      : hit!.name !== entry.name ? 'name_mismatch' : !hit!.audited || hit!.forbidden ? 'unusable' : 'confirmed';
+      : hit!.number !== entry.code ? 'missing' : !hit!.audited || hit!.forbidden || !hit!.name ? 'unusable' : 'confirmed';
     if (verdict !== 'confirmed') problems.push({ kind: 'project', code: entry.code, verdict, expectedName: entry.name, erpName: hit?.name ?? null });
+    else projects.push({ code: entry.code, name: hit!.name });
   }
-  return { ok: true, problems };
+  return { ok: true, problems, projects };
 }

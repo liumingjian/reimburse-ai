@@ -16,13 +16,21 @@ export const DEFAULT_PACE: Pace = { quietMs: 900, pollMs: 300, settleMs: 1200, l
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Observe until `ok` holds or the time runs out. A timeout returns the last observation; the caller judges. */
+/** Return the last readable observation at timeout; three consecutive read errors stop the wait. */
 export async function waitFor<T>(probe: () => Promise<T>, ok: (value: T) => boolean, ms: number, pollMs = 300): Promise<T> {
   const deadline = Date.now() + ms;
-  let last = await probe();
-  while (!ok(last) && Date.now() < deadline) {
+  let failures = 0;
+  for (;;) {
+    let last: T;
+    try {
+      last = await probe();
+      failures = 0;
+    } catch (error) {
+      if (++failures >= 3 || Date.now() >= deadline) throw error;
+      await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+      continue;
+    }
+    if (ok(last) || Date.now() >= deadline) return last;
     await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
-    last = await probe();
   }
-  return last;
 }

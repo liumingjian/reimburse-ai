@@ -9,13 +9,10 @@ export const catalogPending = (): Catalog => ({ status: 'pending', problems: [] 
 export const preparationPending = (): Preparation => ({ status: 'pending', problems: [], packageFiles: [] });
 export const preparationReady = (): Preparation => ({ status: 'ready', problems: [], packageFiles: [] });
 
-// `?fault=catalog-mismatch`: the mock ERP catalog knows project P-2307 under another name, so the ERP job stops at its
-// catalog step. The name is the one the server's scripted job reports (server/src/erp/testing/fake-executor.ts).
+// `?fault=catalog-mismatch`: the project number is missing in ERP, so the job stops before import.
 export const CATALOG_MISMATCH_PROJECT = 'P-2307';
-export const CATALOG_MISMATCH_RENAMED_AS = '改过名的项目';
 
-// The catalog verdict the ERP job reports for the submitted assignment: one row per renamed project, worded like the
-// server's catalogView (server/src/task-snapshot/erp.ts, verdict name_mismatch).
+// Keep the missing-project reason aligned with the server's catalog view.
 export function catalogMismatch(assignment: ProjectAssignment): Catalog | null {
   const used = assignment.assignments.find((item) => item.projectNumber === CATALOG_MISMATCH_PROJECT);
   if (!used) return null;
@@ -23,7 +20,7 @@ export function catalogMismatch(assignment: ProjectAssignment): Catalog | null {
     {
       subject: `项目号 ${used.projectNumber}`,
       reference: null,
-      reason: `项目 ${used.projectNumber} 在报销系统里的名称是「${CATALOG_MISMATCH_RENAMED_AS}」，与本地的「${used.projectName}」不一致`,
+      reason: `项目 ${used.projectNumber}「${used.projectName}」在报销系统里查不到`,
       resolver: '要你处理',
     },
   ];

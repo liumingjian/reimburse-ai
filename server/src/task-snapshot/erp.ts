@@ -3,8 +3,9 @@
 
 import { EXECUTOR_OFFLINE_CODE, ERP_DRAFT_CHECK_PROGRESS_LABEL, ERP_STEPS, HUMAN_REVIEW_NOTICE, READBACK_FIELD_LABELS, RECONCILE_ACTION_LABELS, RECONCILE_UNJUDGED_BANNER, type Catalog, type Erp, type ErpCapture, type ErpProgress, type ErpProgressStage, type ErpReview, type ErpStep, type Line, type Readback, type ReadbackField, type ReadbackRow, type Reconcile, type ReconcileBucket } from '@baox/contract';
 import { erpEntryOf } from '@baox/erp-executor/probe';
-import type { ResultEvent } from '@baox/erp-executor/protocol';
+import { erpDetailAmounts, type ResultEvent } from '@baox/erp-executor/protocol';
 import type { LegacyTaskTable, TaskLifecycle } from '../db/schema';
+import { rerunStopReason } from '../erp/rerun-policy';
 import type { DraftOutcome, ErpRecord, ReconcileJudgement } from '../erp/fill-state';
 import { EXECUTOR_CONNECTION_LOST_CODE } from '../channel/channel';
 import { erpActionsOf, reconcileActionsOf, reconcileReading, type ErpPhase } from '../task-policy';
@@ -176,12 +177,26 @@ function reviewOf(record: ErpRecord): ErpReview | null {
   return { url: erpEntryOf(origin), draftId };
 }
 
+function detailActivityOf(record: ErpRecord): Erp['detailActivity'] {
+  const phase = record.facts?.phase;
+  if (phase === 'drafted' || phase === 'saved') return null;
+  const last = [...record.events].reverse().find((event) => event.type === 'step' && event.step === 'fill' && event.progress && 'activity' in event.progress);
+  const current = record.result?.context ?? (last?.type === 'step' ? last.progress?.activity : null);
+  const previous = !current && phase !== 'running' ? record.writerResult?.context : null;
+  const activity = current ?? previous;
+  if (!activity) return null;
+  const line = record.frozen?.judge.lines.find((candidate) => candidate.lineId === activity.lineId);
+  const label = { add_row: '正在新增明细行', write: `正在填写「${activity.column ?? '明细'}」`, wait_model: '正在等待报销系统计算金额', retry: `正在重新填写「${activity.column ?? '明细'}」`, verify: '正在核对本条明细金额' }[activity.action];
+  return { ...activity, ...(previous ? { fromPreviousRun: true } : {}), no: line?.no ?? null, summary: line ? [line.categoryLabel, line.date, `${line.totalAmount} 元`].join('，') : '', label };
+}
+
 export function erpView(record: ErpRecord): Erp {
   const idle: Erp = {
     status: 'idle',
     steps: [],
     currentStage: null,
     progress: null,
+    detailActivity: null,
     externalWait: 'none',
     outcome: 'none',
     allowedActions: [],
@@ -198,11 +213,13 @@ export function erpView(record: ErpRecord): Erp {
     steps,
     currentStage: currentStageOf(steps),
     progress: progressOf(record, steps),
+    detailActivity: detailActivityOf(record),
     externalWait: externalWaitOf(record),
     allowedActions: erpActionsOf(facts.phase),
     review: reviewOf(record),
   };
   const reason = record.result?.message ?? record.result?.code ?? '';
+  const stoppedRerun = rerunStopReason(record.result, record.frozen?.rerunOf?.failure);
   const rerunNo = facts.trigger === 'rerun' ? (record.frozen?.rerunOf?.no ?? 1) : null;
   switch (facts.phase) {
     case 'running':
@@ -231,7 +248,7 @@ export function erpView(record: ErpRecord): Erp {
       }
       return { ...idle, ...readState, status: 'aborted', draftNo: record.result?.billNo ?? null,
         // A re-run that stopped before uploading filled nothing: its own reason says so, and «仍然没有完成» would not.
-        rerunNotice: rerunNo && !RERUN_STOPPED.test(record.result?.code ?? '') ? rerunSpent(rerunNo) : null,
+        rerunNotice: stoppedRerun ?? (rerunNo && !RERUN_STOPPED.test(record.result?.code ?? '') ? rerunSpent(rerunNo) : null),
         abortReason: record.result?.code === FORM_OBSTRUCTED_BEFORE_FILL || RERUN_STOPPED.test(record.result?.code ?? '')
           ? reason
           : `${UNKNOWN_REASON}${reason}` };
@@ -254,8 +271,8 @@ const centsOf = (amount: string | null | undefined) => {
  * The strict read-back the terminal rests on. A `drafted` result exists only after the server judged the filled
  * form equal to the approved preview on every row and all nine fields before 暂存, and the draft was read back equal
  * to that form; a `saved` one only after the same comparison on the saved form. So each field's ERP side equals its
- * local side, and these rows are the evidence the employee is asked to trust before they submit the draft. Net and tax come from the approved preview
- * (a rail line's come from ERP's receipt), the receipt number from its bindings.
+ * local side, and these rows are the evidence the employee is asked to trust before they submit the draft.
+ * Expense amount and tax use the gross/zero ERP projection; original invoice and receipt amounts remain evidence.
  */
 export function readbackView(record: ErpRecord, lines: readonly Line[]): Readback {
   const phase = record.facts?.phase;
@@ -270,8 +287,8 @@ export function readbackView(record: ErpRecord, lines: readonly Line[]): Readbac
       费用项目: line.expenseItemName,
       开始日期: line.date,
       结束日期: line.endDate ?? line.date,
-      费用金额: approved?.netAmount ?? line.netAmount,
-      税额: approved?.taxAmount ?? line.taxAmount,
+      费用金额: erpDetailAmounts({ totalAmount: approved?.totalAmount ?? line.grossAmount }).expenseAmount,
+      税额: erpDetailAmounts({ totalAmount: approved?.totalAmount ?? line.grossAmount }).taxAmount,
       收票单号: receipt.get(line.voucherMaterialId) ?? null,
       // The ERP 发票类型 the fill wrote (the face 票种 mapped onto ERP's enum, `fill-plan.ts`).
       发票类型: approved?.invoiceType ?? line.invoiceType,
@@ -312,8 +329,8 @@ function reconcileRows(record: ErpRecord, judged: ReconcileJudgement | null, lin
       费用项目: line.expenseItemName,
       开始日期: line.date,
       结束日期: line.endDate ?? line.date,
-      费用金额: approved?.netAmount ?? line.netAmount,
-      税额: approved?.taxAmount ?? line.taxAmount,
+      费用金额: erpDetailAmounts({ totalAmount: approved?.totalAmount ?? line.grossAmount }).expenseAmount,
+      税额: erpDetailAmounts({ totalAmount: approved?.totalAmount ?? line.grossAmount }).taxAmount,
       收票单号: receipt.get(line.voucherMaterialId) ?? null,
       发票类型: approved?.invoiceType ?? line.invoiceType,
     };

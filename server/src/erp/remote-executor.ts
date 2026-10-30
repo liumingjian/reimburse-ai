@@ -24,6 +24,7 @@
 // - ERP 凭据 (ADR-0033, ADR-0037). Every job carries the account's authorised 凭据 next to the plan (never in it: the
 //   plan is stored), as the job runner hands them to every executor (`fill-jobs.ts`).
 
+import { readErpBrowserSettings } from './browser-settings';
 import type { Db } from '../db/database';
 import { EXECUTOR_OFFLINE_CODE } from '@baox/contract';
 import { EXECUTOR_CONNECTION_LOST_CODE, ChannelError, realTimer, type ChannelRequestHandler, type ExecutorHub, type Schedule } from '../channel/channel';
@@ -150,6 +151,7 @@ export function createRemoteExecutor({ db, channel: hub, schedule = realTimer }:
 
   async function run(plan: { jobId: string; taskId: string; invoices?: Array<{ sha256: string }> }, channel: ExecutorChannel, method: string, payload: FillRequest | ReconcileRequest, { signal, credentials }: ExecutorOptions): Promise<ResultEvent> {
     const { account_id: accountId } = await db.selectFrom('task').select('account_id').where('task_id', '=', plan.taskId).executeTakeFirstOrThrow();
+    const { browserMode } = await readErpBrowserSettings(db, accountId);
     const originals = new Set((plan.invoices ?? []).map((invoice) => invoice.sha256));
     let job!: Running;
     const outcome = new Promise<ResultEvent>((finish, fail) => {
@@ -163,7 +165,7 @@ export function createRemoteExecutor({ db, channel: hub, schedule = realTimer }:
       job.state = 'ended';
       job.fail(new Error('这次任务已经被应用结束了。'));
     }, { once: true });
-    hub.request(accountId, method, payloadFor(payload, credentials)).then(
+    hub.request(accountId, method, { ...payloadFor(payload, credentials), browserMode }).then(
       // The executor's own answer counts only while the job is live: an interrupted job's late answer describes a page
       // nobody watched.
       (answer) => {

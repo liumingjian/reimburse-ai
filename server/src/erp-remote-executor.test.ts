@@ -122,12 +122,13 @@ describe('去报销 in the paired 本地执行器', () => {
     expect(done).toMatchObject({ stage: 'done', erp: { status: 'done', outcome: 'drafted', erpAccount: ERP_ACCOUNT }, readback: { status: 'matched' } });
     expect(localExecutor.asked()).toEqual([{ method: EXECUTOR_METHODS.fill, payload: {
       trigger: 'start',
+      browserMode: 'headless',
       plan: expect.objectContaining({ kind: 'fill', taskId: scene.task.taskId, draft: { mark: expect.stringMatching(/^baox-/) } }),
       credentials: { account: 'zhangsan', password: 'erp-Pa55' },
     } }]);
     // Every event the 本地执行器 sent is on the job's record, in the order sent; the verdicts it acted on were the server's.
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(localExecutor.sent().map((event) => event.type));
-    expect(new Set(localExecutor.sent().map((event) => event.type))).toEqual(new Set(['step', 'attempt_started', 'readback', 'result']));
+    expect(new Set(localExecutor.sent().map((event) => event.type))).toEqual(new Set(['step', 'catalog_confirmed', 'attempt_started', 'readback', 'result']));
     // `attempt_started` was durable before its ack reached the 本地执行器, and the ack came before that action's write.
     expect(acks.map(({ action, durable }) => ({ action, durable }))).toEqual([
       { action: 'import', durable: true },
@@ -160,10 +161,36 @@ describe('去报销 in the paired 本地执行器', () => {
     const scene = await actionsOnFakeErp();
     expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
 
+    await alice.post('/api/erp-browser-settings', { browserMode: 'headed' });
     const judged = await scene.run('reconcile');
 
+    expect(localExecutor.asked().map((asked) => (asked.payload as { browserMode: string }).browserMode)).toEqual(['headless', 'headed']);
     expect(localExecutor.asked().map((asked) => asked.method)).toEqual([EXECUTOR_METHODS.fill, EXECUTOR_METHODS.reconcile]);
     expect(judged).toMatchObject({ stage: 'reconcile', reconcile: { bucket: '未知' } });
+  });
+
+  it('uses the owning account mode for fill and keeps an active request unchanged', async () => {
+    const bob = await server.signIn('bob');
+    await bob.post('/api/erp-browser-settings', { browserMode: 'headless' });
+    await alice.post('/api/erp-browser-settings', { browserMode: 'headed' });
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const localExecutor = await connected(await pair(alice), { fill: async (plan, channel) => {
+      entered();
+      await hold;
+      return uncertainSave(plan, channel);
+    } });
+    const scene = await actionsOnFakeErp();
+    const running = scene.run('start-erp-write');
+    await started;
+    await alice.post('/api/erp-browser-settings', { browserMode: 'headless' });
+    expect(localExecutor.asked()[0]!.payload).toMatchObject({ browserMode: 'headed' });
+    release();
+    expect(await running).toMatchObject({ stage: 'reconcile' });
+    const stored = await server.db.selectFrom('erp_job').select('plan').where('task_id', '=', scene.task.taskId).executeTakeFirstOrThrow();
+    expect(stored.plan).not.toContain('browserMode');
   });
 
   // Story 13 and ADR-0037: said before starting, with no job created, and the two causes told apart. With nothing

@@ -337,7 +337,7 @@ describe('emptying a pre-filled editor before typing', () => {
   });
 });
 
-it.each([['2.48', true], ['', false], ['9.99', false]] as const)('finishes a numeric editor after Enter and checks committed text %s', async (displayed, expected) => {
+it.each([['2.48', '2.48', true, false], ['2.48', '', false, false], ['2.48', '9.99', false, false], ['0.00', '', true, false], ['0.00', '0.01', false, false], ['0.00', '', false, true]] as const)('finishes a numeric editor after Enter and checks committed text %s/%s', async (wanted, displayed, expected, staysEditing) => {
   // The failed live capture still showed a focused tax input and the correct computed row total.
   // Reproduce that editor state; only a real blur exposes the committed cell text.
   let editing = false;
@@ -352,7 +352,7 @@ it.each([['2.48', true], ['', false], ['9.99', false]] as const)('finishes a num
       if (method === 'Input.dispatchKeyEvent' && params.type === 'keyDown' && params.text) typed += params.text;
       if (method === 'Input.dispatchKeyEvent' && params.type === 'rawKeyDown' && params.key === 'Tab') {
         committed = true;
-        editing = false;
+        editing = staysEditing;
       }
       if (method === 'Runtime.evaluate') return { result: { value: {
         ok: true, column: '税额', text: committed ? displayed : '', x: 700, y: 420,
@@ -363,10 +363,10 @@ it.each([['2.48', true], ['', false], ['9.99', false]] as const)('finishes a num
     },
     close() {},
   };
-  const result = await writeCell(session, { column: '税额', value: '2.48', settleFirst: false,
+  const result = await writeCell(session, { column: '税额', value: wanted, settleFirst: false,
     readyMs: 0, settleMs: 0, holdMs: 10, pace: { pollMs: 1, quietMs: 1, settleMs: 0, longMs: 10 } });
   expect(result.ok, result.reason).toBe(expected);
   expect(result.after).toBe(displayed);
   expect(sent.filter(c => c.method === 'Input.dispatchKeyEvent' && c.params.type === 'rawKeyDown' && c.params.key === 'Tab')).toHaveLength(1);
-  expect(typed).toBe('2.48');
+  expect(typed).toBe(wanted);
 });

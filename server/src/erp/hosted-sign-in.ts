@@ -20,6 +20,7 @@ import type { Db } from '../db/database';
 import type { MaintenanceWriteAdmission } from '../maintenance';
 import { ChannelError } from '../channel/channel';
 import { hasPairing } from '../channel/pairing';
+import { readErpBrowserSettings } from './browser-settings';
 import type { CredentialVault } from './credential-vault';
 
 // A cold 本地执行器 has measured up to about a minute to sign in (erp-headless-v1.md); five leaves room for a slow link.
@@ -94,7 +95,8 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
     if (erpBusy(accountId)) return untested(ERP_CREDENTIAL_ERRORS.erpInUse);
     const password = vault?.open(accountId, row.password_sealed) ?? null;
     if (password === null) throw new AuthRefusal(503, 'erp_credentials_unavailable', ERP_CREDENTIAL_ERRORS.unavailable);
-    const answer = await answerOf(accountId, { erpOrigin, credentials: { account: row.erp_account, password } });
+    const { browserMode } = await readErpBrowserSettings(db, accountId);
+    const answer = await answerOf(accountId, { erpOrigin, browserMode, credentials: { account: row.erp_account, password } });
     if ('offline' in answer) return untested(ERP_CREDENTIAL_ERRORS.noExecutor);
     if ('timedOut' in answer) return untested(ERP_CREDENTIAL_ERRORS.timedOut);
     if (answer.ok) await settle(accountId, row.saved_at, { status: 'authorised', message: null, checked: true });

@@ -12,7 +12,7 @@
 import {
   FillPlanSchema, filledRows, markedPurpose, type Approval, type ApprovedPreview, type BlobSource, type Compatibility, type ErpAccount,
   type ExecutorChannel, type Mutation, type Preconditions, type ReadbackStage, type ResultEvent, type ResultStatus, type FreshGate,
-  type Step, type StepProgress,
+  type Step, type StepProgress, type DetailActivity,
 } from './protocol';
 import { evalIn, type CdpSession } from './cdp';
 import { checkCatalog } from './catalog';
@@ -70,7 +70,7 @@ export const notSignedIn = (hint: string | null | undefined) =>
 
 // A draft-flow problem as the result message: its own sentence, then the server's reasons (strict read-back).
 const problemText = (problem: { message: string; [extra: string]: unknown }) =>
-  [problem.message, ...(Array.isArray(problem['reasons']) ? (problem['reasons'] as unknown[]).map(String) : [])].join('：');
+  [...(problem['lineId'] ? [`明细 ${String(problem['lineId'])}${problem['column'] ? `「${String(problem['column'])}」` : ''}`] : []), problem.message, ...(Array.isArray(problem['reasons']) ? (problem['reasons'] as unknown[]).map(String) : [])].join('：');
 
 export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promise<ResultEvent> {
   const plan = FillPlanSchema.parse(rawPlan);
@@ -83,6 +83,8 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   let attempted = false;
   let erpAccount: ErpAccount | null = null;
   let compatibility: Compatibility | null = null;
+  let currentActivity: DetailActivity | null = null;
+  let completedRows = 0;
   let currentStep: Parameters<typeof step>[0] | null = null;
 
   async function step(name: Step, status: 'running' | 'done' | 'failed', progress?: StepProgress) {
@@ -93,7 +95,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
   async function finish(status: ResultStatus, code: string | null, message: string | null, billNo: string | null = null, draftId: string | null = null): Promise<ResultEvent> {
     if (currentStep && status !== 'drafted') await step(currentStep, 'failed');
     const capture = status === 'aborted' || status === 'unknown' ? (write ? await captureErpError(write) : null) : null;
-    const event: ResultEvent = { type: 'result', status, code, message, billNo, capture, ...(draftId ? { draftId } : {}) };
+    const event: ResultEvent = { type: 'result', status, code, message, billNo, capture, ...(currentActivity ? { context: currentActivity } : {}), ...(draftId ? { draftId } : {}) };
     await channel.emit(event);
     return event;
   }
@@ -128,7 +130,8 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       if (!signedIn.ok) return await finish('aborted', signedIn.code, signedIn.message);
       probe = await probeLogin((await browser.listPages()).filter((page) => sameOrigin(page.url, plan.erpOrigin)));
     }
-    if (probe.status === 'not_logged_in' || probe.status === 'no_tab') return await finish('aborted', NOT_SIGNED_IN_CODE, notSignedIn(probe.hint));
+    if (probe.status === 'no_tab') return await finish('aborted', 'erp_no_tab', '报销专用浏览器里没有报销系统页面。请重试；若仍失败，请重新启动本地执行器。');
+    if (probe.status === 'not_logged_in') return await finish('aborted', NOT_SIGNED_IN_CODE, notSignedIn(probe.hint));
     if (probe.status !== 'matched' || !probe.identity || !probe.page) return await finish('aborted', `erp_login_${probe.status}`, probe.hint ?? null);
     erpAccount = probe.identity;
     const page = await attach(probe.page as ChromiumPage);
@@ -145,6 +148,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
       await channel.emit({ type: 'catalog_mismatch', problems: catalog.problems });
       return await finish('catalog_mismatch', 'catalog_mismatch', catalog.problems.map((p) => `${p.kind} ${p.code}: ${p.verdict}`).join('；'));
     }
+    await channel.emit({ type: 'catalog_confirmed', projects: catalog.projects });
     // An 自动重新去报销 (ADR-0034) goes on only while ERP shows the task's bill never landed; otherwise it stops here,
     // with no attempt, and the task goes to 对账.
     if (plan.rerun) {
@@ -274,7 +278,7 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
 
     // Readers for draft-flow: raw readings plus, when a comparison is due, the server's verdict as `taskMatch`.
     const reader = (stage: ReadbackStage) => async (expected: ApprovedPreview | null): Promise<CurrentReadings> => {
-      const readings = protocolReadings(await readForm(session));
+      const readings = protocolReadings(await waitFor(() => readForm(session), () => true, pace.longMs, pace.pollMs));
       if (!expected) return { ...readings, taskMatch: null };
       const verdict = await channel.emit({ type: 'readback', stage, readings });
       return { ...readings, taskMatch: verdict.ok ? { ok: true, reasons: [] } : { ok: false, reasons: verdict.reasons } };
@@ -316,9 +320,18 @@ export async function runFillJob(rawPlan: unknown, ports: ExecutorPorts): Promis
     const filled = await fillApprovedPreview(write, {
       approvedPreview: preview, approval, freshGate, readCurrent: reader('after_fill'), causa,
       addRow: (p) => addDetailRow(p), ops, witnessDelayMs: pace.quietMs, settleMs: Math.min(MONEY_SETTLE_MS, pace.longMs), retypeAfterMs: Math.min(MONEY_RETYPE_MS, pace.longMs),
-      onRowWritten: (done, total) => step('fill', 'running', { done, total }),
+      onActivity: async (activity) => {
+        currentActivity = activity;
+        await step('fill', 'running', { done: completedRows, total: preview.lines.length, activity });
+      },
+      onRowWritten: async (done, total) => {
+        completedRows = done;
+        currentActivity = null;
+        await step('fill', 'running', { done, total, activity: null });
+      },
     });
     if (!filled.ok) return await finish('unknown', filled.problems[0]?.code ?? 'fill_failed', filled.problems.map(problemText).join('；'));
+    currentActivity = null;
     await step('fill', 'done');
 
     // 7. The strict hand-over read-back before 暂存: no attempt is started, because nothing is written.

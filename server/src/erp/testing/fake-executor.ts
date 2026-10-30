@@ -45,14 +45,14 @@ export const notSignedIn: Script = async (_plan, channel) => {
   return result(channel, 'aborted', 'erp_login', '报销系统没有登录，本地执行器也没能用报销系统账号登录。请在设置页保存报销系统账号和密码后再试。');
 };
 
-/** 报销信息核对 finds the first project renamed in ERP: aborts before import. */
+/** 报销信息核对 cannot find the first project in ERP: aborts before import. */
 export const catalogMismatch: Script = async (plan, channel) => {
   await reachLogin(channel);
   await channel.emit({ type: 'step', step: 'login', status: 'done' });
   await channel.emit({ type: 'step', step: 'catalog', status: 'running' });
   const project = plan.catalog.projects[0]!;
-  await channel.emit({ type: 'catalog_mismatch', problems: [{ kind: 'project', code: project.code, verdict: 'name_mismatch', expectedName: project.name, erpName: '改过名的项目' }] });
-  return result(channel, 'catalog_mismatch', 'catalog_mismatch', `project ${project.code}: name_mismatch`);
+  await channel.emit({ type: 'catalog_mismatch', problems: [{ kind: 'project', code: project.code, verdict: 'missing', expectedName: project.name, erpName: null }] });
+  return result(channel, 'catalog_mismatch', 'catalog_mismatch', `project ${project.code}: missing`);
 };
 
 /** Stops before the first attempt_started (e.g. the compatibility fingerprint): nothing was written. */

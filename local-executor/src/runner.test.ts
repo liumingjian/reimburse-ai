@@ -1,6 +1,7 @@
 // The local executor's runner over the fake ERP: the real executor runs through it, the fake stands in for the headless
 // browser, and a small app at the other end records the wire. What is asserted is what the app and the employee's PC
 // can observe: which events went out, how the job ended, and that the browser never outlives the job.
+import type { ErpBrowserMode } from '@baox/contract';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type ExecutorEvent, type FillPlan } from '@baox/erp-executor/protocol';
@@ -59,12 +60,14 @@ async function localOver({ erp, credentials = { account: 'tester', password: 'se
   const the = app(onResult);
   const browsers = { launched: 0, closed: 0 };
   const order: string[] = [];
+  const modes: ErpBrowserMode[] = [];
   const lines: string[] = [];
   const run = createLocalRunner({
     request: the.request,
     connection: the.connection,
     blobs: { read: async () => INVOICE.bytes },
-    launch: async () => {
+    launch: async (_origin, mode) => {
+      modes.push(mode);
       browsers.launched += 1;
       order.push('launched');
       return {
@@ -83,10 +86,10 @@ async function localOver({ erp, credentials = { account: 'tester', password: 'se
   });
   const sent = credentials ? { credentials } : {};
   return {
-    fake, events: the.log, browsers, order, lines, run,
-    fill: () => run(EXECUTOR_METHODS.fill, { plan, trigger: 'start', ...sent }),
-    reconcile: () => run(EXECUTOR_METHODS.reconcile, { plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN }, ...sent }),
-    trySignIn: () => run(EXECUTOR_METHODS.trySignIn, { erpOrigin: ERP_ORIGIN, credentials: credentials ?? { account: 'tester', password: 'secret' } }),
+    fake, events: the.log, browsers, order, modes, lines, run,
+    fill: (browserMode?: unknown) => run(EXECUTOR_METHODS.fill, { plan, trigger: 'start', ...sent, ...(browserMode === undefined ? {} : { browserMode }) }),
+    reconcile: (browserMode?: unknown) => run(EXECUTOR_METHODS.reconcile, { plan: { protocolVersion: PROTOCOL_VERSION, kind: 'reconcile', jobId: 'reconcile-1', taskId: 'task-1', erpOrigin: ERP_ORIGIN }, ...sent, ...(browserMode === undefined ? {} : { browserMode }) }),
+    trySignIn: (browserMode?: unknown) => run(EXECUTOR_METHODS.trySignIn, { erpOrigin: ERP_ORIGIN, credentials: credentials ?? { account: 'tester', password: 'secret' }, ...(browserMode === undefined ? {} : { browserMode }) }),
   };
 }
 
@@ -176,5 +179,41 @@ describe('试登录', () => {
     const [, trial] = await Promise.all([local.fill(), local.trySignIn()]);
     expect(trial).toEqual({ ok: false, code: BUSY.code, message: BUSY.message });
     expect(local.browsers).toEqual({ launched: 1, closed: 1 });
+  });
+});
+
+
+describe('request browser mode', () => {
+  for (const method of ['fill', 'reconcile', 'trySignIn'] as const) {
+    it.each([undefined, 'headless', 'headed'] as const)(`${method} launches %s and always closes without logging credentials`, async (mode) => {
+      const local = await localOver();
+      await local[method](mode);
+      expect(local.modes).toEqual([mode ?? 'headless']);
+      expect(local.browsers).toEqual({ launched: 1, closed: 1 });
+      expect(local.lines.join('\n')).not.toContain('secret');
+      expect(local.lines.join('\n')).not.toContain('tester');
+      expect(local.run.busy()).toBe(false);
+    });
+
+    it(`${method} rejects an unsupported mode before opening a browser`, async () => {
+      const local = await localOver();
+      await expect(local[method]('visible')).rejects.toThrow();
+      expect(local.browsers).toEqual({ launched: 0, closed: 0 });
+      expect(local.run.busy()).toBe(false);
+    });
+  }
+
+  it('captures the request mode before waiting for the previous browser to close', async () => {
+    const payload = { plan, trigger: 'start', credentials: { account: 'tester', password: 'secret' }, browserMode: 'headed' };
+    let next: Promise<unknown> | undefined;
+    const local: Awaited<ReturnType<typeof localOver>> = await localOver({ closeMs: 50, onResult: () => {
+      if (next) return;
+      next = local.run(EXECUTOR_METHODS.fill, payload);
+      payload.browserMode = 'headless';
+    } });
+    await local.fill();
+    await next;
+    expect(local.modes).toEqual(['headless', 'headed']);
+    expect(local.order).toEqual(['launched', 'closed', 'launched', 'closed']);
   });
 });

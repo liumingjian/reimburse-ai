@@ -132,8 +132,8 @@ function cellsOf(line: Line): readonly Cell[] {
     { text: line.category.label },
     codeAndName(line.expenseItemCode, line.expenseItemName),
     { text: line.invoiceType },
-    { text: line.netAmount },
-    { text: line.taxAmount },
+    { text: line.grossAmount },
+    { text: '0.00' },
     { text: line.grossAmount },
   ];
 }

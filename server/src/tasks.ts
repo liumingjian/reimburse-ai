@@ -55,6 +55,7 @@ import { EXECUTOR_CONNECTION_LOST_CODE } from './channel/channel';
 import { filledRows, INVOICE_NO, markedPurpose, PROTOCOL_VERSION, type ReadbackEvent, type ReconcilePlan } from '@baox/erp-executor/protocol';
 import type { ReconcileRun } from './erp/reconcile-jobs';
 import { loadErp, type ErpRecord } from './erp/fill-state';
+import { failureOf, rerunStopReason } from './erp/rerun-policy';
 import { printFileShas } from './print/facts';
 import * as printActions from './print/service';
 import { PrintRefusal, type PrintCommit, type PrintState } from './print/service';
@@ -395,10 +396,11 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     list,
 
     // 完全重置 (reset) of this account: its personal book is emptied and its remembered home city forgotten (both as
-    // appended facts), and every task 任务作废 would accept is voided (facts stay, ADR-0015) and leaves the list.
+    // appended facts), its browser preference returns to headless, and every task 任务作废 would accept is voided (facts stay, ADR-0015) and leaves the list.
     // Reset is a bulk abandon, so it clears whatever the abandon action clears — since ADR-0030 that is every
     // lifecycle, ERP-touched ones included. Only a task with a job in flight is left exactly as it is.
     async resetAll(): Promise<TaskList> {
+      await db.deleteFrom('erp_browser_setting').where('account_id', '=', accountId).execute();
       await createBookService(db, { scope: 'personal', ownerAccountId: accountId }, accountId).clear();
       if ((await rememberedHomeCity(db, accountId)) !== null) await rememberHomeCity(db, accountId, null, 'reset', now());
       const open = await db.selectFrom('task').select('task_id').where('account_id', '=', accountId).where('lifecycle', '!=', 'voided').execute();
@@ -657,13 +659,15 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           if (!ended || ended.job_id !== endedJobId || ended.kind !== 'fill') return NO_RERUN;
           const code = loaded.erp.result?.code ?? null;
           if (code !== null && EXECUTOR_MAY_STILL_RUN.has(code)) return NO_RERUN;
+          if (rerunStopReason(loaded.erp.result, loaded.erp.frozen?.rerunOf?.failure)) return NO_RERUN;
           const last = await tx.selectFrom('erp_attempt').select('action').where('job_id', '=', endedJobId).orderBy(sql`rowid`, 'desc').executeTakeFirst();
           if (last?.action !== 'import' && last?.action !== 'fill') return NO_RERUN;
           const jobs = await tx.selectFrom('erp_job').select(['job_id', 'trigger']).where('task_id', '=', taskId).orderBy('revision', 'desc').execute();
           const inRow = jobs.findIndex((job) => job.trigger !== 'rerun');
           const before = inRow === -1 ? jobs.length : inRow;
           if (before >= AUTO_RERUN_LIMIT) return NO_RERUN;
-          const frozen = JSON.parse(ended.plan) as FrozenJob;
+          const frozen = loaded.erp.frozen ?? JSON.parse(ended.plan) as FrozenJob;
+          const failure = failureOf(loaded.erp.result);
           const invoiceNos = [...new Set(frozen.judge.invoices.flatMap((invoice) => (invoice.identity?.number ? [invoice.identity.number] : [])))];
           // Without a number to ask about, ERP cannot be asked, and the re-run's precondition cannot be met.
           if (!invoiceNos.length || invoiceNos.length !== frozen.judge.invoices.length || !invoiceNos.every((no) => INVOICE_NO.test(no))) return NO_RERUN;
@@ -673,7 +677,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
           const job: FrozenJob = {
             plan: { ...planOfJob(frozen.plan, jobId), replaceAbandonedForm: true, rerun: { invoiceNos, marks: jobs.map((row) => draftMarkOf(row.job_id)) } },
             judge: frozen.judge,
-            rerunOf: { jobId: endedJobId, code, no: before + 1 },
+            rerunOf: { jobId: endedJobId, code, no: before + 1, ...(failure ? { failure } : {}) },
           };
           const maintenance = erpService.acquireErp ? erpService.acquireErp() : { release: () => undefined };
           if (!maintenance) return { code: 'maintenance_in_progress', message: '系统正在维护。' };

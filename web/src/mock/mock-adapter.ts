@@ -9,6 +9,7 @@ import {
   type AppAdapter,
   type AuthOutcome,
   type ErpCredentialsOutcome,
+  type ErpBrowserSettingsOutcome,
   type PairingChangeOutcome,
   type LegacyImportOutcome,
   type ProjectBookOutcome,
@@ -35,6 +36,7 @@ import { createPendingFlow } from './flows/pending';
 import { createPrintFlow } from './flows/print';
 import { createProjectFlow } from './flows/project';
 import { createErpCredentialsFlow } from './erp-credentials';
+import { createErpBrowserSettingsFlow } from './erp-browser-settings';
 import { createPairingFlow } from './pairing';
 import { createLegacyImportFlow } from './legacy-import';
 import type { MockOptions } from './options';
@@ -67,7 +69,7 @@ export function installMockHooks(target: Window, adapter: MockAdapter): void {
 }
 
 // 读快照与订阅不受断连影响（快照读的是内存）；任务列表断开期间读不到；其余都是动作，断开期间一律失败，原因就地显示在按钮旁。
-const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getPairing', 'getErpCredentials']);
+const READ_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['getSession', 'listTasks', 'getSnapshot', 'subscribe', 'getProjectBook', 'getPublicProjectBook', 'listAccounts', 'getLegacyImport', 'getPairing', 'getErpCredentials', 'getErpBrowserSettings']);
 // 旧数据导入的重试 / 跳过带回新的导入结果。
 const LEGACY_METHODS: ReadonlySet<keyof AppAdapter> = new Set<keyof AppAdapter>(['retryLegacyImport', 'skipLegacyImport']);
 // Issuing a 配对码 (pairing code) and revoking the pairing answer with the new pairing.
@@ -147,6 +149,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   };
 
   const pairing = createPairingFlow(options);
+  const browserSettings = createErpBrowserSettingsFlow(options, auth);
   const adapter: AppAdapter = {
     // The session reads memory, like snapshots: a disconnect shows up on the task list (banner), not at the gate.
     getSession: async () => auth.session(),
@@ -184,6 +187,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       for (const snapshot of bus.all()) if (ownedByCurrent(snapshot.task.taskId) && snapshot.stage !== 'voided' && toListItem(snapshot).abandonable) voidTask(snapshot.task.taskId);
       book.reset();
       auth.forgetCity();
+      browserSettings.reset();
       return listResult(null);
     },
     getProjectBook: book.getProjectBook,
@@ -262,6 +266,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...createLegacyImportFlow(options),
     ...pairing.flow,
     ...createErpCredentialsFlow(),
+    ...browserSettings.flow,
     ...createPrintFlow(bus),
     ...createErpFlow(bus, pairing.paired),
   };
@@ -270,10 +275,12 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const guarded: Record<string, unknown> = { ...adapter };
   for (const key of Object.keys(adapter) as (keyof AppAdapter)[]) {
     if (READ_METHODS.has(key)) continue;
-    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome>;
+    const original = adapter[key] as unknown as (...args: unknown[]) => Promise<ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome | ErpBrowserSettingsOutcome>;
     const unavailable = { code: SERVICE_UNAVAILABLE_CODE, message: SERVICE_UNAVAILABLE_MESSAGE };
-    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome =>
-      ACCOUNT_METHODS.has(key)
+    const down = (): ActionOutcome | TaskListOutcome | ProjectBookOutcome | AuthOutcome | AccountListOutcome | LegacyImportOutcome | PairingChangeOutcome | ErpCredentialsOutcome | ErpBrowserSettingsOutcome =>
+      key === 'saveErpBrowserSettings'
+        ? { ok: false, error: unavailable, settings: null }
+        : ACCOUNT_METHODS.has(key)
         ? { ok: false, error: unavailable, accountList: null }
         : LEGACY_METHODS.has(key)
         ? { ok: false, error: unavailable, legacyImport: null }

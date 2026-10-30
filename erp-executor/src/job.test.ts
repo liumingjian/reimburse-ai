@@ -10,8 +10,8 @@ import { erpInvoiceTypeOf, ERP_INVOICE_TYPES } from './invoice-type';
 import { writeHeader } from './erpform';
 import { addDetailRow, captureErpError, importInvoices, openInvoiceAssistant, openNewReimbursement, uploadInvoices, type ImportBudget, type WritePage } from './steps';
 import type { ExecutorChannel, ExecutorEvent } from './protocol';
+import { erpWritePreviewDigest } from './protocol';
 import { createFakeErp, type FakeErp } from './testing/fake-erp';
-import { driveTo } from './testing/reconcile-states';
 import { approvedPreview, blobSource, FAST_PACE, fakeErpOptions, fillPlan, INVOICES } from './testing/scenario';
 import { stubServer, type StubServer } from './testing/stub-server';
 
@@ -49,6 +49,20 @@ const receiptTotal = (fake: FakeErp) =>
 
 const writePage = (fake: FakeErp): WritePage => ({ session: fake.session, pace: FAST_PACE });
 
+// Keep the historical nonzero-tax control regression below the product's gross/zero projection.
+function nonzeroTaxProbe() {
+  const preview = approvedPreview(taskId);
+  for (const detail of preview.fieldPlan!.details) {
+    const line = preview.lines.find(line => line.lineId === detail.lineId)!;
+    for (const field of detail.fields) {
+      if (field.column === '费用金额') field.value = field.readback = line.netAmount;
+      if (field.column === '税额') field.value = field.readback = line.taxAmount;
+    }
+  }
+  preview.previewDigest = erpWritePreviewDigest(preview);
+  return channelFor(undefined, stubServer({ taskId, preview }));
+}
+
 /**
  * The fill job's own import step over an ERP form that is already open. A whole second fill job cannot reach it:
  * the pre-import preflight refuses a form that is not one blank 费用报销单-新增.
@@ -70,10 +84,42 @@ async function uploadAndImport(page: WritePage, invoices: typeof INVOICES, budge
 }
 
 describe('fill job through the protocol on the fake ERP', () => {
+  it('accepts ERP rendering committed zero detail tax as blank through 暂存', async () => {
+    const fake = await createFakeErp(fakeErpOptions({ zeroTaxDisplaysBlank: true }));
+    expect(await run(fake)).toMatchObject({ status: 'drafted' });
+    expect(column(fake, 'detail', 10)).toEqual(['', '']);
+    expect(column(fake, 'detail', 9)).toEqual(['¥703.00', '¥51.63']);
+    expect(column(fake, 'receipts', 5)).toEqual(['58.05', '1.51']);
+  });
+
+  it.each(['write', 'wait_model'] as const)('recovers one unreadable page observation during %s', async (action) => {
+    const fake = await createFakeErp(fakeErpOptions());
+    const send = fake.session.send.bind(fake.session);
+    let armed = false;
+    let injected = false;
+    fake.session.send = (method, params, options) => {
+      if (armed && !injected && method === 'Runtime.evaluate') {
+        injected = true;
+        return Promise.reject(new Error('single page observation failure'));
+      }
+      return send(method, params, options);
+    };
+    const channel = channelFor((event, forward) => {
+      if (event.type === 'step' && event.progress?.activity?.action === action) armed = true;
+      return forward();
+    });
+    expect(await run(fake, channel)).toMatchObject({ status: 'drafted' });
+    expect(injected).toBe(true);
+  });
+
   it('暂存s the filled form, starting an attempt before import, fill and 暂存', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
     const result = await run(fake);
     expect(result, JSON.stringify(result)).toMatchObject({ type: 'result', status: 'drafted', billNo: null, code: null });
+    expect(column(fake, 'detail', 9)).toEqual(['¥703.00', '¥51.63']);
+    expect(column(fake, 'detail', 10)).toEqual(['¥0.00', '¥0.00']);
+    expect(column(fake, 'receipts', 4)).toEqual(['644.95', '50.12']);
+    expect(column(fake, 'receipts', 5)).toEqual(['58.05', '1.51']);
 
     const attempts = server.attempts;
     expect(attempts.map((a) => a.action)).toEqual(['import', 'fill', 'save']);
@@ -99,7 +145,9 @@ describe('fill job through the protocol on the fake ERP', () => {
     const result = await run(fake);
     expect(result).toMatchObject({ status: 'drafted' });
     const total = approvedPreview(taskId).lines.length;
-    const fill = server.events.flatMap((e) => (e.type === 'step' && e.step === 'fill' ? [[e.status, e.progress ?? null]] : []));
+    const fill = server.events.flatMap((e) => (e.type === 'step' && e.step === 'fill' && !e.progress?.activity ? [[e.status, e.progress ? { done: e.progress.done, total: e.progress.total } : null]] : []));
+    const active = server.events.filter((event) => event.type === 'step' && event.progress?.activity);
+    expect(active).toContainEqual(expect.objectContaining({ progress: expect.objectContaining({ done: 0, activity: expect.objectContaining({ lineId: approvedPreview(taskId).lines[0]!.lineId, column: '项目', action: 'write', attempt: 1 }) }) }));
     expect(fill).toEqual([
       ['running', { done: 0, total }],
       ...Array.from({ length: total }, (_, i) => ['running', { done: i + 1, total }]),
@@ -128,11 +176,11 @@ describe('fill job through the protocol on the fake ERP', () => {
   // checked row by row, while the row that got it wrong is still the row being written.
   it('stops on the row whose 申请报销金额 disagrees with 费用金额 + 税额, instead of writing on past it', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyWritesNotTaken: [{ row: 1, column: '税额' }] }));
-    const result = await run(fake);
+    const result = await run(fake, nonzeroTaxProbe());
     // The refusal now comes from the gate between the two money writes rather than from the witness behind it:
     // a value that never reaches ERP's model never lets the computed column agree with the cells, so the fill
     // stops BEFORE typing anything else into that row. Same row, same defect, one step earlier.
-    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'money_model_not_settled' });
+    expect(result).toMatchObject({ type: 'result', status: 'unknown', code: 'money_model_not_settled', context: { row: 2, column: '税额', action: 'wait_model', attempt: 2 } });
     expect(String((result as { message?: string }).message)).toContain('明细第 2 行');
     expect(String((result as { message?: string }).message)).toContain('申请报销金额');
     // Both rows' computed column, off the fake form: row 1 adds up, row 2 is exactly its 税额 short.
@@ -178,7 +226,7 @@ describe('fill job through the protocol on the fake ERP', () => {
     // over before 税额 is typed and the test proves nothing; at 40 the write is dropped with the gate removed and
     // survives with it in place — which is the discrimination the test is for. (Checked both ways by hand.)
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, moneyModelLagTicks: 40 }));
-    const result = await run(fake);
+    const result = await run(fake, nonzeroTaxProbe());
     expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     // Both rows add up in ERP's own column: nothing was typed into a cell and lost on the way to the model.
     // Checked against the form's own 费用金额 and 税额 rather than against numbers copied out of the fixture,
@@ -229,7 +277,7 @@ describe('fill job through the protocol on the fake ERP', () => {
 
   it('waits for the editor to hold the value before committing, so a slow-to-parse cell is not lost', async () => {
     const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true, editorSettleTicks: 3 }));
-    const result = await run(fake);
+    const result = await run(fake, nonzeroTaxProbe());
     expect(result).toMatchObject({ type: 'result', status: 'drafted' });
     const asCents = (shown: string) => Math.round(Number(String(shown).replace(/[¥,]/g, '')) * 100);
     const [net, tax, sum] = [9, 10, 11].map((index) => column(fake, 'detail', index));
@@ -398,7 +446,6 @@ describe('fill job through the protocol on the fake ERP', () => {
     expect(result.status).toBe('catalog_mismatch');
     const mismatch = server.events.find((e) => e.type === 'catalog_mismatch');
     expect(mismatch).toMatchObject({ problems: [
-      { kind: 'project', code: '39163', verdict: 'name_mismatch', erpName: '改过名的项目' },
       { kind: 'project', code: '38480', verdict: 'unusable' },
     ] });
     expect(server.attempts).toEqual([]);
@@ -573,7 +620,13 @@ describe('re-importing an invoice the bill already holds', () => {
   it('strands no 费用明细行 on a 收票单号 that no longer holds its invoice', async () => {
     const [rail, ride] = INVOICES;
     // A fill that stopped before 暂存: 收票行 imported, detail rows written and linked to them.
-    const { fake } = await driveTo('filled');
+    const fake = await createFakeErp(fakeErpOptions({ assumeReceiptLink: true }));
+    const probe = nonzeroTaxProbe();
+    const emit = async (event: ExecutorEvent) => {
+      if (event.type === 'attempt_started' && event.action === 'save') throw new Error('stop linked-control probe before draft');
+      return (probe.emit as (event: ExecutorEvent) => Promise<unknown>)(event);
+    };
+    await run(fake, { emit: emit as ExecutorChannel['emit'] });
     expect(receiptLinks(fake)).toEqual([rail!.receiptNumber, ride!.receiptNumber]);
     const total = receiptTotal(fake);
 
@@ -964,7 +1017,7 @@ describe('the 发票导入单据 click', () => {
     const page = writePage(fake);
     await openNewReimbursement(page, { timeoutMs: 2000 });
 
-    await expect(uploadAndImport(page, [rail!, ride!])).rejects.toMatchObject({ code: 'INVOICE_IMPORT_REFUSED' });
+    await expect(uploadAndImport(page, [rail!, ride!])).rejects.toMatchObject({ code: 'INVOICE_IMPORT_REJECTED' });
     // With something to fail, the summary goes back to the two-count wording, and the failed invoice's row
     // carries a 状态 that is not 成功 — either alone is enough to stop the run.
     expect(windowText(fake, '#result-window')).toContain('执行成功：1；执行失败：1');

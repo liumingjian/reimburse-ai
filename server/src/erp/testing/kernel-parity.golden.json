@@ -1,7 +1,7 @@
 {
-  "_origin": "Recorded by driving 50931a3:kernel/src (erpwrite-cdp, erp-browser-adapters cdpFormAdapter, erp-cdp-read + erpreconcile readReconciliation, erp-write-readback, erp-draft-flow, erp-write-context) against server/src/erp/executor/testing/fake-erp.ts with server/src/erp/testing/scenario.ts (assumeReceiptLink on). Row `y` (fake layout) dropped. taskMatch = kernel matchTaskLines ok.",
+  "_origin": "Recorded by driving 50931a3:kernel/src (erpwrite-cdp, erp-browser-adapters cdpFormAdapter, erp-cdp-read + erpreconcile readReconciliation, erp-write-readback, erp-draft-flow, erp-write-context) against server/src/erp/executor/testing/fake-erp.ts with server/src/erp/testing/scenario.ts (assumeReceiptLink on). Row `y` (fake layout) dropped. taskMatch = kernel matchTaskLines ok. Amended 2026-10-30 for the owner-approved gross expense / zero detail tax projection; receipt readings retain the original recorded amounts.",
   "taskId": "task-parity",
-  "previewDigest": "ad9b3e2f30cc6aed04a71276206fa394",
+  "previewDigest": "49d10fd334d01c5f85c3a3f4bee1d351",
   "readbacks": {
     "after_import": {
       "formMode": {
@@ -337,7 +337,7 @@
             "kind": "data",
             "editing": false,
             "values": {
-              "收票单号": "SPD202609040022",
+              "收票单号": "",
               "项目": "中国农业发展银行河南省分行-20-2614",
               "费用项目": "长途交通",
               "发票类型": "普通发票",
@@ -346,8 +346,8 @@
               "住宿/出差地": "",
               "出发地": "合肥南",
               "目的地": "广州南",
-              "费用金额": "¥644.95",
-              "税额": "¥58.05",
+              "费用金额": "¥703.00",
+              "税额": "¥0.00",
               "申请报销金额": "¥703.00",
               "申请付款金额": "¥703.00"
             },
@@ -357,7 +357,7 @@
             "kind": "data",
             "editing": false,
             "values": {
-              "收票单号": "SPD202609020037",
+              "收票单号": "",
               "项目": "中国农业发展银行河南省分行-20-1961",
               "费用项目": "本地市内交通",
               "发票类型": "普通发票",
@@ -366,8 +366,8 @@
               "住宿/出差地": "广州",
               "出发地": "番禺广场地铁站D口",
               "目的地": "傍西酒堂",
-              "费用金额": "¥50.12",
-              "税额": "¥1.51",
+              "费用金额": "¥51.63",
+              "税额": "¥0.00",
               "申请报销金额": "¥51.63",
               "申请付款金额": "¥51.63"
             },
@@ -555,7 +555,7 @@
             "kind": "data",
             "editing": false,
             "values": {
-              "收票单号": "SPD202609040022",
+              "收票单号": "",
               "项目": "中国农业发展银行河南省分行-20-2614",
               "费用项目": "长途交通",
               "发票类型": "普通发票",
@@ -564,8 +564,8 @@
               "住宿/出差地": "",
               "出发地": "合肥南",
               "目的地": "广州南",
-              "费用金额": "¥644.95",
-              "税额": "¥58.05",
+              "费用金额": "¥703.00",
+              "税额": "¥0.00",
               "申请报销金额": "¥703.00",
               "申请付款金额": "¥703.00"
             },
@@ -575,7 +575,7 @@
             "kind": "data",
             "editing": false,
             "values": {
-              "收票单号": "SPD202609020037",
+              "收票单号": "",
               "项目": "中国农业发展银行河南省分行-20-1961",
               "费用项目": "本地市内交通",
               "发票类型": "普通发票",
@@ -584,8 +584,8 @@
               "住宿/出差地": "广州",
               "出发地": "番禺广场地铁站D口",
               "目的地": "傍西酒堂",
-              "费用金额": "¥50.12",
-              "税额": "¥1.51",
+              "费用金额": "¥51.63",
+              "税额": "¥0.00",
               "申请报销金额": "¥51.63",
               "申请付款金额": "¥51.63"
             },
@@ -656,11 +656,11 @@
     },
     {
       "kind": "cell",
-      "detail": "费用金额=¥644.95"
+      "detail": "费用金额=¥703.00"
     },
     {
       "kind": "cell",
-      "detail": "税额=¥58.05"
+      "detail": "税额=¥0.00"
     },
     {
       "kind": "addRow",
@@ -700,11 +700,11 @@
     },
     {
       "kind": "cell",
-      "detail": "费用金额=¥50.12"
+      "detail": "费用金额=¥51.63"
     },
     {
       "kind": "cell",
-      "detail": "税额=¥1.51"
+      "detail": "税额=¥0.00"
     }
   ],
   "result": {

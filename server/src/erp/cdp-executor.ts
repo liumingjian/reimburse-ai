@@ -2,10 +2,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { blobPath } from '../data-dir';
 import { cdpBrowser, ensureChromium } from '@baox/erp-executor/browser';
-import { cdpPortOf } from '@baox/erp-executor/chromium';
-import type { CdpSession } from '@baox/erp-executor/cdp';
+import { cdpPortOf, ExecutorError, listChromiumPages } from '@baox/erp-executor/chromium';
+import { connect, type CdpSession } from '@baox/erp-executor/cdp';
 import { runFillJob } from '@baox/erp-executor/job';
-import { erpEntryOf } from '@baox/erp-executor/probe';
+import { erpEntryOf, sameOrigin } from '@baox/erp-executor/probe';
 import { runReconcileJob } from '@baox/erp-executor/reconcile-job';
 import { signIn, type ErpCredentials } from '@baox/erp-executor/sign-in';
 import type { FillExecutor } from './fill-jobs';
@@ -46,13 +46,35 @@ export function cdpFillExecutor({ dataDir, env = process.env }: { dataDir: strin
     let launchError: Error | null = null;
     if (env['BAOX_ERP_CHROMIUM'] !== 'off') {
       try {
-        await ensureChromium({ port, profileDir: join(dataDir, 'chromium-profile'), openUrl: erpEntryOf(plan.erpOrigin), env });
+        const entry = erpEntryOf(plan.erpOrigin);
+        const { started } = await ensureChromium({ port, profileDir: join(dataDir, 'chromium-profile'), openUrl: entry, env });
+        if (!started && !(await listChromiumPages({ port })).some(page => sameOrigin(page.url, plan.erpOrigin))) {
+          const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(5000) });
+          if (!response.ok) throw new Error(`CDP /json/version HTTP ${response.status}`);
+          const version = await response.json() as { webSocketDebuggerUrl?: string };
+          if (!version.webSocketDebuggerUrl) throw new Error('CDP 缺少浏览器连接地址');
+          const browserSession = await connect(version.webSocketDebuggerUrl);
+          try {
+            await browserSession.send('Target.createTarget', { url: entry });
+          } finally { browserSession.close(); }
+        }
+        // A new target can still report about:blank before its initial navigation starts.
+        const deadline = Date.now() + 10_000;
+        while (!(await listChromiumPages({ port })).some(page => sameOrigin(page.url, plan.erpOrigin))) {
+          if (Date.now() >= deadline) throw new Error('报销系统标签页未能打开');
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       } catch (error) {
         launchError = error instanceof Error ? error : new Error(String(error));
       }
     }
     // The probe waits for a slow ERP first screen, never for a login: the job signs in itself.
-    return runFillJob(plan, { browser: cdpBrowser(port, launchError), blobs: dataDirBlobs(dataDir), channel, probeWaitMs: 30_000, ...signInWith(plan.erpOrigin, credentials) });
+    const browser = cdpBrowser(port);
+    if (launchError) {
+      const message = launchError.message;
+      browser.listPages = async () => { throw new ExecutorError('CHROMIUM_CDP_UNAVAILABLE', `报销专用浏览器没有就绪（自动化端口 ${port}）：${message}`); };
+    }
+    return runFillJob(plan, { browser, blobs: dataDirBlobs(dataDir), channel, probeWaitMs: 30_000, ...signInWith(plan.erpOrigin, credentials) });
   };
 }
 

@@ -9,6 +9,7 @@ import { AppShell } from '../shell/AppShell';
 import { FieldGroup } from '../shell/FieldGroup';
 import { PageHeader } from '../shell/PageHeader';
 import { LOCAL_EXECUTOR_COPY, LocalExecutorSection, type InstallCommand } from './LocalExecutorSection';
+import { ErpBrowserSettingsSection } from './ErpBrowserSettingsSection';
 
 // 设置页（全局页面，在登录门内）。
 // 「完全重置」请服务端清空当前账号自己的数据；成功后换上服务端给出的任务列表（空的），回到任务列表路由。账号与登录状态保留。
@@ -200,6 +201,7 @@ export function SettingsPage({ returnTo }: { returnTo?: string }) {
           </section>
         ) : null}
         <PairingSection />
+        <ErpBrowserSettingsSection />
         <LegacyImportSection />
         <details className="app-settings-advanced">
           <summary>高级设置</summary>

@@ -30,7 +30,7 @@ import { channelWatch, createChannelClient, type ClientSocket } from '@baox/chan
 import { serverBlobs } from '@baox/channel/blobs';
 import { redeemPairingCode, revokePairing } from '@baox/channel/pairing';
 import { awaitConnected } from './await-connected';
-import { launchHeadless } from './headless';
+import { launchBrowser } from './browser';
 import { claimInstance, INSTANCE_PORT, type Instance } from './instance';
 import { autostartFiles, downloadedRuntimePath, LAUNCH_AGENT, RESTART_EXIT_CODE, type InstallFile } from './install';
 import { createPairingHolder, pairingListener } from './pairing-port';
@@ -253,7 +253,7 @@ async function run(args: string[]) {
         request: (method, payload) => (client ? client.request(method, payload) : Promise.reject(new Error('channel_closed'))),
         connection,
         blobs: serverBlobs({ origin: pairing.origin, token: async () => pairing.token, fetch: (url, init) => fetch(url, init) }),
-        launch: (erpOrigin) => launchHeadless({ profileDir: store.profileDir, erpOrigin }),
+        launch: (erpOrigin, browserMode) => launchBrowser({ profileDir: store.profileDir, erpOrigin, browserMode }),
         stagingRoot: store.stagingRoot,
         log: say,
       });

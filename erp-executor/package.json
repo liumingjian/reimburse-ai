@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@baox/contract": "workspace:*",
     "zod": "4.6.2"
   },
   "devDependencies": {

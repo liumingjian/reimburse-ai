@@ -516,6 +516,7 @@
     "steps": [],
     "currentStage": null,
     "progress": null,
+    "detailActivity": null,
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [],

@@ -20,36 +20,36 @@ node server/dist/main.mjs              # 输出 listening on http://127.0.0.1:43
 用 `BAOX_DATA_DIR` 指一个**专给 QA 用的数据目录**：驱动会作废遗留的未完成任务，别指着日常数据。
 第一次启动后在页面上创建管理员 `admin / admin123`（或用下面的 `QA_USER` / `QA_PASSWORD` 换成你自己的）。
 
-### 1a. Dev mode for the maintainer's QA→fix loop (agents, through rexec)
+### 1a. Dev mode for the maintainer's QA and fix loop on this Mac
 
 When the maintainer asks for QA on the Mac, start this instead of the production build above: server under `tsx watch`
 plus Vite, on the same persistent `~/.baox-qa`, so a fix reaches the open page without a rebuild and the maintainer's
 tasks survive. Run from the worktree root:
 
 ```bash
-rexec 'qa/dev.sh up'              # blocks until ready, prints: dev-mode QA instance ready: http://127.0.0.1:5173/
-rexec 'qa/dev.sh sync'            # after each fix: pushes the changed files, lists them
-rexec 'qa/dev.sh down'            # when the maintainer is done
+qa/dev.sh up                     # waits for http://127.0.0.1:5173/ to be ready
+qa/dev.sh sync                   # copies changed files after each fix
+qa/dev.sh down                   # stops this QA instance
 ```
 
-`up` returns as soon as the page answers: the instance runs in a process group of its own with its output in log files,
-so the rexec job ends and does not hold the workspace. The first `up` in a fresh checkout installs dependencies, which
-can take minutes; give that Bash call a long timeout, or split it as `rexec --background 'qa/dev.sh up'` then
-`rexec wait <ID>`.
+`up` returns when the page answers. The instance keeps running in its own process group and writes to log files.
+The first `up` in a fresh checkout installs dependencies, which can take minutes.
 
-**Dev QA runs the production path and needs the account's ERP 凭据 saved.** Every 去报销 signs in with the 报销系统
+**Default QA uses the production local-executor path and needs saved ERP 凭据.** Every 去报销 signs in with the 报销系统
 account and password saved on the 设置页 and ends at 暂存, ERP 草稿已交接 (ADR-0037); there is no 「我已登录，继续」 and
 no bill handed over unsaved. `up` keeps a credential key in `~/.baox-qa-dev/erp-credential-key`, so the 设置页 can save
 the 凭据; save them before the first 去报销, or the job stops at its sign-in with nothing written. `BAOX_DEV_ERP` picks
 where the job runs (`server/src/dev-executors.ts`; `status` names the mode):
 
-- `cdp` (the default): the CDP executor in a dedicated, headed Chromium the server launches on this Mac
-  (`BAOX_ERP_CHROMIUM`), so the maintainer can watch it sign in, fill and 暂存. With nothing paired the saved 凭据 stay
-  untried on the 设置页 (no 本地执行器 to run the 试登录); this executor signs in with them anyway, and a password ERP
-  refuses is deleted as in production. The pairing, the 本地执行器 program and its channel transport are not exercised.
-- `paired`: `rexec --background 'BAOX_DEV_ERP=paired qa/dev.sh up'` leaves ERP jobs to the server's own routing, as the
-  production build does: the paired 本地执行器 runs them, and with nothing paired 去报销 is refused with a link to the
-  设置页. Say so before the maintainer starts that round. The install itself runs either way: `up` builds
+- `paired` (the default): the paired 本地执行器 runs ERP jobs. With no connected executor, 去报销 stops with a link to
+  设置页. In 设置页 → 报销系统浏览器, keep 无头（默认） for normal QA, or choose 有头（调试） to watch the same executor
+  sign in, fill and 暂存. The account setting applies to the next 去报销, 对账 or 试登录. Saving it starts no ERP action
+  and does not change a running job.
+- `cdp`: `BAOX_DEV_ERP=cdp qa/dev.sh up` explicitly selects the separate in-process CDP adapter for adapter debugging.
+  It uses a headed browser and does not exercise pairing or the local-executor channel. Selecting 有头（调试） in
+  设置页 does not select this route.
+
+The install itself runs either way: `up` builds
 the 本地执行器 program from the tree and caches Node's runtimes in `~/.baox-qa-dev/runtimes`, and Vite passes
 `/install`, `/uninstall` and the channel WebSocket through to the server (`web/src/dev-proxy.ts`). So the 设置页's
 install command, pairing (47319 included) and self-update (`sync` rebuilds the program when executor code changes)
@@ -59,12 +59,11 @@ this instance; say so first.
 - Hand the maintainer the Vite URL (`:5173`). The server's own `:4319` also serves `web/dist` when one was built, and that copy is stale.
 - A pushed web file hot-reloads the page; a pushed server file restarts only the server (`tsx watch`), which re-opens the
   same data directory. A changed `package.json` or lockfile makes `sync` reinstall and restart the whole instance.
-- `rexec` alone does not update the instance: it runs from its own copy of the tree (`~/.baox-qa-dev/src`), because the
-  Mac's rsync re-stamps every synced file and the watchers would restart everything on each call. `qa/dev.sh sync` copies
-  only files whose bytes changed.
+- The instance runs from its own copy of the tree (`~/.baox-qa-dev/src`). `qa/dev.sh sync` copies only files whose bytes
+  changed, so watchers restart only affected code.
 - Logs: `~/.baox-qa-dev/server.log`, `~/.baox-qa-dev/web.log`; `qa/dev.sh status` says what runs. The instance is not a
   rexec job, so `rexec --cancel` cannot stop it; `qa/dev.sh down` does, and `up` replaces whichever instance is running.
-- Server env passes through at `up`, e.g. `rexec --background 'BAOX_ERP_STOP_BEFORE_IMPORT=1 qa/dev.sh up'`. Overrides are listed at the top of `qa/dev.sh`.
+- Server env passes through at `up`, e.g. `BAOX_ERP_STOP_BEFORE_IMPORT=1 qa/dev.sh up`. Overrides are listed at the top of `qa/dev.sh`.
 
 The project-book section enters explicit numbers and names offline, including `P-2307` and `P-3312`, and checks duplicate and unsafe-number feedback. No ERP session or catalog fixture is needed to reach project assignment and whole-list confirmation. The administrator section uses a separate `QA-PUBLIC` number so it does not silently convert a member's personal entry.
 

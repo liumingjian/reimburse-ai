@@ -4,7 +4,7 @@
 // formReadbackToken, completePreviewProblems). It never creates an approval.
 // Form actions are injected; `readCurrent` returns raw readings plus the server's strict verdict (`taskMatch`).
 
-import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate } from './protocol';
+import { approvalCovers, erpWritePreviewDigest, fieldPlanOf, type Approval, type ApprovedPreview, type FreshGate, type DetailActivity } from './protocol';
 import { validInvoiceTypeSource, writableInvoiceType } from './invoice-type';
 import { sleep } from './pace';
 
@@ -204,7 +204,7 @@ export const computedTotalProblem = (
 ): string | null => {
   const row = values ?? {};
   const net = cents(row['费用金额']);
-  const tax = cents(row['税额']);
+  const tax = typeof row['税额'] === 'string' && row['税额'].trim() === '' ? 0 : cents(row['税额']);
   const computed = cents(row['申请报销金额']);
   const shown = (column: string) => `「${column}」${row[column] ?? '读不出'}`;
   if (net === null || tax === null) return `${label}的${shown('费用金额')}、${shown('税额')}读不出金额，不当这一行写好了`;
@@ -285,10 +285,11 @@ export const MONEY_RETYPE_MS = 8_000;
 
 export async function fillApprovedPreview<P>(page: P, {
   approvedPreview, approval, freshGate, readCurrent, addRow = null, writeDeps = {}, ops = {}, causa = null,
-  witnessReads = 8, witnessDelayMs = 900, settleMs = MONEY_SETTLE_MS, retypeAfterMs = MONEY_RETYPE_MS, settleDelayMs = 250, onRowWritten = null,
+  witnessReads = 8, witnessDelayMs = 900, settleMs = MONEY_SETTLE_MS, retypeAfterMs = MONEY_RETYPE_MS, settleDelayMs = 250, onRowWritten = null, onActivity = null,
 }: {
   /** Told after each 明细 row is written and witnessed: how many rows are done out of the preview's (去报销进度). */
   onRowWritten?: ((done: number, total: number) => Promise<void>) | null;
+  onActivity?: ((activity: DetailActivity) => Promise<void>) | null;
   approvedPreview: ApprovedPreview; approval: Approval | null | undefined; freshGate: FreshGate | null | undefined;
   readCurrent: (expected: ApprovedPreview | null) => Promise<CurrentReadings>;
   addRow?: ((page: P, detail: { line: ApprovedPreview['lines'][number]; current: CurrentReadings }) => Promise<ActionResult>) | null;
@@ -330,6 +331,10 @@ export async function fillApprovedPreview<P>(page: P, {
   const placeholders = [...detail.placeholders];
   const rowsWritten: Array<{ lineId: string; rowIndex: number }> = [];
   for (const line of approvedPreview.lines) {
+    const report = async (row: number, column: string | null, action: DetailActivity['action'], attempt = 1) => {
+      const now = new Date().toISOString();
+      await onActivity?.({ lineId: line.lineId, row: row + 1, column, action, attempt, startedAt: now, reportedAt: now });
+    };
     let rowIndex = rowByMaterial.get(line.voucherMaterialId);
     if (rowIndex === undefined && placeholders.length) rowIndex = placeholders.shift();
     if (rowIndex === undefined) {
@@ -337,6 +342,7 @@ export async function fillApprovedPreview<P>(page: P, {
         return fail('fill', [{ code: 'add_row_adapter_required', message: `明细 ${line.lineId} 需要新增行，但没有受控 addRow 适配器` }], { readings, rowsWritten });
       }
       const previousRowCount = dataRows(readings.detailGrid).length;
+      await report(previousRowCount, null, 'add_row');
       let added: ActionResult;
       try { added = await addRow(page, { line, current: readings }); } catch (error: any) {
         return fail('fill', [{ code: error?.code ?? 'add_row_failed', message: error?.message ?? String(error) }], { readings, rowsWritten });
@@ -356,10 +362,12 @@ export async function fillApprovedPreview<P>(page: P, {
     const beforeRow = dataRows(readings.detailGrid)[rowIndex];
     const currentTax = cents(beforeRow?.values?.['税额']);
     if (currentTax !== null && currentTax !== 0) {
+      await report(rowIndex, '税额', 'write');
       const cleared = await writeCell(page, { which: 0, row: rowIndex, column: '税额', value: '0.00', expect: null }, writeDeps);
       if (!cleared || !cleared.ok) return fail('fill', [{ code: 'tax_clear_failed', message: (cleared && cleared.reason) || '写入前清空旧税额失败' }], { readings, rowsWritten });
     }
     for (const field of plan.fields) {
+      await report(rowIndex, field.column, 'write');
       const result = field.option
         ? await selectOption(page, { which: 0, row: rowIndex, column: field.column, option: field.option }, writeDeps)
         : await writeCell(page, { which: 0, row: rowIndex, column: field.column, value: String(field.value), expect: { mode: 'equals', value: String(field.readback) } }, writeDeps);
@@ -386,12 +394,15 @@ export async function fillApprovedPreview<P>(page: P, {
         // on a cell that showed the amount while 申请报销金额 stayed empty (or the net alone) for the whole 30 s, and
         // the re-run's fresh form took the same amount at once. The model is long idle by `retypeAfterMs`, so the
         // second write cannot land inside the first one's window (V-59); the gate after it is ERP's arithmetic again.
+        await report(rowIndex, field.column, 'wait_model');
         let settled = await settle(Math.min(retypeAfterMs, settleMs));
         if (!settled) {
+          await report(rowIndex, field.column, 'retry', 2);
           const again = await writeCell(page, { which: 0, row: rowIndex, column: field.column, value: String(field.value), expect: { mode: 'equals', value: String(field.readback) } }, writeDeps);
           if (!again || !again.ok) {
             return fail('fill', [{ code: 'field_write_failed', message: (again && again.reason) || `字段 ${field.column} 回读失败`, lineId: line.lineId, column: field.column }], { readings, rowsWritten });
           }
+          await report(rowIndex, field.column, 'wait_model', 2);
           settled = await settle(settleMs);
         }
         if (!settled) {
@@ -413,6 +424,7 @@ export async function fillApprovedPreview<P>(page: P, {
       net: text(plan.fields.find((field) => field.column === '费用金额')?.value),
       tax: text(plan.fields.find((field) => field.column === '税额')?.value),
     };
+    await report(rowIndex, null, 'verify');
     let witness: string | null = null;
     for (let read = 0; read < Math.max(1, witnessReads); read++) {
       if (read > 0) await sleep(witnessDelayMs);

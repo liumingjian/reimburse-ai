@@ -14,6 +14,7 @@ import { validInvoiceTypeSource, writableInvoiceType } from '@baox/erp-executor/
 import type { ErpJudge } from './jobs';
 import { createDraftJudge, type DraftJudgeInputs } from './judge';
 import { previewLinesDigest } from './preview';
+import type { FillFailure } from './rerun-policy';
 import { PROTOCOL_VERSION, type ApprovedPreview, type FillPlan, type Identity, type ReadbackVerdict } from '@baox/erp-executor/protocol';
 import type { ReadbackInvoice } from './readback';
 
@@ -42,7 +43,7 @@ type CatalogEntry = { code: string; name: string };
 
 // A line in the kernel shape the preview builder reads.
 export type KernelLine = {
-  lineId: string; eventId: string; voucherMaterialId: string; kind: string;
+  no?: number; lineId: string; eventId: string; voucherMaterialId: string; kind: string;
   date: string; endDate: string | null; city: string | null; route: string | null; origin: string | null; destination: string | null; routeSource: string | null;
   netAmount: string | null; taxAmount: string | null; totalAmount: string; netAmountSource: string | null; taxAmountSource: string | null;
   category: string; categoryLabel: string;
@@ -58,7 +59,7 @@ export type JudgeBase = {
 
 // What `erp_job.plan` stores. `rerunOf` is an 自动重新去报销's cause (ADR-0034): the job whose unknown result it
 // starts over from, that result's code, and which re-run in a row this is.
-export type FrozenJob = { plan: FillPlan; judge: JudgeBase; rerunOf?: { jobId: string; code: string | null; no: number } };
+export type FrozenJob = { plan: FillPlan; judge: JudgeBase; rerunOf?: { jobId: string; code: string | null; no: number; failure?: FillFailure } };
 
 /** baox's ownership marker for a job (ADR-0029): one per job, the same on every send, unguessable as its job id is. */
 export const draftMarkOf = (jobId: string) => `baox-${createHash('sha256').update(`baox-draft:${jobId}`).digest('hex').slice(0, 10)}`;
@@ -121,6 +122,7 @@ export function buildFillJob(input: FillPlanInput): { ok: true; job: FrozenJob }
     const kind = kernelKind(line, materials.get(line.voucherMaterialId));
     const rail = kind === 'rail_eticket';
     return {
+      no: line.no,
       lineId: line.lineId,
       eventId: line.eventId ?? `event.${line.lineId}`,
       voucherMaterialId: line.voucherMaterialId,

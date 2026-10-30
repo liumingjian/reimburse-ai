@@ -447,3 +447,25 @@ describe('步骤文案', () => {
     expect(steps().map(([title]) => title)).toEqual(['启动后台浏览器', '登录', ...MIDDLE, '暂存到报销系统']);
   });
 });
+
+test.each(['running', 'aborted'] as const)('shows the reported business detail and field when %s, including after refresh', async (status) => {
+  window.location.hash = '#/task/T1/erp';
+  const adapter = createMockAdapter({ seed: 'erp', fault: null, erpStepMs: 5 });
+  const original = adapter.getSnapshot.bind(adapter);
+  vi.spyOn(adapter, 'getSnapshot').mockImplementation(async (taskId) => {
+    const snapshot = await original(taskId);
+    return { ...snapshot, erp: { ...snapshot.erp, status, detailActivity: {
+      lineId: 'line-4', row: 2, no: 4, column: '费用项目', action: 'write', attempt: 1,
+      summary: '住宿，2026-10-20，703.00 元', label: '正在填写「费用项目」',
+      startedAt: '2026-10-30T01:00:00.000Z', reportedAt: '2026-10-30T01:00:00.000Z',
+    } } };
+  });
+  render(<App adapter={adapter} />);
+  const activity = await screen.findByTestId('erp-detail-activity');
+  expect(activity.textContent).toContain('第 4 条明细');
+  expect(activity.textContent).toContain('正在填写「费用项目」');
+  expect(activity.textContent).toContain('不代表该条材料有误');
+  expect(activity.textContent).toContain(status === 'running' ? '最近上报位置' : '停止前最后上报位置');
+  fireEvent.click(screen.getByRole('button', { name: '刷新状态' }));
+  await waitFor(() => expect(screen.getByTestId('erp-detail-activity').textContent).toContain('第 4 条明细'));
+});

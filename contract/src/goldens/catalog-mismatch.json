@@ -543,7 +543,7 @@
       {
         "subject": "项目号 P-2307",
         "reference": null,
-        "reason": "项目 P-2307 在报销系统里的名称是「改过名的项目」，与本地的「华东客户交付」不一致",
+        "reason": "项目 P-2307「华东客户交付」在报销系统里查不到",
         "resolver": "要你处理"
       }
     ]
@@ -558,6 +558,7 @@
     "steps": [],
     "currentStage": null,
     "progress": null,
+    "detailActivity": null,
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [],
