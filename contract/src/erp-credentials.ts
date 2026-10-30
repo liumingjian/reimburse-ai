@@ -11,9 +11,25 @@ import type { ActionError } from './actions';
 export const ERP_CREDENTIAL_STATUSES = ['none', 'untested', 'authorised', 'refused'] as const;
 export type ErpCredentialStatus = (typeof ERP_CREDENTIAL_STATUSES)[number];
 
+export const EmployeeInformationSchema = z.object({
+  erpAccount: z.string().trim().min(1), tenant: z.string().trim().min(1),
+  name: z.string().trim().min(1), department: z.string().trim().min(1),
+});
+export const EmployeeProfileResultSchema = z.discriminatedUnion('status', [
+  EmployeeInformationSchema.extend({ status: z.literal('ready') }),
+  z.object({ status: z.literal('failed'), message: z.string().min(1) }),
+]);
+export const EmployeeProfileViewSchema = z.discriminatedUnion('status', [
+  EmployeeInformationSchema.extend({ status: z.literal('ready'), retrievedAt: z.string() }),
+  z.object({ status: z.literal('failed'), message: z.string().min(1) }),
+  z.object({ status: z.literal('missing') }),
+]);
+export type EmployeeProfileView = z.infer<typeof EmployeeProfileViewSchema>;
+
 export const ErpCredentialsViewSchema = z.object({
   // False when this server has no key to encrypt with: nothing can be saved.
   available: z.boolean(),
+  employeeProfile: EmployeeProfileViewSchema,
   status: z.enum(ERP_CREDENTIAL_STATUSES),
   // The ERP account is shown back so the employee knows which one is saved; the password never is.
   erpAccount: z.string().nullable(),

@@ -817,6 +817,12 @@ const erpBrowserSettings: Migration = {
   },
 };
 
+const employeeProfile: Migration = {
+  async up(db) {
+    await db.schema.alterTable('erp_credential').addColumn('employee_profile', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -852,4 +858,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0024_412_install_code': installCode412,
   '0025_432_one_pairing': onePairing432,
   '0026_erp_browser_settings': erpBrowserSettings,
+  '0027_employee_profile': employeeProfile,
 };

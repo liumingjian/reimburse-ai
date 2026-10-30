@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, PAIRING_PATH, EXECUTOR_VERSION, ErpCredentialsViewSchema, PairingViewSchema, PairingTokenSchema } from '@baox/contract';
 import { abortedResult } from '@baox/erp-executor/protocol';
@@ -40,7 +43,7 @@ async function pair(owner: TestClient): Promise<string> {
 
 const trials: TrySignInRequest[] = [];
 beforeEach(() => { trials.length = 0; });
-async function executor(answer: TrySignInAnswer = { ok: true }, fill?: FillRunner): Promise<FakeLocalExecutor> {
+async function executor(answer: TrySignInAnswer = { ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } }, fill?: FillRunner): Promise<FakeLocalExecutor> {
   const localExecutor = fakeLocalExecutor(server.app.executorHub, await pair(alice), {
     trySignIn: async (request) => { trials.push(request); return answer; },
     ...(fill ? { fill } : {}),
@@ -135,7 +138,7 @@ describe('去报销 through a baox 本地执行器', () => {
   const sceneOnFakeErp = () => scenario(server, alice).at('actions');
 
   it('sends the authorised 凭据 down with the job, next to the plan and not in it', async () => {
-    const localExecutor = await executor({ ok: true }, (plan, channel) => uncertainSave(plan, channel));
+    const localExecutor = await executor({ ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } }, (plan, channel) => uncertainSave(plan, channel));
     await save();
     const scene = await sceneOnFakeErp();
 
@@ -149,7 +152,7 @@ describe('去报销 through a baox 本地执行器', () => {
 
   // ADR-0029: the 本地执行器 runs unattended, so it 暂存s the bill under the job's ownership marker.
   it('asks the 本地执行器 to 暂存 under the job\'s marker, and ends at ERP 草稿已交接', async () => {
-    const localExecutor = await executor({ ok: true }, drafted);
+    const localExecutor = await executor({ ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } }, drafted);
     await save();
     const scene = await sceneOnFakeErp();
 
@@ -163,7 +166,7 @@ describe('去报销 through a baox 本地执行器', () => {
   });
 
   it('offers 对账 by the marker and 转人工, never 重新去报销, when 暂存 was pressed and its result is unknown', async () => {
-    await executor({ ok: true }, uncertainDraft);
+    await executor({ ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } }, uncertainDraft);
     await save();
     const scene = await sceneOnFakeErp();
 
@@ -186,7 +189,7 @@ describe('去报销 through a baox 本地执行器', () => {
   });
 
   it('deletes the password when ERP refuses it inside a job', async () => {
-    await executor({ ok: true }, async () => abortedResult(SIGN_IN_REFUSED_CODE, 'ERP 拒绝了这组账号密码：密码已过期。'));
+    await executor({ ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } }, async () => abortedResult(SIGN_IN_REFUSED_CODE, 'ERP 拒绝了这组账号密码：密码已过期。'));
     await save();
     const scene = await sceneOnFakeErp();
 
@@ -203,7 +206,7 @@ describe('the 去报销 step list', () => {
   const LOCAL = ['启动后台浏览器', '登录', '报销信息核对', '打开空白报销单', '导入发票', '收票回读', '填写明细', '暂存到报销系统'];
 
   it('words a job with the 本地执行器 list, ending in 暂存到报销系统', async () => {
-    await executor({ ok: true }, drafted);
+    await executor({ ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } }, drafted);
     await save();
     const scene = await scenario(server, alice).at('actions');
 
@@ -255,4 +258,67 @@ describe('ERP 凭据 for the server\'s own executor (development, e2e)', () => {
     expect(await scene.run('start-erp-write')).toMatchObject({ stage: 'done' });
     expect(seen).toEqual([{ account: 'zhangsan', password: PASSWORD }, null]);
   });
+});
+
+
+describe('personal template information through the paired executor', () => {
+  it('retrieves the owning employee on save and reuses it without another login', async () => {
+    await executor({ ok: true, employeeProfile: { status: 'ready', erpAccount: 'zhangsan', tenant: 'tenant-a', name: '测试员工', department: '末条任职部门' } });
+    expect(await view(await save())).toMatchObject({ status: 'authorised', employeeProfile: { status: 'ready', name: '测试员工', department: '末条任职部门', tenant: 'tenant-a' } });
+    expect(await view(await alice.request('/api/erp-credentials'))).toMatchObject({ employeeProfile: { status: 'ready', name: '测试员工' } });
+    expect(trials).toHaveLength(1);
+    const bob = await server.signIn('bob');
+    expect(await view(await bob.request('/api/erp-credentials'))).toMatchObject({ employeeProfile: { status: 'missing' } });
+    const bobExecutor = fakeLocalExecutor(server.app.executorHub, await pair(bob), { trySignIn: async () => ({ ok: true, employeeProfile: { status: 'ready', erpAccount: 'zhangsan', tenant: 'tenant-a', name: '另一应用账号员工', department: '另一部门' } }) });
+    await bobExecutor.connect();
+    expect(await view(await bob.post('/api/erp-credentials', { account: 'zhangsan', password: PASSWORD }))).toMatchObject({ employeeProfile: { status: 'ready', name: '另一应用账号员工' } });
+    expect(await view(await alice.request('/api/erp-credentials'))).toMatchObject({ employeeProfile: { status: 'ready', name: '测试员工', department: '末条任职部门' } });
+  });
+});
+
+describe('employee identity refresh', () => {
+  it('replaces tenant identity on verification and never falls back after a failed refresh', async () => {
+    let answer: TrySignInAnswer = { ok: true, employeeProfile: { status: 'ready', erpAccount: 'zhangsan', tenant: 'first', name: '甲', department: '旧部门' } };
+    const local = fakeLocalExecutor(server.app.executorHub, await pair(alice), { trySignIn: async () => answer });
+    await local.connect();
+    await save();
+    answer = { ok: true, employeeProfile: { status: 'ready', erpAccount: 'zhangsan', tenant: 'second', name: '乙', department: '新部门' } };
+    expect(await view(await alice.post('/api/erp-credentials/test', {}))).toMatchObject({ employeeProfile: { status: 'ready', tenant: 'second', name: '乙' } });
+    answer = { ok: true, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重试。' } };
+    const failed = await view(await alice.post('/api/erp-credentials/test', {}));
+    expect(failed).toMatchObject({ status: 'authorised', employeeProfile: { status: 'failed', message: expect.stringContaining('重试') } });
+    expect(JSON.stringify(failed.employeeProfile)).not.toContain('乙');
+    answer = { ok: true, employeeProfile: { status: 'ready', erpAccount: 'other', tenant: 'second', name: '丙', department: '另一部门' } };
+    expect(await view(await alice.post('/api/erp-credentials', { account: 'other', password: PASSWORD }))).toMatchObject({ employeeProfile: { status: 'ready', erpAccount: 'other', name: '丙' } });
+  });
+
+  it('rejects blank employee fields and a mismatched observed ERP account', async () => {
+    let answer: TrySignInAnswer = { ok: true, employeeProfile: { status: 'ready', erpAccount: 'other', tenant: 'first', name: '甲', department: '部门' } };
+    const local = fakeLocalExecutor(server.app.executorHub, await pair(alice), { trySignIn: async () => answer });
+    await local.connect();
+    expect(await view(await save())).toMatchObject({ employeeProfile: { status: 'failed' } });
+    answer = { ok: true, employeeProfile: { status: 'ready', erpAccount: 'zhangsan', tenant: 'first', name: '', department: '' } };
+    expect(await view(await alice.post('/api/erp-credentials/test', {}))).toMatchObject({ status: 'authorised', employeeProfile: { status: 'failed' } });
+  });
+});
+
+
+it('persists personal template information across a server restart without another ERP login', async () => {
+  await server.close();
+  const directory = mkdtempSync(join(tmpdir(), 'baox-profile-'));
+  const database = join(directory, 'profile.sqlite');
+  const key = randomBytes(32);
+  server = await scenarioServer({ database, erpExecutor: 'paired', erpCredentialKey: key, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
+  alice = await server.signIn('alice');
+  const local = await executor({ ok: true, employeeProfile: { status: 'ready', erpAccount: 'zhangsan', tenant: 'tenant', name: '测试员工', department: '测试部门' } });
+  await save();
+  const cookie = alice.cookie;
+  local.disconnect();
+  await server.close();
+  server = await scenarioServer({ database, erpExecutor: 'paired', erpCredentialKey: key, erpConfig: { origin: ERP_ORIGIN, compatibility: COMPATIBILITY } });
+  try {
+    const response = await server.app.request('/api/erp-credentials', { headers: { cookie } });
+    expect(await view(response)).toMatchObject({ employeeProfile: { status: 'ready', name: '测试员工', department: '测试部门' } });
+    expect(trials).toHaveLength(1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

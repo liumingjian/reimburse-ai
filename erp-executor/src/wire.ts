@@ -20,7 +20,7 @@
 // because an executor that mistook some other reply for the ack would mutate ERP with nothing recorded.
 
 import { z } from 'zod';
-import { ErpBrowserModeSchema } from '@baox/contract';
+import { EmployeeProfileResultSchema, ErpBrowserModeSchema } from '@baox/contract';
 import {
   ErpAccountSchema, ExecutorEventSchema, FillPlanSchema, ReconcilePlanSchema,
   type Approval, type ApprovedPreview, type AttemptAck, type ExecutorChannel, type ExecutorEvent, type FreshGate, type ReadbackVerdict, type ResultEvent,
@@ -44,13 +44,13 @@ export type FillRequest = z.infer<typeof FillRequestSchema>;
 export const ReconcileRequestSchema = z.object({ plan: ReconcilePlanSchema, credentials: ErpCredentialsSchema.optional(), browserMode: ErpBrowserModeSchema.optional() });
 export type ReconcileRequest = z.infer<typeof ReconcileRequestSchema>;
 
-// 试登录: sign in with these 凭据 and straight out again, touching nothing else. `code` is the sign-in's own failure
+// 试登录: sign in with these 凭据, read personal information, and sign out. No reimbursement writes. `code` is the sign-in's own failure
 // code (`sign-in.ts`); `erp_sign_in_refused` is the one that disables the 凭据.
 export const SIGN_IN_REFUSED_CODE = 'erp_sign_in_refused';
 export const TrySignInRequestSchema = z.object({ erpOrigin: z.string().url(), credentials: ErpCredentialsSchema, browserMode: ErpBrowserModeSchema.optional() });
 export type TrySignInRequest = z.infer<typeof TrySignInRequestSchema>;
 export const TrySignInAnswerSchema = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(true), employeeProfile: EmployeeProfileResultSchema.catch({ status: 'failed', message: '员工信息读取结果不完整，请重新试登录。' }) }),
   z.object({ ok: z.literal(false), code: z.string().min(1), message: z.string() }),
 ]);
 export type TrySignInAnswer = z.infer<typeof TrySignInAnswerSchema>;

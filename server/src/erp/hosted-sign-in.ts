@@ -10,7 +10,7 @@
 //   signs in with them.
 
 import {
-  ERP_CREDENTIAL_ERRORS, type ErpCredentialsView, type SaveErpCredentialsInput,
+  EmployeeProfileViewSchema, type EmployeeProfileView, ERP_CREDENTIAL_ERRORS, type ErpCredentialsView, type SaveErpCredentialsInput,
   EXECUTOR_OFFLINE_CODE,
 } from '@baox/contract';
 import { EXECUTOR_METHODS, SIGN_IN_REFUSED_CODE, TrySignInAnswerSchema, type TrySignInAnswer, type TrySignInRequest } from '@baox/erp-executor/wire';
@@ -43,7 +43,7 @@ export type ErpCredentialPorts = {
 
 export type ErpCredentialService = ReturnType<typeof createErpCredentialService>;
 
-const NONE = (available: boolean): ErpCredentialsView => ({ available, status: 'none', erpAccount: null, savedAt: null, checkedAt: null, message: null });
+const NONE = (available: boolean): ErpCredentialsView => ({ available, employeeProfile: { status: 'missing' }, status: 'none', erpAccount: null, savedAt: null, checkedAt: null, message: null });
 
 export function createErpCredentialService({ db, clock, vault, erpOrigin, request, erpBusy, acquireWrite = () => ({ release: () => undefined }), trialTimeoutMs = TRIAL_TIMEOUT_MS }: ErpCredentialPorts) {
   const iso = () => clock().toISOString();
@@ -56,14 +56,15 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
   async function view(accountId: string): Promise<ErpCredentialsView> {
     const row = await db.selectFrom('erp_credential').selectAll().where('account_id', '=', accountId).executeTakeFirst();
     if (!row) return NONE(!!vault);
-    return { available: !!vault, status: row.status, erpAccount: row.erp_account, savedAt: row.saved_at, checkedAt: row.checked_at, message: row.message };
+    return { employeeProfile: row.employee_profile ? EmployeeProfileViewSchema.parse(JSON.parse(row.employee_profile)) : { status: 'missing' }, available: !!vault, status: row.status, erpAccount: row.erp_account, savedAt: row.saved_at, checkedAt: row.checked_at, message: row.message };
   }
 
   // What the 试登录 came to, written only onto the 凭据 it tried: a save or a clear meanwhile wins.
-  async function settle(accountId: string, savedAt: string, outcome: { status: 'untested' | 'authorised' | 'refused'; message: string | null; checked: boolean }) {
+  async function settle(accountId: string, savedAt: string, outcome: { status: 'untested' | 'authorised' | 'refused'; message: string | null; checked: boolean; employeeProfile?: EmployeeProfileView }) {
     await db.updateTable('erp_credential')
       .set({
         status: outcome.status, message: outcome.message,
+        employee_profile: JSON.stringify(outcome.employeeProfile ?? { status: 'failed', message: '员工信息尚未读取，请重新试登录。' }),
         ...(outcome.checked ? { checked_at: iso() } : {}),
         ...(outcome.status === 'refused' ? { password_sealed: null } : {}),
       })
@@ -99,7 +100,15 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
     const answer = await answerOf(accountId, { erpOrigin, browserMode, credentials: { account: row.erp_account, password } });
     if ('offline' in answer) return untested(ERP_CREDENTIAL_ERRORS.noExecutor);
     if ('timedOut' in answer) return untested(ERP_CREDENTIAL_ERRORS.timedOut);
-    if (answer.ok) await settle(accountId, row.saved_at, { status: 'authorised', message: null, checked: true });
+    if (answer.ok) {
+      const profile = answer.employeeProfile;
+      const employeeProfile: EmployeeProfileView = profile.status === 'ready'
+        ? profile.erpAccount === row.erp_account
+          ? { ...profile, retrievedAt: iso() }
+          : { status: 'failed', message: 'ERP 当前账号与保存的账号不一致，请核对账号后重新试登录。' }
+        : profile;
+      await settle(accountId, row.saved_at, { status: 'authorised', message: null, checked: true, employeeProfile });
+    }
     else await settle(accountId, row.saved_at, { status: answer.code === SIGN_IN_REFUSED_CODE ? 'refused' : 'untested', message: answer.message, checked: true });
     return view(accountId);
   }
@@ -114,11 +123,16 @@ export function createErpCredentialService({ db, clock, vault, erpOrigin, reques
 
   return {
     view,
+    async ensureProfile(accountId: string): Promise<EmployeeProfileView> {
+      const current = await view(accountId);
+      if (current.employeeProfile.status === 'ready') return current.employeeProfile;
+      return (await trialOnce(accountId)).employeeProfile;
+    },
 
     async save(accountId: string, input: SaveErpCredentialsInput): Promise<ErpCredentialsView> {
       if (!vault) throw new AuthRefusal(503, 'erp_credentials_unavailable', ERP_CREDENTIAL_ERRORS.unavailable);
       // Saving again while a 试登录 runs replaces what it tries; its outcome then lands nowhere (`settle`).
-      const row = { account_id: accountId, erp_account: input.account, password_sealed: vault.seal(accountId, input.password), status: 'untested' as const, message: null, saved_at: iso(), checked_at: null };
+      const row = { employee_profile: null, account_id: accountId, erp_account: input.account, password_sealed: vault.seal(accountId, input.password), status: 'untested' as const, message: null, saved_at: iso(), checked_at: null };
       await db.transaction().execute(async (tx) => {
         await tx.deleteFrom('erp_credential').where('account_id', '=', accountId).execute();
         await tx.insertInto('erp_credential').values(row).execute();

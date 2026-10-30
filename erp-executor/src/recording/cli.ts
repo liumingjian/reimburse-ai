@@ -1,3 +1,4 @@
+import { loadRecording } from '../testing/recordings';
 // `pnpm --filter @baox/erp-executor probe <flow> --record <name>`: drive the live ERP through a named flow
 // (flows.ts) and store its pages, redacted, as fake-ERP fixtures in src/testing/recordings/<name>/.
 //
@@ -17,6 +18,8 @@
 // A page with a child frame (the 发票无忧助手) is written as NN-<step>.html plus NN-<step>.child.html.
 //
 // Optional: BAOX_ERP_ORIGIN, BAOX_CHROMIUM_CDP_PORT (9333), --out <dir> (default src/testing/recordings/<name>).
+// --reuse-login-recording <name> reuses only that recording's redacted login page and records this flow live.
+// The manifest records loginSource so reused login evidence is never presented as a fresh capture.
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -44,6 +47,9 @@ const args = process.argv.slice(2);
 const flowName = args[0];
 const recordAt = args.indexOf('--record');
 const name = recordAt >= 0 ? args[recordAt + 1] : undefined;
+const loginSourceAt = args.indexOf('--reuse-login-recording');
+const loginSource = loginSourceAt >= 0 ? args[loginSourceAt + 1] : undefined;
+const reusedLogin = loginSource ? loadRecording(loginSource) : null;
 const outAt = args.indexOf('--out');
 const flow = flowName ? FLOWS[flowName] : undefined;
 if (!flowName || !flow) refuse(`usage: probe <flow> --record <name>; flows: ${Object.keys(FLOWS).join(', ')}`);
@@ -102,13 +108,16 @@ const identified = (o: Observation) => !!(o.displayName && o.account && o.tenant
 let exitCode = 1;
 try {
   // 1. The login page, logged out: a browser context of its own has no session cookie and no stored login.
-  ({ browserContextId: context } = await browser.send('Target.createBrowserContext', {}) as { browserContextId: string });
-  const loggedOut = await openTab(context!);
-  if (!(await observe(loggedOut.session, (o) => !!o.loginFormVisible, 60_000))?.loginFormVisible) throw new Error('the logged-out tab never showed the login form');
-  await sleep(DEFAULT_PACE.settleMs);
-  const loginPage = JSON.parse(await evalIn<string>(loggedOut.session, CAPTURE_SNIPPET, { timeout: 60_000 })) as CapturedPage;
-  loggedOut.session.close();
-  say(`login page: ${loginPage.count} elements (${loginPage.pruned} hidden, dropped)`);
+  let loginPage: CapturedPage | null = null;
+  if (!reusedLogin) {
+    ({ browserContextId: context } = await browser.send('Target.createBrowserContext', {}) as { browserContextId: string });
+    const loggedOut = await openTab(context!);
+    if (!(await observe(loggedOut.session, (o) => !!o.loginFormVisible, 60_000))?.loginFormVisible) throw new Error('the logged-out tab never showed the login form');
+    await sleep(DEFAULT_PACE.settleMs);
+    loginPage = JSON.parse(await evalIn<string>(loggedOut.session, CAPTURE_SNIPPET, { timeout: 60_000 })) as CapturedPage;
+    loggedOut.session.close();
+    say(`login page: ${loginPage.count} elements (${loginPage.pruned} hidden, dropped)`);
+  } else say(`reusing the redacted login page from ${loginSource}; the requested flow is recorded live.`);
 
   // 2. The flow, in the profile's own ERP tab. K3Cloud keeps its session per tab (a second tab on the entry page is
   // logged out), so this is the tab the live harness logs into and the executor drives. Unsaved 新增 tabs are
@@ -155,7 +164,7 @@ try {
   const secrets: Secrets = { displayName: seen.displayName!, account, tenant, password };
   const build = (/\d+(?:\.\d+)+/.exec(String(steps.at(-1)?.page.resVer ?? '')) ?? [null])[0];
   const redact = redactor({ secrets, keep: build ? [build] : [], mask: flow.mask });
-  const command = `pnpm --filter @baox/erp-executor probe ${flowName} --record ${name}`;
+  const command = `pnpm --filter @baox/erp-executor probe ${flowName} --record ${name}${loginSource ? ` --reuse-login-recording ${loginSource}` : ''}`;
   const header = (step: string) => `Recorded from the live ERP by the probe command (recording/cli.ts): flow ${flowName}, recording ${name}, step ${step}. Redacted:
 values masked, digits zeroed, identity as {{DISPLAY_NAME}} {{ACCOUNT}} {{TENANT}}. Do not edit by hand: re-record.
 data-rec-box is the live element box (x,y,width,height); data-rec-click marks where the next click landed.`;
@@ -179,9 +188,11 @@ data-rec-box is the live element box (x,y,width,height); data-rec-click marks wh
   const manifest = {
     flow: flowName, name, description: flow.description, command, recordedAt: new Date().toISOString().slice(0, 10),
     erpBuild: build, result: JSON.parse(redact.text(JSON.stringify(result))),
-    loggedOut: page({ name: 'login', page: loginPage }, 'login.html'),
+    loggedOut: reusedLogin ? { ...reusedLogin.manifest.loggedOut, file: 'login.html' } : page({ name: 'login', page: loginPage! }, 'login.html'),
+    ...(loginSource ? { loginSource } : {}),
     pages: steps.map((step, i) => page(step, `${String(i + 1).padStart(2, '0')}-${step.name}.html`)),
   };
+  if (reusedLogin) files.push(['login.html', reusedLogin.html(reusedLogin.manifest.loggedOut)]);
   files.push(['manifest.json', `${JSON.stringify(manifest, null, 2)}\n`]);
   const leaks = [...new Set(files.flatMap(([, text]) => findLeaks(text, secrets)))];
   if (leaks.length) throw new Error(`redaction left ${leaks.join(', ')} in the output; nothing was written`);

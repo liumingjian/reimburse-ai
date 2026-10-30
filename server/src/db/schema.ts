@@ -66,6 +66,7 @@ export interface ErpBrowserSettingTable {
 // and `checked_at`, clearing deletes the row. `password_sealed` is the password encrypted with the server's key
 // (`erp/credential-vault.ts`), bound to the account; null once ERP refused it (`status` 'refused').
 export interface ErpCredentialTable {
+  employee_profile: string | null;
   account_id: string;
   erp_account: string;
   password_sealed: string | null;

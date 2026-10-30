@@ -1,3 +1,4 @@
+import { readEmployeeProfile } from '../employee-profile';
 // The named flows `probe <flow> --record <name>` drives through the live ERP. A flow is executor code run on a
 // recording session (recorder.ts), so every page it passes through is captured with the element that moved it on.
 // A flow stops before any consumption boundary: it opens and reads, it never saves, submits or imports.
@@ -52,6 +53,18 @@ async function newForm(page: WritePage): Promise<Fingerprint> {
 const closeTabs = [/^我的费用报销$/];
 
 export const FLOWS: Readonly<Record<string, Flow>> = {
+  'employee-profile': {
+    description: 'Read-only personal information from the user menu; no reimbursement form is opened or edited.',
+    allowKeys: false,
+    mask: [(node) => /-(FNAMELABLE|FPHONELABLE|FEMAILLABLE|FLABEL\d+(DEP|9)?|FSTAFFNUMBERLABLE\d+)$/.test(node.a['id'] ?? '')],
+    closeTabs: [],
+    async run({ session }) {
+      const result = await readEmployeeProfile(session);
+      if (result.status !== 'ready') throw new Error(result.message);
+      await session.snapshot('employee-profile');
+      return { read: true };
+    },
+  },
   'new-form': {
     description: 'The logged-in console (login fingerprint), then my expense claims (我的费用报销) -> new (新增) up to an open, empty 费用报销单-新增 whose compatibility fingerprint has settled. Nothing is typed or saved; the 新增单 is discarded with its tab.',
     allowKeys: false,

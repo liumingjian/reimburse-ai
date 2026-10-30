@@ -15,7 +15,7 @@ test('settings default to headless; explicit save persists across settings visit
   const mock = adapter();
   const saveCredentials = vi.spyOn(mock, 'saveErpCredentials');
   const trial = vi.spyOn(mock, 'testErpCredentials');
-  vi.spyOn(mock, 'getErpCredentials').mockResolvedValue({ available: false, status: 'none', erpAccount: null, savedAt: null, checkedAt: null, message: null });
+  vi.spyOn(mock, 'getErpCredentials').mockResolvedValue({ employeeProfile: { status: 'missing' }, available: false, status: 'none', erpAccount: null, savedAt: null, checkedAt: null, message: null });
   const app = render(<App adapter={mock} localExecutor={mock.localExecutor} />);
   await screen.findByRole('radio', { name: COPY.headless });
   expect(checked(COPY.headless)).toBe(true);

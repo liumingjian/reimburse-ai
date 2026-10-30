@@ -1,3 +1,4 @@
+import { readEmployeeProfile } from '@baox/erp-executor/employee-profile';
 // The local executor's end of the executor protocol (`@baox/erp-executor/wire`): `erp.fill` and `erp.reconcile` arrive
 // as channel requests, each runs in a dedicated Chromium of its own, and every executor event goes back through the
 // job's link (`@baox/channel/job-link`), so `attempt_started` still waits for its durable ack and a dropped channel is
@@ -149,7 +150,7 @@ export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
     return outcome.ok ? { ok: true as const, submitted: outcome.submitted } : { ok: false as const, code: outcome.code, message: outcome.message };
   };
 
-  // 试登录: a browser of its own, signed in and straight out again. A profile still signed in from before proves
+  // 试登录: a browser of its own, signed in, employee information read, then signed out. A profile still signed in from before proves
   // nothing about these 凭据, so it is signed out first and the login is made with them.
   async function trySignIn(erpOrigin: string, browserMode: ErpBrowserMode, credentials: ErpCredentials): Promise<TrySignInAnswer> {
     const localBrowser = await ports.launch(erpOrigin, browserMode);
@@ -163,7 +164,7 @@ export function createLocalRunner(ports: LocalRunnerPorts): LocalRunner {
           await signOut(session, { origin: erpOrigin, verify: true });
           outcome = await signInPort(erpOrigin, credentials)(session);
         }
-        return outcome.ok ? { ok: true } : { ok: false, code: outcome.code, message: outcome.message };
+        return outcome.ok ? { ok: true, employeeProfile: await readEmployeeProfile(session) } : { ok: false, code: outcome.code, message: outcome.message };
       } finally {
         session.close();
       }
