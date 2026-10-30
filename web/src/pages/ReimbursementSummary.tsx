@@ -13,7 +13,7 @@ export function ReimbursementSummary({ snapshot }: { snapshot: TaskSnapshot }) {
     <h2>报销汇总表</h2>
     {summary.status === 'unavailable' ? <>
       <ul>{summary.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
-      {summary.inputs?.map(input => <SummaryResolutionField key={`${summary.confirmationRevision}:${input.kind}:${input.kind === 'voucher-count' ? input.voucherMaterialId : input.lineId}`} input={input} disabled={action.busy} save={value => action.run(adapter => adapter.resolveReimbursementSummary(snapshot.task.taskId, { confirmationRevision: summary.confirmationRevision!, voucherCounts: input.kind === 'voucher-count' ? [{ voucherMaterialId: input.voucherMaterialId, category: value }] : [], stayDays: input.kind === 'stay-days' ? [{ lineId: input.lineId, days: Number(value) }] : [] }))} />)}
+      {summary.inputs?.map(input => <SummaryResolutionField key={`${summary.confirmationRevision}:${input.kind}:${input.kind === 'voucher-count' ? input.voucherMaterialId : input.lineId}`} input={input} disabled={action.busy || !snapshot.allowedActions.includes('summary')} save={value => action.run(adapter => adapter.resolveReimbursementSummary(snapshot.task.taskId, { confirmationRevision: summary.confirmationRevision!, voucherCounts: input.kind === 'voucher-count' ? [{ voucherMaterialId: input.voucherMaterialId, category: value }] : [], stayDays: input.kind === 'stay-days' ? [{ lineId: input.lineId, days: Number(value) }] : [] }))} />)}
       <ActionError message={action.error} />
     </> : <>
       <p>将整单确认的金额汇总到财务表单，下载 Excel 后打印。</p>
