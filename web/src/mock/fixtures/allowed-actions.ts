@@ -40,11 +40,12 @@ export function allowedActionsOf(snapshot: TaskSnapshot): TaskAction[] {
   if (!running && erp.status === 'idle' && snapshot.inventory.status === 'done' && snapshot.blockers.length === 0 && snapshot.confirmation.status !== 'confirmed') allowed.add('change_dining_evidence');
   if (!running) {
     allowed.add('print');
+    if (snapshot.confirmation.status === 'confirmed') allowed.add('summary');
     allowed.add('void_task');
   }
   return TASK_ACTIONS.filter((action) => allowed.has(action));
 }
 
 export function withAllowedActions(snapshot: TaskSnapshot): TaskSnapshot {
-  return { ...snapshot, allowedActions: allowedActionsOf(snapshot) };
+  return { ...snapshot, reimbursementSummary: snapshot.confirmation.status === 'confirmed' && snapshot.stage !== 'voided' ? { status: 'ready' } : { status: 'unavailable', reasons: ['请先完成整单明细确认。'] }, allowedActions: allowedActionsOf(snapshot) };
 }

@@ -336,6 +336,7 @@ export const ACTION_NAMES = [
   'reopen-upload',
   'remove-payment-screenshot',
   'complete-payment-screenshots',
+  'generate-reimbursement-summary',
   'generate-print-sheet',
   'rotate-placement',
   'crop-placement',

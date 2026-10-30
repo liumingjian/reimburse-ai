@@ -451,6 +451,7 @@ export interface Schema {
   payment_screenshot_removal: PaymentScreenshotRemovalTable;
   payment_screenshot_group_complete: PaymentScreenshotGroupCompleteTable;
   print_render: PrintRenderTable;
+  reimbursement_summary: { summary_id: string; task_id: string; account_id: string; confirmation_revision: number; data: string; xlsx_sha256: string; created_at: string; revision: number };
   erp_reconcile_job: ErpReconcileJobTable;
   erp_hand_off: ErpHandOffTable;
   erp_job: ErpJobTable;

@@ -222,6 +222,7 @@ const ACTIONS: Record<ActionName, Traits> = {
   reconcile: { erpAction: true, takesLease: 'after_ready', ready: offered('wait') },
   hand_off: { erpAction: true, ready: offered('hand_off') },
   print: { printOnly: true },
+  summary: { printOnly: true, ready: facts => facts.confirmation === 'confirmed' ? null : { code: 'not_confirmed', message: '请先完成整单明细确认。' } },
   void_task: { voids: true },
   job: { job: true },
   // 自动重新去报销 (ADR-0034): taken by the server, with no stepToken, from a write result that is unknown before 暂存.

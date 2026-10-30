@@ -601,6 +601,10 @@
     "assign_project_lines",
     "submit_project_assignment",
     "print",
+    "summary",
     "void_task"
-  ]
+  ],
+  "reimbursementSummary": {
+    "status": "ready"
+  }
 }

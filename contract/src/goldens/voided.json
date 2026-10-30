@@ -180,5 +180,11 @@
     "kind": "none",
     "stepToken": "00000000-0000-4000-8000-000000000001.3"
   },
-  "allowedActions": []
+  "allowedActions": [],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  }
 }

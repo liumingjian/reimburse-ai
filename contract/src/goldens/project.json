@@ -574,5 +574,11 @@
     "submit_project_assignment",
     "print",
     "void_task"
-  ]
+  ],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  }
 }

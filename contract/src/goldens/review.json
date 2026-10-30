@@ -597,5 +597,11 @@
     "confirm_review",
     "print",
     "void_task"
-  ]
+  ],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  }
 }

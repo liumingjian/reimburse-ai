@@ -15,3 +15,5 @@ export * from './erp-browser-settings';
 export * from './http';
 export * from './adapter';
 export * from './lodging-evidence';
+
+export * from './summary';

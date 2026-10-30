@@ -1,3 +1,4 @@
+import { ReimbursementSummary } from './ReimbursementSummary';
 import { useState } from 'react';
 import {
   Button,
@@ -259,6 +260,7 @@ export function ReviewPage({ snapshot }: { snapshot: TaskSnapshot }) {
           />
           {/* Two entry cards on Carbon Tiles: equal height, buttons pinned to the bottom so they line up whatever
               status text a card shows above its button. */}
+          <ReimbursementSummary snapshot={snapshot} />
           <CardRow bleed label="去打印或去报销">
             <Card
               title="去打印"

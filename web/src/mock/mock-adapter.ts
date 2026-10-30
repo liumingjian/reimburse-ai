@@ -269,6 +269,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...pairing.flow,
     ...createErpCredentialsFlow(),
     ...browserSettings.flow,
+    async generateReimbursementSummary() { return bus.fail('employee_profile_unavailable', '请连接本地执行器后获取员工信息。'); },
     ...createPrintFlow(bus),
     ...createErpFlow(bus, pairing.paired),
   };

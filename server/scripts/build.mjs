@@ -1,3 +1,4 @@
+import { copyFileSync } from 'node:fs';
 import { build } from 'esbuild';
 
 // Bundles the server (with the source-only @baox/contract) into dist/main.mjs, and the parse worker_thread into
@@ -22,3 +23,5 @@ await build({
   banner: { js: "import { createRequire as __baoxCreateRequire } from 'node:module'; const require = __baoxCreateRequire(import.meta.url);" },
   logLevel: 'warning',
 });
+
+copyFileSync('src/summary/template.xlsx', 'dist/template.xlsx');
