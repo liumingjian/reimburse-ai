@@ -1280,6 +1280,31 @@ $doc-frame-block: var(--app-doc-frame-block);
   overflow-wrap: anywhere;
 }
 
+.app-project-import {
+  display: grid;
+  justify-items: start;
+  gap: $spacing-04;
+  margin-block-end: $spacing-06;
+
+  > .cds--form-item,
+  > .cds--inline-notification {
+    inline-size: 100%;
+  }
+}
+
+.app-import-preview {
+  inline-size: 100%;
+  max-block-size: 28rem;
+  overflow: auto;
+
+  td {
+    min-inline-size: 6rem;
+    max-inline-size: 24rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 @media (max-width: 56rem) {
   .app-book-form {
     grid-template-columns: minmax(8rem, 0.7fr) minmax(14rem, 1.3fr);

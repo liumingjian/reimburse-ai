@@ -507,7 +507,7 @@ function ProjectWorkbench({ snapshot }: { snapshot: TaskSnapshot }) {
             <Search
               size="md"
               labelText="查找项目"
-              placeholder="搜项目号或名称"
+              placeholder="搜项目序号或项目号"
               closeButtonLabelText="清除查找"
               value={query}
               onChange={(event: unknown) => setQuery(searchValue(event))}

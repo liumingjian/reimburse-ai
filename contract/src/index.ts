@@ -6,6 +6,7 @@ export * from './snapshot';
 export * from './actions';
 export * from './auth';
 export * from './project-book';
+export * from './project-import';
 export * from './legacy-import';
 export * from './channel';
 export * from './local-executor';

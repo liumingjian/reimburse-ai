@@ -33,10 +33,10 @@ export type BookOption = { number: string; name: string; source: ProjectSource; 
 type BookDb = Db | Transaction<Schema>;
 
 const LEGACY_VERDICT_NOTE: Readonly<Record<Exclude<LegacyVerdict, 'confirmed'>, string>> = {
-  missing: '最近一次核对时报销系统里查不到这个项目号',
-  ambiguous: '最近一次核对时这个项目号在报销系统里对上了多条记录',
+  missing: '最近一次核对时报销系统里查不到这个项目序号',
+  ambiguous: '最近一次核对时这个项目序号在报销系统里对上了多条记录',
   unusable: '最近一次核对时这个项目已被报销系统禁用或尚未审核',
-  unsafe: '这个项目号含有不能安全使用的字符',
+  unsafe: '这个项目序号含有不能安全使用的字符',
 };
 
 const localDay = (now: Date) => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -56,7 +56,7 @@ function invalidReasons(entry: BookEntry, today: string): Reason[] {
   return reasons;
 }
 
-const REASON_LABEL = { deactivated: '已停用', unsafe: '项目号不安全', expired: '已过期', unconfirmed: '复检未通过' } as const;
+const REASON_LABEL = { deactivated: '已停用', unsafe: '项目序号不安全', expired: '已过期', unconfirmed: '复检未通过' } as const;
 
 export function annotate(entry: BookEntry, today: string): ProjectBookEntry {
   const reasons = invalidReasons(entry, today);
@@ -171,7 +171,7 @@ export async function readBook(db: BookDb, ref: BookRef): Promise<BookEntry[]> {
   return [...book.values()];
 }
 
-async function personalBooks(db: BookDb): Promise<Map<string, BookEntry[]>> {
+export async function personalBooks(db: BookDb): Promise<Map<string, BookEntry[]>> {
   const events = await db.selectFrom('project_book_event').selectAll().where('scope', '=', 'personal').orderBy('seq').execute();
   const folded = new Map<string, Map<string, BookEntry>>();
   for (const event of events) {
@@ -215,7 +215,7 @@ const bookMutationTail = new WeakMap<object, Promise<void>>();
 // The local app has one server per data directory. This queue gives each book transaction an exclusive turn before its
 // collision read, while the SQLite transaction keeps the read and append atomic. It prevents two concurrent requests
 // from both observing an available number on the same connection.
-async function serializeBookMutation<T>(db: Db, work: (tx: Transaction<Schema>) => Promise<T>): Promise<T> {
+export async function serializeBookMutation<T>(db: Db, work: (tx: Transaction<Schema>) => Promise<T>): Promise<T> {
   const prior = bookMutationTail.get(db) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
@@ -230,7 +230,7 @@ async function serializeBookMutation<T>(db: Db, work: (tx: Transaction<Schema>) 
   }
 }
 
-async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: string, events: readonly Append[]): Promise<void> {
+export async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: string, events: readonly Append[]): Promise<void> {
   if (events.length === 0) return;
   const last = await tx.selectFrom('project_book_event').select((eb) => eb.fn.max('seq').as('seq')).executeTakeFirst();
   let seq = Number(last?.seq ?? 0);
@@ -261,19 +261,6 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
 
 type IntakeDecision = 'admitted' | 'duplicate' | 'public_reserved' | 'personal_collision';
 
-/** ERP facts refresh only the book selected by this task; this is not a manual public-book edit. */
-export async function syncProjectNames(db: Db, accountId: string, taskId: string, projects: readonly { code: string; name: string }[], at: string): Promise<void> {
-  const submitted = await db.selectFrom('project_submission').select('selection').where('task_id', '=', taskId).where('account_id', '=', accountId).orderBy('revision', 'desc').executeTakeFirst();
-  if (!submitted) return;
-  const selected = Object.values(JSON.parse(submitted.selection) as Record<string, { number: string; source: ProjectSource }>);
-  for (const scope of ['personal', 'public'] as const) {
-    const ref: BookRef = scope === 'personal' ? { scope, ownerAccountId: accountId } : { scope };
-    const numbers = new Set(selected.filter(pin => pin.source === scope).map(pin => pin.number));
-    const existing = await readBook(db, ref);
-    const changes = projects.filter(project => numbers.has(project.code) && existing.some(entry => entry.number === project.code && entry.name !== project.name));
-    await append(db, ref, accountId, at.replace(/\.\d{3}(?=Z|[+-])/, ''), changes.map(project => ({ number: project.code, name: project.name, action: 'checked', verdict: 'confirmed' })));
-  }
-}
 type EditDecision = 'edited' | 'missing' | 'duplicate' | 'public_reserved' | 'personal_collision';
 type LifecycleDecision = 'deactivated' | 'restored' | 'not_found' | 'already_active' | 'already_inactive' | 'public_reserved';
 type DeleteDecision = 'deleted' | 'not_found';

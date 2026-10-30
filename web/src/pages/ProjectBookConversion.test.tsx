@@ -22,7 +22,7 @@ function editDialog() {
   return screen.getByRole('dialog', { name: '编辑项目' });
 }
 
-function editInput(label: '项目号' | '项目名称') {
+function editInput(label: '项目序号' | '项目号') {
   return within(editDialog()).getByLabelText(label) as HTMLInputElement;
 }
 
@@ -34,8 +34,8 @@ describe('公共项目转换', () => {
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     await screen.findByRole('heading', { name: '个人项目簿', level: 1 });
     fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
-    const numberInput = screen.getByLabelText('项目号') as HTMLInputElement;
-    const nameInput = screen.getByLabelText('项目名称') as HTMLInputElement;
+    const numberInput = screen.getByLabelText('项目序号') as HTMLInputElement;
+    const nameInput = screen.getByLabelText('项目号') as HTMLInputElement;
     fireEvent.change(numberInput, { target: { value: 'P-2307' } });
     fireEvent.change(nameInput, { target: { value: '转为公共的项目' } });
     fireEvent.click(screen.getByRole('button', { name: '加入项目' }));
@@ -71,15 +71,15 @@ describe('公共项目转换', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '公共项目簿' }));
     await screen.findByTestId('book-row-PUBLIC-OLD');
     fireEvent.click(screen.getByRole('button', { name: '编辑 PUBLIC-OLD' }));
-    fireEvent.change(editInput('项目号'), { target: { value: 'EDIT-CONVERT' } });
-    fireEvent.change(editInput('项目名称'), { target: { value: '公共新项目' } });
+    fireEvent.change(editInput('项目序号'), { target: { value: 'EDIT-CONVERT' } });
+    fireEvent.change(editInput('项目号'), { target: { value: '公共新项目' } });
     fireEvent.click(within(editDialog()).getByRole('button', { name: '保存' }));
     expect(await screen.findByRole('dialog', { name: '确认转为公共项目' })).toBeTruthy();
 
     fireEvent.click(within(conversionDialog()).getByRole('button', { name: '取消' }));
     expect(await screen.findByRole('dialog', { name: '编辑项目' })).toBeTruthy();
-    expect(editInput('项目号').value).toBe('EDIT-CONVERT');
-    expect(editInput('项目名称').value).toBe('公共新项目');
+    expect(editInput('项目序号').value).toBe('EDIT-CONVERT');
+    expect(editInput('项目号').value).toBe('公共新项目');
 
     fireEvent.click(within(editDialog()).getByRole('button', { name: '保存' }));
     const confirmation = await screen.findByRole('dialog', { name: '确认转为公共项目' });

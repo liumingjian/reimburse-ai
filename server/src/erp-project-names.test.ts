@@ -18,7 +18,7 @@ const renamed: Script = async (plan, channel) => {
 };
 
 describe('ERP project names', () => {
-  it('refreshes the selected personal book and frozen task without invalidating confirmation or changing another owner', async () => {
+  it('preserves the selected personal project number and refreshes the frozen task without invalidating confirmation or changing another owner', async () => {
     const alice = await server.signIn('alice');
     const bob = await server.signIn('bob');
     await bookChange(alice, '/api/project-book/intake', { number: 'P-2307', name: '简名', deadlineOn: '2027-12-31' });
@@ -36,7 +36,7 @@ describe('ERP project names', () => {
     expect(after.lines.every(line => line.projectName === canonical)).toBe(true);
     expect(after.projectAssignment.assignments.every(pin => pin.projectName === canonical)).toBe(true);
     const book = ProjectBookSchema.parse(await (await alice.request('/api/project-book')).json());
-    expect(book.projects).toContainEqual(expect.objectContaining({ number: 'P-2307', name: canonical, deadlineOn: '2027-12-31', active: true }));
+    expect(book.projects).toContainEqual(expect.objectContaining({ number: 'P-2307', name: '简名', deadlineOn: '2027-12-31', active: true }));
     const other = ProjectBookSchema.parse(await (await bob.request('/api/project-book')).json());
     expect(other.projects[0]?.name).toBe('他人的简名');
     const frozen = (await loadErp(server.db, scene.task.taskId)).frozen as FrozenJob;
@@ -52,7 +52,7 @@ describe('ERP project names', () => {
     expect(recovery.confirmation.status).toBe('confirmed');
   });
 
-  it('refreshes a selected public book as an ERP fact for a non-admin employee', async () => {
+  it('preserves the public project number when a non-admin employee adopts the ERP name', async () => {
     const admin = await server.signIn('admin');
     const alice = await server.signIn('alice');
     await bookChange(admin, '/api/public-project-book/intake', { number: 'P-2307', name: '公共简名', deadlineOn: '2027-12-31' });
@@ -61,7 +61,7 @@ describe('ERP project names', () => {
     const after = await scene.settled();
     expect(after.confirmation.status).toBe('confirmed');
     const book = ProjectBookSchema.parse(await (await admin.request('/api/public-project-book')).json());
-    expect(book.projects).toContainEqual(expect.objectContaining({ number: 'P-2307', name: canonical, deadlineOn: '2027-12-31' }));
+    expect(book.projects).toContainEqual(expect.objectContaining({ number: 'P-2307', name: '公共简名', deadlineOn: '2027-12-31' }));
     expect((await alice.post('/api/public-project-book/edit', { originalNumber: 'P-2307', number: 'P-2307', name: '任意人工修改' })).status).toBe(403);
   });
 });

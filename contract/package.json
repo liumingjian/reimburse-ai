@@ -8,6 +8,7 @@
     "node": ">=24 <25"
   },
   "exports": {
+    "./project-xlsx": "./src/project-xlsx.ts",
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
@@ -26,6 +27,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "exceljs": "4.4.0",
     "zod": "4.6.2"
   },
   "devDependencies": {

@@ -36,7 +36,9 @@ describe('端点表', () => {
     const erpCredentials = new Set(['getErpCredentials', 'saveErpCredentials', 'testErpCredentials', 'clearErpCredentials']);
     for (const [name, endpoint] of Object.entries(HTTP_ENDPOINTS)) {
       const prefix =
-        name === 'getSession'
+        name === 'previewProjectImport' || name === 'commitProjectImport'
+          ? '/api/:book/import/'
+          : name === 'getSession'
           ? '/api/session'
           : auth.has(name)
             ? '/api/auth/'

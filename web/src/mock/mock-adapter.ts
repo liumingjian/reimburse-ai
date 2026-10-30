@@ -29,6 +29,7 @@ import { HOME_CITY } from './fixtures/projects';
 import { T1_ID, emptySnapshot, t1Snapshot, t2Snapshot, t3Snapshot, toListItem } from './fixtures/tasks';
 import { createMockBookState, createProjectBook } from './project-book';
 import { createPublicBook } from './public-book';
+import { createMockProjectImport } from './project-import';
 import { MOCK_ACCOUNT, createAuth } from './auth';
 import { createErpFlow } from './flows/erp';
 import { createInventoryFlow } from './flows/inventory';
@@ -151,6 +152,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
   const pairing = createPairingFlow(options);
   const browserSettings = createErpBrowserSettingsFlow(options, auth);
   const adapter: AppAdapter = {
+    ...createMockProjectImport(auth, bookState, { getProjectBook: book.getProjectBook, getPublicProjectBook: publicBook.getPublicProjectBook }, book.refreshAllTasks),
     // The session reads memory, like snapshots: a disconnect shows up on the task list (banner), not at the gate.
     getSession: async () => auth.session(),
     setupAdmin: async (input): Promise<AuthOutcome> => auth.setupAdmin(input),

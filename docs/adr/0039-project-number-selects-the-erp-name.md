@@ -3,6 +3,10 @@
 **Status: accepted (2026-10-30).** Decided with the owner. Amends the name-matching part of ADR-0008 and the
 project-book definitions in the glossary.
 
+**Amended by [ADR-0042](0042-project-serial-and-project-number-are-distinct.md)**: the matching identifier is now
+called 项目序号. The project book's 项目号 is separate from the ERP official name and must not be overwritten by it.
+ADR-0042 is implemented.
+
 Employees remember project numbers but often enter abbreviated project names. Requiring the local name to match
 the full ERP name blocks reimbursement without changing which project the employee intended to select.
 

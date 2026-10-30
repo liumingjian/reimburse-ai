@@ -17,7 +17,7 @@ function editDialog() {
   return screen.getByRole('dialog', { name: '编辑项目' });
 }
 
-function dialogInput(label: '项目号' | '项目名称') {
+function dialogInput(label: '项目序号' | '项目号') {
   return within(editDialog()).getByLabelText(label) as HTMLInputElement;
 }
 
@@ -28,22 +28,22 @@ describe('项目簿编辑', () => {
     expect(original.textContent).toContain('华东客户交付');
 
     fireEvent.click(screen.getByRole('button', { name: '编辑 P-2307' }));
-    expect(dialogInput('项目号').value).toBe('P-2307');
-    expect(dialogInput('项目名称').value).toBe('华东客户交付');
-    fireEvent.change(dialogInput('项目名称'), { target: { value: '取消前的名称' } });
+    expect(dialogInput('项目序号').value).toBe('P-2307');
+    expect(dialogInput('项目号').value).toBe('华东客户交付');
+    fireEvent.change(dialogInput('项目号'), { target: { value: '取消前的名称' } });
     fireEvent.click(within(editDialog()).getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('dialog', { name: '编辑项目' })).toBeNull();
     expect(screen.getByTestId('book-row-P-2307').textContent).toContain('华东客户交付');
 
     fireEvent.click(screen.getByRole('button', { name: '编辑 P-2307' }));
-    fireEvent.change(dialogInput('项目号'), { target: { value: 'P-2311' } });
-    fireEvent.change(dialogInput('项目名称'), { target: { value: '纠正后的名称' } });
+    fireEvent.change(dialogInput('项目序号'), { target: { value: 'P-2311' } });
+    fireEvent.change(dialogInput('项目号'), { target: { value: '纠正后的名称' } });
     fireEvent.click(within(editDialog()).getByRole('button', { name: '保存' }));
-    expect(await within(editDialog()).findByText(/无法改为该项目号/)).toBeTruthy();
-    expect(dialogInput('项目号').value).toBe('P-2311');
-    expect(dialogInput('项目名称').value).toBe('纠正后的名称');
+    expect(await within(editDialog()).findByText(/无法改为该项目序号/)).toBeTruthy();
+    expect(dialogInput('项目序号').value).toBe('P-2311');
+    expect(dialogInput('项目号').value).toBe('纠正后的名称');
 
-    fireEvent.change(dialogInput('项目号'), { target: { value: 'P-2200' } });
+    fireEvent.change(dialogInput('项目序号'), { target: { value: 'P-2200' } });
     fireEvent.click(within(editDialog()).getByRole('button', { name: '保存' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑项目' })).toBeNull());
     expect((await screen.findByTestId('book-row-P-2200')).textContent).toContain('纠正后的名称');
@@ -76,7 +76,7 @@ describe('项目簿编辑', () => {
     await screen.findByTestId('book-row-PUBLIC-EDIT');
     const publicTable = screen.getByRole('table', { name: '公共项目簿' });
     fireEvent.click(within(publicTable).getByRole('button', { name: '编辑 PUBLIC-EDIT' }));
-    fireEvent.change(dialogInput('项目名称'), { target: { value: '共享新名称' } });
+    fireEvent.change(dialogInput('项目号'), { target: { value: '共享新名称' } });
     fireEvent.click(within(editDialog()).getByRole('button', { name: '保存' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑项目' })).toBeNull());
     expect(within(publicTable).getByTestId('book-row-PUBLIC-EDIT').textContent).toContain('共享新名称');

@@ -14,8 +14,8 @@ function renderApp(hash: string, extra: Extra = {}, seed: SeedStage | null = nul
   return adapter;
 }
 
-const numberInput = (scope: ReturnType<typeof within> = screen) => scope.getByLabelText('项目号') as HTMLInputElement;
-const nameInput = (scope: ReturnType<typeof within> = screen) => scope.getByLabelText('项目名称') as HTMLInputElement;
+const numberInput = (scope: ReturnType<typeof within> = screen) => scope.getByLabelText('项目序号') as HTMLInputElement;
+const nameInput = (scope: ReturnType<typeof within> = screen) => scope.getByLabelText('项目号') as HTMLInputElement;
 const intakeButton = (scope: ReturnType<typeof within> = screen) => scope.getByRole('button', { name: '加入项目' }) as HTMLButtonElement;
 const intake = (number: string, name: string, scope: ReturnType<typeof within> = screen) => {
   fireEvent.change(numberInput(scope), { target: { value: number } });
@@ -35,22 +35,22 @@ describe('项目簿 #/projects', () => {
     // Initialize the seeded personal book before asserting the public collision.
     await adapter.getProjectBook();
     const collision = await adapter.intakePublicProject({ number: 'P-2307', name: '不应公开' });
-    expect(collision).toMatchObject({ ok: true, result: { status: 'conversion_required', note: '项目号 P-2307 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。' } });
+    expect(collision).toMatchObject({ ok: true, result: { status: 'conversion_required', note: '项目序号 P-2307 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。' } });
     await adapter.intakePublicProject({ number: 'PUB-100', name: '全员共享项目' });
     window.location.hash = '#/projects';
     render(<App adapter={adapter} />);
 
     expect(await screen.findByRole('heading', { name: '个人项目簿', level: 1 })).toBeTruthy();
     expect(document.title).toBe('baox · 项目簿');
-    expect(screen.getByText('录入项目号和项目名称后，可在新的项目归属中选择。提交去报销前仍会核对项目。')).toBeTruthy();
-    expect(within(personalTable()).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目号', '名称', '截止日期', '状态', '']);
+    expect(screen.getByText('录入项目序号和项目号后，可在新的项目归属中选择。提交去报销前仍会核对项目。')).toBeTruthy();
+    expect(within(personalTable()).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['项目序号', '项目号', '截止日期', '状态', '']);
     expect(screen.queryByRole('table', { name: '公共项目簿' })).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: '公共项目簿' }));
     await screen.findByRole('table', { name: '公共项目簿' });
     expect(screen.queryByRole('table', { name: '个人项目簿' })).toBeNull();
     expect(await within(publicTable()).findByTestId('book-row-PUB-100')).toBeTruthy();
     expect(within(publicTable()).getByText('全员共享项目')).toBeTruthy();
-    expect(screen.queryByLabelText('公共项目号')).toBeNull();
+    expect(screen.queryByLabelText('公共项目序号')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: '个人项目簿' }));
     expect(bookRows()).toHaveLength(6);
     expect(within(personalTable()).getByTestId('book-row-P-4420').textContent).toContain('已过期');
@@ -106,7 +106,7 @@ describe('项目簿 #/projects', () => {
     expect((await adapter.getProjectBook()).projects.some((project) => project.number === 'PERSONAL-ONLY')).toBe(false);
     expect(await adapter.intakePublicProject({ number: 'PERSONAL-ONLY', name: '不应公开' })).toMatchObject({
       ok: true,
-      result: { status: 'conversion_required', note: '项目号 PERSONAL-ONLY 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。' },
+      result: { status: 'conversion_required', note: '项目序号 PERSONAL-ONLY 已记录在个人项目簿中。确认后，所有同号个人项目将转为公共项目；已有报销记录保持不变。' },
     });
   });
 });
