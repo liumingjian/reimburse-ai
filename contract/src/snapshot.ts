@@ -854,7 +854,7 @@ export const ERP_DRAFT_STEP_COPY = {
 
 // The middle steps, from 报销信息核对 to 填写明细.
 const ERP_SHARED_STEPS = [
-  { key: 'catalog', title: '报销信息核对', description: '项目按项目号核对并自动更新正式名称；项目与费用项目都须已审核且未禁用，费用项目名称须一致。' },
+  { key: 'catalog', title: '报销信息核对', description: '项目按项目序号核对，正式名称用于报销系统填报和回读；项目与费用项目都须已审核且未禁用，费用项目名称须一致。' },
   { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，核对报销系统版本，确认是唯一一张空白单据。' },
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },

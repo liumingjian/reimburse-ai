@@ -69,7 +69,7 @@ describe('项目归属（工作台：勾选明细，点右侧项目归入）', (
     expect(assignSpy).not.toHaveBeenCalled();
   });
 
-  test('面板列表：只列可选项目，本次已用的在前并带条数与金额；按项目号、名称或简称搜索并高亮；搜到唯一项目时回车直接归入', async () => {
+  test('面板列表：只列可选项目，本次已用的在前并带条数与金额；按项目序号、名称或简称搜索并高亮；搜到唯一项目时回车直接归入', async () => {
     const { ready } = renderProject();
     await ready;
     await screen.findByRole('heading', { name: '项目归属' });

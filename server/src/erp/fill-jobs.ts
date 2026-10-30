@@ -9,7 +9,6 @@
 // and hands them to whichever executor runs it, the paired 本地执行器 or the development CDP one.
 
 import { randomUUID } from 'node:crypto';
-import { syncProjectNames } from '../books';
 import { withProjectNames } from './project-names';
 import type { Db } from '../db/database';
 import type { ErpLease } from '../erp-lease';
@@ -189,7 +188,6 @@ export function createFillJobs({ db, lease, execute, record, schedule = realTime
           const refreshed = withProjectNames(frozen, event.projects);
           await append(async tx => {
             await writeEvent(tx, jobId, taskId, event, at());
-            await syncProjectNames(tx, accountId, taskId, event.projects, at());
           });
           Object.assign(frozen.judge, refreshed.judge);
           frozen.plan = refreshed.plan;

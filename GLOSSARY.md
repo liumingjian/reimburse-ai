@@ -287,9 +287,17 @@ _Avoid_：单次选择、临时覆盖
 ERP 在新增费用报销单时根据当前登录身份和系统设置带出的值；它只表示系统当前状态，不天然代表业务决定。
 _Avoid_：公司规则、个人绑定
 
+**项目序号**：
+A project serial (项目序号) is the ERP-assigned identifier used to identify a project, such as `103520`, rather than a row's display position. It is unique within each personal book and within the public book; different members may record the same serial independently, but a personal entry cannot duplicate a public project serial.
+_Avoid_：项目号、项目编号、项目索引
+
 **项目号**：
-A project number (项目号) is the ERP-assigned business identifier, unique within a personal book and within the public book. Different members may record the same number independently, but a personal entry cannot duplicate a public project number; it is not a selector's display index. A local name can be abbreviated. Before ERP import, the number must resolve to one audited, enabled ERP project; its official name replaces the local name in the current task and its source project book without changing the chosen project number.
-_Avoid_：项目编号、项目序号、项目索引
+A project number (项目号) is the descriptive project designation supplied by the employee or the project's Excel export, often combining the customer, project title, year, and project serial. It is distinct from both the project serial and the ERP official project name.
+_Avoid_：项目序号、项目名称、ERP 正式名称
+
+**ERP 项目正式名称**：
+The ERP official project name (ERP 项目正式名称) is the name returned by ERP for the uniquely matched project serial and used to verify the project shown in ERP. It is separate from the project number maintained in a project book.
+_Avoid_：项目号、项目序号、本地简称
 
 **项目归属**：
 用户在 ERP 自动化开始前为每条候选明细选择的项目；同一纯发票支持的多条交通候选明细可以分别选择项目，也可以批量应用同一项目。项目归属必须在任务选择确认中固定，不能由 ERP Web 中的候选顺序或票面金额自动推断。
@@ -308,11 +316,11 @@ _Avoid_：ERP 账号、员工身份、个人绑定、用户档案
 _Avoid_：超级用户、运维、ERP 管理员
 
 **个人项目簿**：
-The personal project book (个人项目簿) is the project collection maintained by its owning app account. Its names can be abbreviated and are updated from ERP by project number before invoice import. Entries can be edited, deactivated, reactivated, or deleted from the personal collection; deletion preserves historical reimbursement records and releases the number for later intake. Only currently selectable entries from the owner's book or the public project book may receive new assignments. Later manual book changes do not rewrite existing task selections.
-_Avoid_：任意项目号、第二套项目主数据
+The personal project book (个人项目簿) is the collection of project serials, project numbers, and availability maintained by its owning app account. Only currently selectable entries from the owner's book or the public book may receive new assignments; later maintenance preserves historical task selections, and deletion releases the serial for later intake.
+_Avoid_：任意项目序号、第二套项目主数据
 
 **公共项目簿**：
-The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may manually add, edit, deactivate, reactivate, or delete its entries. When a member uses a public project for reimbursement, the system can update its name from the uniquely matched, usable ERP project without changing its number or availability. Deletion releases the public number reservation while preserving historical reimbursement records. A public entry reserves its number from personal admission; promoting existing same-number personal entries to a public project requires explicit confirmation and preserves historical task selections. Ordinary members cannot manually maintain public entries.
+The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may manually maintain its entries; its project serials reserve those serials from personal admission, promotion of existing personal entries requires explicit confirmation, and deletion releases the reservation while preserving historical reimbursement records.
 _Avoid_：全局项目目录、项目目录、共享个人项目簿
 
 **本地市内交通**：
@@ -344,11 +352,11 @@ _Avoid_：删除任务、清理任务、取消报销
 _Avoid_：任务作废、自动清理、删除任务
 
 **主数据只读核对**：
-用 ERP 自带的查询服务确认主数据存在、已审核且未禁用的动作。项目按项目号唯一匹配，并采用 ERP 正式名称；费用项目仍要求编码和名称一致。它不修改 ERP、不打开任何单据，项目名称可同步到本地项目簿。它证明该主数据可被引用，不证明引用它的费用明细能保存成功。
+用 ERP 自带的查询服务确认主数据存在、已审核且未禁用的动作。项目按项目序号唯一匹配，ERP 项目正式名称用于 ERP 执行和回读核对，不覆盖项目簿的项目号；费用项目仍要求编码和名称一致。它证明该主数据可被引用，不证明引用它的费用明细能保存成功。
 _Avoid_：项目校验、同步主数据、拉取目录、验证项目合法性
 
-**Project-number evidence level (项目号来源等级)**：
-The relationship between a project number and its evidence. A manual admission is a local planning claim; an ERP
+**Project-serial evidence level (项目序号来源等级)**：
+The relationship between a project serial and its evidence. A manual admission is a local planning claim; an ERP
 read-only check proves that a code and name are currently referenceable. Legacy facts retain their historical evidence
 rather than being silently reclassified.
 _Avoid_：项目已确认、项目有效、项目已验证

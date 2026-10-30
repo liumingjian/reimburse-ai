@@ -8,6 +8,9 @@ import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
 import type { ProjectBook, ProjectBookEditInput, ProjectBookIntakeInput, ProjectBookLifecycleInput, ProjectBookResult, PublicProjectConversionInput } from './project-book';
 import type { Corners, PendingAnswer, TaskSnapshot } from './snapshot';
 import type { TaskList } from './task-list';
+import type { ProjectImportCommit, ProjectImportWorkbook, ProjectImportResult } from './project-import';
+
+export type ProjectImportOutcome<T> = { ok: true; value: T } | { ok: false; error: ActionError };
 
 // 任务之外、返回整份任务列表的动作（作废任务、完全重置）的结果：成功返回新任务列表；失败时 taskList 是服务端附带的最新列表（可能为 null）。
 export type TaskListOutcome =
@@ -77,6 +80,8 @@ export interface AppAdapter {
   // Personal project books (个人项目簿) are outside tasks and scoped to an app account. Members enter a number and
   // name explicitly; affected task options update through the event stream.
   getProjectBook(): Promise<ProjectBook>;
+  previewProjectImport(scope: 'personal' | 'public', file: File, sheet?: string): Promise<ProjectImportOutcome<ProjectImportWorkbook>>;
+  commitProjectImport(scope: 'personal' | 'public', input: ProjectImportCommit): Promise<ProjectImportOutcome<ProjectImportResult>>;
   intakeProject(input: ProjectBookIntakeInput): Promise<ProjectBookOutcome>;
   editProject(input: ProjectBookEditInput): Promise<ProjectBookOutcome>;
   deactivateProject(input: ProjectBookLifecycleInput): Promise<ProjectBookOutcome>;

@@ -289,9 +289,9 @@ describe('the personal book', () => {
 
   it('rejects incomplete, unsafe, and duplicate local admissions without changing the saved fact', async () => {
     const missingNumber = await alice.post('/api/project-book/intake', { number: ' ', name: '名称' });
-    expect(ProjectBookResultSchema.parse(await missingNumber.json())).toMatchObject({ status: 'rejected', note: '请填写项目号。' });
+    expect(ProjectBookResultSchema.parse(await missingNumber.json())).toMatchObject({ status: 'rejected', note: '请填写项目序号。' });
     const missingName = await alice.post('/api/project-book/intake', { number: 'LOCAL-1', name: ' ' });
-    expect(ProjectBookResultSchema.parse(await missingName.json())).toMatchObject({ status: 'rejected', note: '请填写项目名称。' });
+    expect(ProjectBookResultSchema.parse(await missingName.json())).toMatchObject({ status: 'rejected', note: '请填写项目号。' });
     expect(await book('intake', { number: 'P-12;', name: '非法字符' })).toMatchObject({ status: 'rejected', verdict: 'unsafe' });
     expect((await book('intake', { number: 'LOCAL-1', name: '原名称' })).status).toBe('admitted');
     expect(await book('intake', { number: 'LOCAL-1', name: '新名称' })).toMatchObject({ status: 'rejected', note: expect.stringContaining('未重复加入') });

@@ -6,6 +6,7 @@ import { useAppStore, useBook } from '../adapter/context';
 import type { BookScope } from '../adapter/store';
 import { type AppAdapter, type ProjectBookEditInput, type ProjectBookOutcome, type PublicProjectConversionInput, PROJECT_BOOK_ACCEPTED_STATUSES, PROJECT_BOOK_COPY, PUBLIC_PROJECT_BOOK_COPY, type ProjectBookEntry } from '@baox/contract';
 import { ConfirmDialog } from '../shell/Dialog';
+import { ProjectImport } from './ProjectImport';
 
 // The same table presents both scopes. Personal intake belongs to its owner; public maintenance controls are shown
 // only to administrators. The server independently checks the caller's permission for every mutation.
@@ -223,6 +224,7 @@ export function ProjectBookPanel({
 
   return (
     <>
+      {canMaintain ? <ProjectImport key={scope} scope={scope} disabled={busy} /> : null}
       {canMaintain ? (
         <section className="app-book-intake" aria-label={`录入${ops.title}`}>
           <form
@@ -296,8 +298,8 @@ export function ProjectBookPanel({
             <Table aria-label={ops.title}>
               <TableHead>
                 <TableRow>
-                  <TableHeader className="app-sticky-start">项目号</TableHeader>
-                  <TableHeader>名称</TableHeader>
+                  <TableHeader className="app-sticky-start">{PROJECT_BOOK_COPY.numberLabel}</TableHeader>
+                  <TableHeader>{PROJECT_BOOK_COPY.nameLabel}</TableHeader>
                   <TableHeader>{PROJECT_BOOK_COPY.deadlineLabel}</TableHeader>
                   <TableHeader>状态</TableHeader>
                   {canMaintain ? <TableHeader className="app-sticky-end" aria-label="操作" /> : null}

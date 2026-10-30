@@ -10,22 +10,22 @@ const row = (page: Page, number: string) => page.getByTestId(`book-row-${number}
 const message = (page: Page) => page.getByTestId('book-message');
 
 async function intake(page: Page, number: string, name = number === 'P-6021' ? '年度预算评审' : '苏州门店巡检') {
-  await page.getByLabel('项目号', { exact: true }).fill(number);
-  await page.getByLabel('项目名称', { exact: true }).fill(name);
+  await page.getByLabel('项目序号', { exact: true }).fill(number);
+  await page.getByLabel('项目号', { exact: true }).fill(name);
   await page.getByRole('button', { name: '加入项目', exact: true }).click();
 }
 
 test('offline intake preserves names and retains input on duplicate or unsafe numbers', async ({ page }, testInfo) => {
   await page.goto(open('', '#/projects'));
   await expect(h1(page, '个人项目簿')).toBeVisible();
-  await expect(book(page).getByRole('columnheader')).toHaveText(['项目号', '名称', '截止日期', '状态', '']);
+  await expect(book(page).getByRole('columnheader')).toHaveText(['项目序号', '项目号', '截止日期', '状态', '']);
   await intake(page, 'LOCAL-5108', '本地维护项目');
   await expect(row(page, 'LOCAL-5108')).toContainText('本地维护项目');
   await expect(row(page, 'LOCAL-5108')).toContainText('可选');
   await intake(page, 'LOCAL-5108', '重复名称');
   await expect(message(page)).toContainText('已');
-  await expect(page.getByLabel('项目号', { exact: true })).toHaveValue('LOCAL-5108');
-  await expect(page.getByLabel('项目名称', { exact: true })).toHaveValue('重复名称');
+  await expect(page.getByLabel('项目序号', { exact: true })).toHaveValue('LOCAL-5108');
+  await expect(page.getByLabel('项目号', { exact: true })).toHaveValue('重复名称');
   await expect(row(page, 'LOCAL-5108')).toContainText('本地维护项目');
   await intake(page, 'P-12;', '不安全项目');
   await expect(message(page)).toContainText('不能安全');
@@ -91,7 +91,7 @@ test('入口：顶栏常驻「项目簿」；项目归属页「归入项目」�
   await expect(panel.getByRole('button', { name: /P-6021/ })).toHaveCount(0);
   await panel.getByRole('button', { name: '新增项目' }).click();
   const dialog = page.getByRole('dialog', { name: '新增项目' });
-  await expect(dialog.getByLabel('项目号')).toBeFocused();
+  await expect(dialog.getByLabel('项目序号')).toBeFocused();
   await intake(page, 'P-6021');
   await expect(dialog.getByTestId('book-row-P-6021')).toContainText('年度预算评审');
   await dialog.getByRole('button', { name: '完成' }).click();

@@ -23,6 +23,7 @@ import { hasUnfinishedErpJobs, recoverErpJobs } from './erp/recovery';
 import { workerExecutor, type ParseExecutor } from './parse/executor';
 import { createParseJobs, type ParseJobs } from './parse/jobs';
 import { createBookService, type BookService } from './books';
+import { mountProjectImportRoutes } from './project-import';
 import { createExecutorHub, realTimer, type ExecutorHub, type Schedule } from './channel/channel';
 import { mountLocalExecutorInstallRoutes, mountLocalExecutorReleaseRoutes, mountLocalExecutorRuntimeRoutes } from './local-executor/http';
 import type { LocalExecutorDist } from './local-executor/release';
@@ -358,6 +359,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     for (const { account_id } of owners) await serviceFor(account_id).bookChanged();
   };
   const CHANGED: ReadonlySet<ProjectBookResult['status']> = new Set(['admitted', 'edited', 'deactivated', 'restored', 'deleted', 'converted']);
+  mountProjectImportRoutes(app, db, now, (scope, accountId) => scope === 'public' ? everyOpenTaskChanged() : serviceFor(accountId).bookChanged());
   const intakeBookAction =
     (bookOf: BookOf, { adminOnly }: { adminOnly: boolean }) =>
     async (c: Context<AppEnv>) => {

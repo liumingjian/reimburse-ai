@@ -1,4 +1,5 @@
 import {
+  ProjectImportWorkbookSchema, ProjectImportResultSchema, type ProjectImportOutcome,
   AccountListFailureSchema,
   AccountListSchema,
   type AccountList,
@@ -338,6 +339,18 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     }
     return parseProjectBookActionResponse(response.status, await readJson(response));
   }
+  async function importAction<T>(target: string, body: BodyInit, schema: { safeParse: (body: unknown) => { success: true; data: T } | { success: false } }): Promise<ProjectImportOutcome<T>> {
+    try {
+      const response = await fetch(target, { method: 'POST', body, ...(body instanceof FormData ? {} : { headers: { 'content-type': 'application/json' } }) });
+      const json = await readJson(response);
+      if (isSuccess(response.status)) {
+        const parsed = schema.safeParse(json);
+        if (parsed.success) return { ok: true, value: parsed.data };
+      }
+      const failure = AuthFailureSchema.safeParse(json);
+      return { ok: false, error: failure.success ? failure.data.error : { code: INVALID_RESPONSE_CODE, message: '无法读取项目导入结果。' } };
+    } catch { return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE } }; }
+  }
   async function legacyImportAction(target: string): Promise<LegacyImportOutcome> {
     let response: Response;
     try {
@@ -403,6 +416,13 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
       return parseProjectBookResponse(response.status, await readJson(response));
     },
     intakeProject: (input) => bookAction(url(E.intakeProject.path), input),
+    previewProjectImport(scope, file, sheet) {
+      const form = new FormData();
+      form.append('file', file);
+      if (sheet !== undefined) form.append('sheet', sheet);
+      return importAction(url(E.previewProjectImport.path.replace(':book', scope === 'public' ? 'public-project-book' : 'project-book')), form, ProjectImportWorkbookSchema);
+    },
+    commitProjectImport: (scope, input) => importAction(url(E.commitProjectImport.path.replace(':book', scope === 'public' ? 'public-project-book' : 'project-book')), JSON.stringify(input), ProjectImportResultSchema),
     editProject: (input) => bookAction(url(E.editProject.path), input),
     deactivateProject: (input) => bookAction(url(E.deactivateProject.path), input),
     restoreProject: (input) => bookAction(url(E.restoreProject.path), input),

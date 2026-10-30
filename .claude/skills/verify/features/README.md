@@ -38,6 +38,8 @@ Each feature file has an H1 title and one paragraph of user-visible behaviour, t
 
 ## Features
 
+- Project book batch import: scenario `project-import` drives personal and public imports, column mapping, previews, and duplicate skips. Set `BAOX_PROJECT_IMPORT_SAMPLE` to use a local `.xlsx` sample.
+
 - [Accounts and sign-in](./accounts.md): 创建管理员, registration, approval, sign-in refusals. No scenario yet.
 - [New task, upload and 盘点](./new-task-upload.md): scenario `new-task-upload`.
 - [项目归属 and 整单确认](./project-review.md): no scenario yet; `v.confirmedTask()` covers it through the API only.

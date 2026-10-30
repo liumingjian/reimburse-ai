@@ -38,8 +38,8 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
 
   // The book gate: add P-2307, then start assigning.
   await page.goto(`/#/task/${taskId}/project`);
-  await page.getByLabel('项目号').fill('P-2307');
-  await page.getByLabel('项目名称').fill('华东客户交付');
+  await page.getByLabel('项目序号').fill('P-2307');
+  await page.getByLabel('项目号').fill('华东客户交付');
   await page.getByRole('button', { name: '加入项目', exact: true }).click();
   await expect(page.getByTestId('book-message')).toContainText('已加入个人项目簿');
   await expect(page.getByTestId('book-row-P-2307')).toContainText('可选');
@@ -76,26 +76,26 @@ test('添加项目、全部明细归入、填写报销事由并提交', async ({
 test('personal project editing can be cancelled and a saved renumber survives reload', async ({ page }) => {
   await signIn(page);
   await page.goto('/#/projects');
-  await page.getByLabel('项目号', { exact: true }).fill('EDIT-101');
-  await page.getByLabel('项目名称', { exact: true }).fill('原项目名称');
+  await page.getByLabel('项目序号', { exact: true }).fill('EDIT-101');
+  await page.getByLabel('项目号', { exact: true }).fill('原项目号');
   await page.getByLabel('截止日期', { exact: true }).fill('2026-12-31');
   await page.getByRole('button', { name: '加入项目', exact: true }).click();
-  await expect(page.getByTestId('book-row-EDIT-101')).toContainText('原项目名称');
+  await expect(page.getByTestId('book-row-EDIT-101')).toContainText('原项目号');
   await expect(page.getByTestId('book-row-EDIT-101')).toContainText('2026-12-31');
 
   await page.getByRole('button', { name: '编辑 EDIT-101', exact: true }).click();
   const edit = page.getByRole('dialog', { name: /编辑/ });
-  await expect(edit.getByLabel('项目号', { exact: true })).toHaveValue('EDIT-101');
-  await edit.getByLabel('项目名称', { exact: true }).fill('取消的名称');
+  await expect(edit.getByLabel('项目序号', { exact: true })).toHaveValue('EDIT-101');
+  await edit.getByLabel('项目号', { exact: true }).fill('取消的名称');
   await edit.getByRole('button', { name: '取消', exact: true }).click();
   await expect(edit).toHaveCount(0);
-  await expect(page.getByTestId('book-row-EDIT-101')).toContainText('原项目名称');
+  await expect(page.getByTestId('book-row-EDIT-101')).toContainText('原项目号');
 
   await page.getByRole('button', { name: '编辑 EDIT-101', exact: true }).click();
-  await expect(edit.getByLabel('项目名称', { exact: true })).toHaveValue('原项目名称');
+  await expect(edit.getByLabel('项目号', { exact: true })).toHaveValue('原项目号');
   await expect(edit.getByLabel('截止日期', { exact: true })).toHaveValue('2026-12-31');
-  await edit.getByLabel('项目号', { exact: true }).fill('EDIT-102');
-  await edit.getByLabel('项目名称', { exact: true }).fill('修正后的名称');
+  await edit.getByLabel('项目序号', { exact: true }).fill('EDIT-102');
+  await edit.getByLabel('项目号', { exact: true }).fill('修正后的名称');
   await edit.getByLabel('截止日期', { exact: true }).fill('2027-01-31');
   await edit.getByRole('button', { name: '保存', exact: true }).click();
   await expect(edit).toHaveCount(0);

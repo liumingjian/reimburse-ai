@@ -25,6 +25,8 @@ const action = (name: ActionName, ...fields: string[]): HttpEndpoint => ({ metho
 
 // 每个适配器方法对应的端点；`satisfies` 保证适配器接口加了方法这里必须跟着加。
 export const HTTP_ENDPOINTS = {
+  previewProjectImport: { method: 'POST', path: '/api/:book/import/preview', body: 'multipart', fields: ['file', 'sheet'] },
+  commitProjectImport: { method: 'POST', path: '/api/:book/import/commit', body: 'json', fields: ['previewId', 'rows'] },
   // 应用账号：不需要会话；成功 200 返回 Session，失败 { error }。会话是 HttpOnly Cookie，页面读不到也不用管。
   // 其余端点没有有效会话一律 401 { error: { code: 'unauthenticated' } }。
   getSession: { method: 'GET', path: '/api/session', body: 'none', fields: [] },
