@@ -16,7 +16,7 @@ export async function summaryWorkbook(data: SummaryData): Promise<Uint8Array> {
   put('C4', data.name); put('F4', data.department); put('H3', '报销日期');
   put('I3', (Date.parse(`${data.reimbursementDate}T00:00:00Z`) - Date.UTC(1899, 11, 30)) / 86400000);
   put('C3', data.billIdentifier); put('F3', data.businessTripIdentifier);
-  data.rows.forEach((row, index) => { const cells = CELLS[index]; if (!cells) return; if (row.voucherCount || Number(row.amount)) { put(cells[0], Number(row.amount)); put(cells[1], row.voucherCount); } if (row.days) put('E6', row.days); });
+  data.rows.forEach((row, index) => { const cells = CELLS[index]; if (!cells) return; if (row.voucherCount || Number(row.amount)) { put(cells[0], Number(row.amount)); put(cells[1], row.voucherCount); } if (row.days !== null && (row.voucherCount || Number(row.amount))) put('E6', row.days); });
   put('D17', 'ROUND(SUM(F6:F16,K6:K9),2)', true); put('B18', CURRENCY_FORMULA, true);
   zip.file('xl/worksheets/sheet1.xml', sheetXml);
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });

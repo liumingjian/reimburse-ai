@@ -623,6 +623,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     reopenUpload: (taskId, stepToken) => action(taskId, E.reopenUpload, { stepToken }),
     removePaymentScreenshot: (taskId, screenshotId) => action(taskId, E.removePaymentScreenshot, { screenshotId }),
     completePaymentScreenshots: (taskId, voucherMaterialId) => action(taskId, E.completePaymentScreenshots, { voucherMaterialId }),
+    resolveReimbursementSummary: (taskId, input) => action(taskId, E.resolveReimbursementSummary, input),
     generateReimbursementSummary: (taskId) => action(taskId, E.generateReimbursementSummary, {}),
     generatePrintSheet: (taskId) => action(taskId, E.generatePrintSheet, {}),
     rotatePlacement: (taskId, pageId, slot, rotate) => action(taskId, E.rotatePlacement, { pageId, slot, rotate }),

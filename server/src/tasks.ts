@@ -1,3 +1,5 @@
+import { loadResolutions, summaryInputs } from './summary/resolutions';
+import type { SummaryResolution } from '@baox/contract';
 import { summaryPreview } from './summary/preview';
 import { SummaryDataSchema, type EmployeeProfileView } from '@baox/contract';
 import { summaryData } from './summary/data';
@@ -178,6 +180,23 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     return projectSnapshot(task, loaded, batches, rejections, materials);
   }
 
+  async function resolveReimbursementSummary(taskId: string, input: SummaryResolution): Promise<TaskSnapshot> {
+    const task = await taskRow(db, taskId);
+    return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, revision }) => {
+      const loaded = await loadFacts(tx, task);
+      const confirmedRevision = loaded.confirmed?.revision;
+      if (confirmedRevision !== input.confirmationRevision) throw new ActionRefusedError({ code: 'stale_summary_resolution', message: '整单确认已变化，请刷新后重新填写。' });
+      const empty = { confirmationRevision: input.confirmationRevision, voucherCounts: [], stayDays: [] };
+      const applicable = summaryInputs(loaded.lines, empty);
+      const validVouchers = input.voucherCounts.every(choice => applicable.some(item => item.kind === 'voucher-count' && item.voucherMaterialId === choice.voucherMaterialId && item.categories.includes(choice.category)));
+      const validStays = input.stayDays.every(choice => applicable.some(item => item.kind === 'stay-days' && item.lineId === choice.lineId));
+      if (!validVouchers || !validStays || new Set(input.voucherCounts.map(c => c.voucherMaterialId)).size !== input.voucherCounts.length || new Set(input.stayDays.map(c => c.lineId)).size !== input.stayDays.length) throw new ActionRefusedError({ code: 'invalid_summary_resolution', message: '张数归属或住宿天数不适用于当前确认明细。' });
+      const prior = await loadResolutions(tx, taskId, input.confirmationRevision);
+      const data: SummaryResolution = { confirmationRevision: input.confirmationRevision, voucherCounts: [...prior.voucherCounts.filter(c => !input.voucherCounts.some(next => next.voucherMaterialId === c.voucherMaterialId)), ...input.voucherCounts], stayDays: [...prior.stayDays.filter(c => !input.stayDays.some(next => next.lineId === c.lineId)), ...input.stayDays] };
+      await tx.insertInto('summary_resolution').values({ task_id: taskId, confirmation_revision: input.confirmationRevision, revision, data: JSON.stringify(data) }).execute();
+    });
+  }
+
   async function generateReimbursementSummary(taskId: string): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
     const loaded = await loadFacts(db, task);
@@ -190,7 +209,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     if (current.status === 'generated' && current.data.name === profile.name && current.data.department === profile.department && current.data.employeeIdentity.erpAccount === profile.erpAccount && current.data.employeeIdentity.tenant === profile.tenant) return snapshot(taskId);
     const prior = await db.selectFrom('reimbursement_summary').select('data').where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
     const date = prior ? SummaryDataSchema.parse(JSON.parse(prior.data)).reimbursementDate : new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
-    const data = summaryData(loaded.lines, profile, date);
+    const data = summaryData(loaded.lines, profile, date, await loadResolutions(db, taskId, loaded.confirmed?.revision ?? 0));
     const bytes = await summaryWorkbook(data);
     const sha256 = writeBlob(dataDir, bytes);
     return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, at, revision }) => {
@@ -806,6 +825,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
 
     // ---- 去打印 (#190): only on a confirmed task; none of these touch the confirmation ----
     generateReimbursementSummary,
+    resolveReimbursementSummary,
     async reimbursementSummaryPreview(taskId: string, summaryId: string) {
       const task = await taskRow(db, taskId);
       const view = (await loadFacts(db, task)).summary;

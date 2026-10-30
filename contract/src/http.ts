@@ -93,6 +93,7 @@ export const HTTP_ENDPOINTS = {
   removePaymentScreenshot: action('remove-payment-screenshot', 'screenshotId'),
   completePaymentScreenshots: action('complete-payment-screenshots', 'voucherMaterialId'),
   generateReimbursementSummary: action('generate-reimbursement-summary'),
+  resolveReimbursementSummary: action('resolve-reimbursement-summary'),
   generatePrintSheet: action('generate-print-sheet'),
   rotatePlacement: action('rotate-placement', 'pageId', 'slot', 'rotate'),
   cropPlacement: action('crop-placement', 'pageId', 'slot', 'corners'),

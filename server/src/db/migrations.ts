@@ -859,6 +859,14 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0025_432_one_pairing': onePairing432,
   '0026_erp_browser_settings': erpBrowserSettings,
   '0027_employee_profile': employeeProfile,
+  '0029_summary_resolution': { async up(db) {
+    await db.schema.createTable('summary_resolution')
+      .addColumn('task_id', 'text', c => c.notNull().references('task.task_id'))
+      .addColumn('confirmation_revision', 'integer', c => c.notNull())
+      .addColumn('revision', 'integer', c => c.notNull())
+      .addColumn('data', 'text', c => c.notNull()).execute();
+    await appendOnly(db, 'summary_resolution');
+  } },
   '0028_reimbursement_summary': { async up(db) {
     await db.schema.createTable('reimbursement_summary')
       .addColumn('summary_id', 'text', c => c.primaryKey())

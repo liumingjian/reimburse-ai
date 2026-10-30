@@ -337,6 +337,7 @@ export const ACTION_NAMES = [
   'remove-payment-screenshot',
   'complete-payment-screenshots',
   'generate-reimbursement-summary',
+  'resolve-reimbursement-summary',
   'generate-print-sheet',
   'rotate-placement',
   'crop-placement',

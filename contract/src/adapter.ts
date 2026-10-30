@@ -140,6 +140,7 @@ export interface AppAdapter {
   removePaymentScreenshot(taskId: string, screenshotId: string): Promise<ActionOutcome>;
   // 「已传齐」：这张住宿发票的支付截图组已传完整，缺支付截图的待确认项随之处理完毕。组里至少要有一张。
   completePaymentScreenshots(taskId: string, voucherMaterialId: string): Promise<ActionOutcome>;
+  resolveReimbursementSummary(taskId: string, input: import('./summary').SummaryResolution): Promise<ActionOutcome>;
   generateReimbursementSummary(taskId: string): Promise<ActionOutcome>;
   generatePrintSheet(taskId: string): Promise<ActionOutcome>;
   rotatePlacement(taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean): Promise<ActionOutcome>;
