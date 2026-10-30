@@ -1,10 +1,11 @@
-// The local executor's browser: a headless Chromium of its own, one per job, on a persistent profile (ADR-0033).
+// The local executor's browser: a Chromium of its own, one per job, on a persistent profile (ADR-0033).
 //
 // Persistent because Kingdee's console scripts carry no Cache-Control and are served uncompressed: a profile that
 // keeps its HTTP cache logs in within seconds, a fresh one can trip RequireJS's 30 s limit on a slow link (the design's
 // S2 result). One job per browser because nothing of a job may outlive it: the run signs out and closes the browser,
 // and the next job starts from the ERP entry page.
 
+import type { ErpBrowserMode } from '@baox/contract';
 import { createServer } from 'node:net';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,9 +14,9 @@ import { cdpBrowser, ensureChromium } from '@baox/erp-executor/browser';
 import type { BrowserPort } from '@baox/erp-executor/job';
 import { erpEntryOf } from '@baox/erp-executor/probe';
 
-export type Headless = { port: number; browser: BrowserPort; close(): Promise<void> };
+export type LocalBrowser = { port: number; browser: BrowserPort; close(): Promise<void> };
 
-export type LaunchOptions = { profileDir: string; erpOrigin: string; env?: Record<string, string | undefined> };
+export type LaunchOptions = { profileDir: string; erpOrigin: string; browserMode?: ErpBrowserMode; env?: Record<string, string | undefined> };
 
 /**
  * Chrome for Testing runs field trials that block the ERP's requests (`ERR_BLOCKED_BY_CLIENT`, measured on the Mac
@@ -43,12 +44,12 @@ const alive = (pid: number) => {
   }
 };
 
-export async function launchHeadless({ profileDir, erpOrigin, env = process.env }: LaunchOptions): Promise<Headless> {
+export async function launchBrowser({ profileDir, erpOrigin, browserMode = 'headless', env = process.env }: LaunchOptions): Promise<LocalBrowser> {
   // A restored session would open last time's tabs next to the ERP entry, and two identical ERP pages are a target
   // the executor refuses to guess between (CHROMIUM_CDP_AMBIGUOUS).
   rmSync(join(profileDir, 'Default', 'Sessions'), { recursive: true, force: true });
   const port = await freePort();
-  const { pid } = await ensureChromium({ port, profileDir, openUrl: erpEntryOf(erpOrigin), env, headless: true, extraArgs: EXTRA_ARGS });
+  const { pid } = await ensureChromium({ port, profileDir, openUrl: erpEntryOf(erpOrigin), env, headless: browserMode === 'headless', extraArgs: EXTRA_ARGS });
   return {
     port,
     browser: cdpBrowser(port),

@@ -126,7 +126,13 @@ export type Step = (typeof STEPS)[number];
  * 明细 rows with its start (`done: 0`), then one event per row written. An executor from before it sends
  * none; the server then counts the step once. Optional on purpose: a new event type would be refused (`bad_event`).
  */
-export const StepProgressSchema = z.object({ done: z.number().int().min(0), total: z.number().int().min(1) })
+export const DetailActivitySchema = z.object({
+  lineId: z.string().min(1), row: z.number().int().min(1), column: z.string().nullable(),
+  action: z.enum(['add_row', 'write', 'wait_model', 'retry', 'verify']),
+  startedAt: z.string().datetime(), reportedAt: z.string().datetime(), attempt: z.number().int().min(1),
+});
+export type DetailActivity = z.infer<typeof DetailActivitySchema>;
+export const StepProgressSchema = z.object({ done: z.number().int().min(0), total: z.number().int().min(1), activity: DetailActivitySchema.nullable().optional() })
   .refine((progress) => progress.done <= progress.total);
 export type StepProgress = z.infer<typeof StepProgressSchema>;
 
@@ -166,6 +172,7 @@ export const RESULT_STATUSES = ['saved', 'drafted', 'aborted', 'unknown', 'catal
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const ExecutorEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('catalog_confirmed'), projects: z.array(z.object({ code: z.string().min(1), name: z.string().trim().min(1) })) }),
   z.object({ type: z.literal('step'), step: z.enum(STEPS), status: z.enum(['running', 'done', 'failed']), progress: StepProgressSchema.optional() }),
   z.object({
     type: z.literal('catalog_mismatch'),
@@ -204,6 +211,7 @@ export const ExecutorEventSchema = z.discriminatedUnion('type', [
     capture: ErrorCaptureSchema.nullable(),
     // The 暂存 draft's 内码 (FID), on `drafted` and on an `unknown` after 暂存 that found it.
     draftId: z.string().nullable().optional(),
+    context: DetailActivitySchema.optional(),
   }),
 ]);
 export type ExecutorEvent = z.infer<typeof ExecutorEventSchema>;
@@ -284,10 +292,13 @@ const erpDate = (value: unknown) => {
 };
 
 /** The ordered field plan (header purpose, then per line) the fill writes and reads back. */
+export const erpDetailAmounts = (line: { totalAmount: string }) => ({ expenseAmount: line.totalAmount, taxAmount: '0.00' });
+
 export const fieldPlanOf = (preview: Pick<ApprovedPreview, 'purpose' | 'lines'>): FieldPlan => ({
   header: [{ key: 'FCAUSA', value: preview.purpose, source: 'selection.purpose' }],
   order: ['项目', '费用项目', '发票类型', '开始日期', '结束日期', '住宿/出差地', '出发地', '目的地', '费用金额', '税额'],
   details: preview.lines.map((line, row) => {
+    const amounts = erpDetailAmounts(line);
     const fields: FieldPlanField[] = [
       { column: '项目', value: line.projectCode, readback: line.projectName, source: 'erp_catalog_confirmed' },
       { column: '费用项目', value: line.expenseItemCode, readback: line.expenseItemName, source: 'erp_catalog_confirmed' },
@@ -301,8 +312,8 @@ export const fieldPlanOf = (preview: Pick<ApprovedPreview, 'purpose' | 'lines'>)
       fields.push({ column: '目的地', value: line.routePlan.destination, readback: line.routePlan.destination, source: line.routePlan.source });
     }
     fields.push(
-      { column: '费用金额', value: line.netAmount, readback: line.netAmount, source: line.netAmountSource },
-      { column: '税额', value: line.taxAmount, readback: line.taxAmount, source: line.taxAmountSource },
+      { column: '费用金额', value: amounts.expenseAmount, readback: amounts.expenseAmount, source: 'reimbursement_gross_no_tax' },
+      { column: '税额', value: amounts.taxAmount, readback: amounts.taxAmount, source: 'reimbursement_gross_no_tax' },
     );
     return { lineId: line.lineId, row, voucherMaterialId: line.voucherMaterialId, fields };
   }),

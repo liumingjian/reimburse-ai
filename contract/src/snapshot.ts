@@ -444,7 +444,7 @@ export type Line = z.infer<typeof LineSchema>;
 
 // 整单确认表的 13 列，列名与顺序逐字照抄内核 preparationConfirmationTable（next.mjs:522-535）。
 // 页面在前面加一列 No.（统一业务序号，打印稿与 ERP 明细行共用）。「项目号」「费用项目」单元格为「编码 / 名称」，
-// 「费用金额」为不含税金额，「总额」为价税合计。按费用分类排序（服务端给出的 lines[] 顺序），无组标题、无合计行。
+// 「费用金额」与「总额」均为价税合计，「税额」为零，与 ERP 填报金额一致。按费用分类排序（服务端给出的 lines[] 顺序），无组标题、无合计行。
 export const CONFIRMATION_NO_COLUMN = 'No.';
 export const CONFIRMATION_TABLE_COLUMNS = [
   '发票',
@@ -854,11 +854,11 @@ export const ERP_DRAFT_STEP_COPY = {
 
 // The middle steps, from 报销信息核对 to 填写明细.
 const ERP_SHARED_STEPS = [
-  { key: 'catalog', title: '报销信息核对', description: '只读核对项目与费用项目：在报销系统里存在、名称一致、已审核且未禁用。' },
+  { key: 'catalog', title: '报销信息核对', description: '项目按项目号核对并自动更新正式名称；项目与费用项目都须已审核且未禁用，费用项目名称须一致。' },
   { key: 'navigate', title: '打开空白报销单', description: '打开费用报销单新增页，核对报销系统版本，确认是唯一一张空白单据。' },
   { key: 'import', title: '导入发票', description: '在发票助手里选择「不生成费用明细」，导入这次的发票。' },
   { key: 'receipt', title: '收票回读', description: '逐票回读收票单号、发票号码、不含税金额、税额与价税合计。' },
-  { key: 'fill', title: '填写明细', description: '按统一业务序号逐行写入明细，每个值写入后从单元格回读。' },
+  { key: 'fill', title: '填写明细', description: '按统一业务序号逐行填写，费用金额取总额、税额为零，每个值写入后从单元格回读。' },
 ] as const;
 
 // The one 去报销 step list (ADR-0037), every job's.
@@ -915,12 +915,21 @@ export const ErpProgressSchema = z.object({
 });
 export type ErpProgress = z.infer<typeof ErpProgressSchema>;
 
+export const ErpDetailActivitySchema = z.object({
+  lineId: z.string(), row: z.number().int().min(1), column: z.string().nullable(),
+  action: z.enum(['add_row', 'write', 'wait_model', 'retry', 'verify']),
+  startedAt: z.string(), reportedAt: z.string(), attempt: z.number().int().min(1),
+  no: z.number().int().min(1).nullable(), summary: z.string(), label: z.string(),
+  fromPreviousRun: z.boolean().optional(),
+});
+
 // idle 且 abortReason 有值：上一次去报销在写入前就停下了（报销系统没有被改动），可以直接再去报销。
 export const ErpSchema = z.object({
   status: z.enum(['idle', 'running', 'aborted', 'done']),
   steps: z.array(ErpStepSchema),
   currentStage: ErpProgressStageSchema.nullable(),
   progress: ErpProgressSchema.nullable(),
+  detailActivity: ErpDetailActivitySchema.nullable().optional(),
   externalWait: ErpExternalWaitSchema,
   outcome: ErpOutcomeSchema,
   allowedActions: z.array(ErpAllowedActionSchema),
@@ -1062,7 +1071,7 @@ export const ERP_SAVED_OUTCOME_NOTICE =
 
 // 处理人（RESOLVER_LABELS）见「待确认项」一节。
 
-// 报销信息核对：只读核对项目与费用项目（编码在不在、名称对不对得上、已审核、未禁用）。
+// 报销信息核对：项目按号匹配并采用 ERP 正式名，费用项目仍核对编码和名称；两者须已审核、未禁用。
 // pending 还没开始（项目归属提交前）；running 核对中；matched 通过；mismatch 有不匹配，整单确认被阻塞，
 // 唯一处置是回到项目归属改派（此时当前 step 是 assign_projects），提交后服务端重新核对。
 export const CATALOG_STATUSES = ['pending', 'running', 'matched', 'mismatch'] as const;

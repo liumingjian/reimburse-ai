@@ -30,6 +30,20 @@ const DIVERGES_FROM_KERNEL: Partial<Record<ReconcileState, { bucket: string; act
   filled_unlinked: { bucket: '未保存·就绪待保存', action: '原地等待', reasons: ['两边都是 75463 分，按分相等，差保存这一下'] },
 };
 
+// ADR-0040 changes the generated detail rows, while the original kernel recording remains historical evidence.
+// The fake's optional receipt-link assumption used net amounts; the gross/zero flow leaves that column empty.
+function currentReadings(recorded: typeof golden.states.filled.readings, state: ReconcileState) {
+  const readings = structuredClone(recorded);
+  if (state === 'filled' || state === 'filled_unlinked' || state === 'saved') {
+    for (const row of readings.detailGrid.rows) if (row.kind === 'data') {
+      row.values['费用金额'] = row.values['申请报销金额'];
+      row.values['税额'] = '¥0.00';
+      row.values['收票单号'] = '';
+    }
+  }
+  return readings;
+}
+
 let server: TestServer;
 let db: Db;
 let taskId: string;
@@ -65,7 +79,7 @@ describe('reconcile job on the fake ERP', () => {
 
     expect(result).toMatchObject({ type: 'result', status: 'read', code: null, capture: null });
     const readback = events.find((event): event is ReadbackEvent => event.type === 'readback');
-    expect(withoutLayout(readback!.readings)).toEqual(expected.readings);
+    expect(withoutLayout(readback!.readings)).toEqual(currentReadings(expected.readings, state));
     expect(judged!.verdict).toEqual(expected.verdict);
     expect(attempts).toEqual([]);
   });

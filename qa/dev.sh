@@ -9,20 +9,17 @@
 #   qa/dev.sh status   print whether it runs, and where
 #   qa/dev.sh down     stop it
 #
-# Agents run it through rexec from the worktree root: `rexec 'qa/dev.sh up'` (blocks until ready), and
-# `rexec 'qa/dev.sh sync'` after each fix. The instance runs from its own copy of the tree ($STATE/src, kept by
-# qa/mirror.mjs), never from the rexec workspace, and in a process group of its own, so the rexec job ends and frees
-# the workspace. `rexec --cancel` cannot reach it for the same reason; only `down` stops it.
+# On this Mac, run `qa/dev.sh up` from the worktree and `qa/dev.sh sync` after each fix. The instance runs from its
+# own copy ($STATE/src, kept by qa/mirror.mjs) and in a separate process group. Only `down` stops that instance.
 #
 # Overrides: BAOX_DATA_DIR (default ~/.baox-qa, the same directory the production-build launch uses), BAOX_PORT
 # (server, default 4319), BAOX_QA_WEB_PORT (Vite, default 5173), BAOX_QA_DEV_STATE (tree copy, pid file and logs,
 # default ~/.baox-qa-dev). Every other BAOX_* variable (BAOX_ERP_CHROMIUM, BAOX_ERP_STOP_BEFORE_IMPORT, ...) passes
 # through to the server at `up`. One instance per Mac: `up` stops the previous one first, whichever checkout started it.
 #
-# Either way 去报销 runs the production path (ADR-0037): it signs in with the account's ERP 凭据 saved on the 设置页
-# and ends at 暂存 (ERP 草稿已交接), so save them before the first 去报销. `BAOX_DEV_ERP=cdp` (the default) runs it in
-# the dedicated, headed Chromium on this Mac; `BAOX_DEV_ERP=paired qa/dev.sh up` sends it to the paired 本地执行器
-# instead (server/src/dev-executors.ts), so a 本地执行器 installed from the 设置页 暂存s in the real ERP.
+# QA uses the paired 本地执行器, whose account setting defaults to a headless browser. Settings can show its browser
+# for debugging without changing the executor route. BAOX_DEV_ERP=cdp explicitly selects the in-process CDP adapter
+# for adapter debugging only; it does not verify the production pairing and channel.
 set -euo pipefail
 
 CHECKOUT=$(cd "$(dirname "$0")/.." && pwd)
@@ -36,7 +33,7 @@ export BAOX_LOCAL_EXECUTOR_RUNTIMES=${BAOX_LOCAL_EXECUTOR_RUNTIMES:-$STATE/runti
 # The key the hosted ERP 凭据 are sealed with. Without one nobody can save 凭据 and no 本地执行器 is sent any; it stays
 # across restarts because the 凭据 sealed with it stay in the data directory.
 export BAOX_ERP_CREDENTIAL_KEY_FILE=${BAOX_ERP_CREDENTIAL_KEY_FILE:-$STATE/erp-credential-key}
-export BAOX_DEV_ERP=${BAOX_DEV_ERP:-cdp}
+export BAOX_DEV_ERP=${BAOX_DEV_ERP:-paired}
 URL="http://127.0.0.1:$WEB_PORT/"
 READY_TIMEOUT_S=180
 
@@ -68,7 +65,7 @@ down() {
 status() {
   local pg
   if pg=$(running_pgid); then
-    echo "running: $URL (process group $pg, from $(cat "$STATE/checkout"), data $(cat "$STATE/data"), 去报销 on $(cat "$STATE/dev-erp" 2>/dev/null || echo cdp))"
+    echo "running: $URL (process group $pg, from $(cat "$STATE/checkout"), data $(cat "$STATE/data"), 去报销 on $(cat "$STATE/dev-erp" 2>/dev/null || echo unknown))"
     echo "logs: $STATE/server.log $STATE/web.log"
   else
     echo "not running"
@@ -153,7 +150,7 @@ push() {
   # A dependency change needs an install, which the running watchers cannot do; the data directory survives the restart.
   if grep -Eq '(^|/| )(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$' <<<"$changed"; then
     echo "dependencies changed; restarting the instance"
-    BAOX_DEV_ERP=$(cat "$STATE/dev-erp" 2>/dev/null || echo cdp) up
+    BAOX_DEV_ERP=$(cat "$STATE/dev-erp" 2>/dev/null || echo paired) up
     return
   fi
   # A new program is what an installed executor updates itself to (local-executor/src/update.ts).

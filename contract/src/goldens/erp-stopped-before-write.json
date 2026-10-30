@@ -564,7 +564,7 @@
       {
         "key": "catalog",
         "title": "报销信息核对",
-        "description": "只读核对项目与费用项目：在报销系统里存在、名称一致、已审核且未禁用。",
+        "description": "项目按项目号核对并自动更新正式名称；项目与费用项目都须已审核且未禁用，费用项目名称须一致。",
         "status": "done"
       },
       {
@@ -588,7 +588,7 @@
       {
         "key": "fill",
         "title": "填写明细",
-        "description": "按统一业务序号逐行写入明细，每个值写入后从单元格回读。",
+        "description": "按统一业务序号逐行填写，费用金额取总额、税额为零，每个值写入后从单元格回读。",
         "status": "todo"
       },
       {
@@ -603,6 +603,7 @@
       "label": "打开空白报销单",
       "percent": 33
     },
+    "detailActivity": null,
     "externalWait": "none",
     "outcome": "none",
     "allowedActions": [

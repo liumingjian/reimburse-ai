@@ -78,3 +78,22 @@ describe('erp.progress from the recorded events', () => {
     expect(progressOf([...BEFORE_FILL, ...rows(1, 8)], { trigger: 'rerun' })).toEqual({ label: '填写明细 1/8', percent: 43 });
   });
 });
+
+it('retains the last reported detail while a field waits, without advancing the row count', () => {
+  const activity = { lineId: 'line-4', row: 4, column: '费用项目', action: 'write' as const, startedAt: '2026-10-30T01:00:00.000Z', reportedAt: '2026-10-30T01:00:00.000Z', attempt: 1 };
+  const event = step('fill', 'running', { done: 3, total: 8, activity } as StepProgress);
+  const current = record([...BEFORE_FILL, ...rows(3, 8), event]);
+  Object.assign(current.frozen!.judge.lines[3]!, { lineId: 'line-4', no: 7, categoryLabel: '住宿', date: '2026-10-20', totalAmount: '703.00' });
+  const view = erpView(current);
+  expect(view).toMatchObject({ detailActivity: { ...activity, no: 7, summary: '住宿，2026-10-20，703.00 元', label: '正在填写「费用项目」' }, progress: { label: '填写明细 3/8', percent: 56 } });
+  const failed = erpView(record([...BEFORE_FILL, event, step('fill', 'failed')], { phase: 'unknown' }));
+  expect(failed).toMatchObject({ detailActivity: { lineId: 'line-4', column: '费用项目' } });
+  expect(erpView(record([event, step('fill', 'running', { done: 4, total: 8, activity: null })]))).toMatchObject({ detailActivity: null });
+  expect(erpView(record([event], { phase: 'drafted' }))).toMatchObject({ detailActivity: null });
+  expect(erpView(record([...BEFORE_FILL, step('fill', 'running', { done: 0, total: 8 })], { trigger: 'rerun' }))).toMatchObject({ detailActivity: null });
+  const stoppedBeforeFill = record([], { phase: 'unknown', trigger: 'rerun' });
+  stoppedBeforeFill.writerResult = { type: 'result', status: 'unknown', code: 'field_write_failed', message: '字段停止', billNo: null, capture: null, context: activity };
+  expect(erpView(stoppedBeforeFill).detailActivity).toMatchObject({ lineId: 'line-4', fromPreviousRun: true });
+  stoppedBeforeFill.facts!.phase = 'running';
+  expect(erpView(stoppedBeforeFill).detailActivity).toBeNull();
+});

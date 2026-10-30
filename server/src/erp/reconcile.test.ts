@@ -382,8 +382,8 @@ const receipts = strictGrid(columns('序号', '收票单', '发票号码', '不�
 
 const detailValues = (line: Line, overrides: Record<string, string> = {}) => ({
   '申请报销金额': line.totalAmount,
-  '费用金额': line.netAmount ?? (line.lineId === 'ev-01' ? '644.95' : ''),
-  '税额': line.taxAmount ?? (line.lineId === 'ev-01' ? '58.05' : ''),
+  '费用金额': line.totalAmount,
+  '税额': '0.00',
   '发票类型': line.invoiceType!,
   '项目': line.projectName,
   '费用项目': line.expenseItemName,
@@ -401,10 +401,46 @@ const details = (rows: Row[] = lines.map((line) => data(detailValues(line)))) =>
 // must not drift is the money. Field-by-field exactness is still enforced where the value is written — `writeCell`
 // reads back the very cell it typed into (`erpform.ts`), so a project that resolved to the wrong name fails there.
 describe('matchTaskLines (reconcile: receipts by identity, form by totals)', () => {
+  it.each(['', '  '])('accepts ERP zero-tax detail cells displayed as %j', (tax) => {
+    const grid = details(lines.map(line => data(detailValues(line, { 税额: tax }))));
+    const result = matchTaskLines(grid, expected, receipts);
+    expect(result.ok, result.reasons.join('; ')).toBe(true);
+    const readings = { formMode: { readable: true, value: 'new' as const }, billNo: { readable: true, value: null }, receiptsGrid: receipts, detailGrid: grid };
+    expect(classifyReconciliation(reconcileReadings(readings, expected)).bucket).toBe('未保存·就绪待保存');
+  });
+
+  it('does not treat missing or invalid tax, blank expense amounts, or blank receipt tax as zero', () => {
+    for (const value of [undefined, null, 'bad', '0.01']) {
+      const grid = details();
+      Object.assign(grid.rows[0]!.values!, { 税额: value });
+      expect(matchTaskLines(grid, expected, receipts).ok).toBe(false);
+    }
+    const missing = details();
+    delete missing.rows[0]!.values!['税额'];
+    expect(matchTaskLines(missing, expected, receipts).ok).toBe(false);
+    expect(matchTaskLines({ ...details(), columns: details().columns.filter(column => column.label !== '税额') }, expected, receipts).ok).toBe(false);
+    expect(matchTaskLines(details(lines.map(line => data(detailValues(line, { 费用金额: '', 税额: '' })))), expected, receipts).ok).toBe(false);
+    const blankReceipt = structuredClone(receipts);
+    blankReceipt.rows[0]!.values!['税额'] = '';
+    expect(matchTaskLines(details(), expected, blankReceipt).ok).toBe(false);
+  });
+
+  it('rejects the former net/tax detail convention while retaining receipt amounts', () => {
+    const former = lines.map(line => data(detailValues(line, { 费用金额: line.netAmount ?? '644.95', 税额: line.taxAmount ?? '58.05' })));
+    expect(matchTaskLines(details(former), expected, receipts).ok).toBe(false);
+  });
+  it('rejects receipt net and tax drift even when gross is conserved', () => {
+    const changed = structuredClone(receipts);
+    const target = changed.rows.find(row => row.kind === 'data' && row.values?.materialId === 'm-ride');
+    const row = target ?? changed.rows.filter(row => row.kind === 'data')[1]!;
+    row.values!['不含税金额'] = '50.13';
+    row.values!['税额'] = '1.50';
+    expect(matchTaskLines(details(), expected, changed).ok).toBe(false);
+  });
   it('passes when four lines match by receipt identity and by totals; the rail net/tax comes from its receipt', () => {
     const result = matchTaskLines(details(), expected, receipts);
     expect(result.ok, result.reasons.join('; ')).toBe(true);
-    expect(result.amountSources[0]).toEqual({ line: 1, net: 'erp_receipt', tax: 'erp_receipt' });
+    expect(result.amountSources[0]).toEqual({ line: 1, net: 'reimbursement_gross_no_tax', tax: 'reimbursement_gross_no_tax' });
   });
 
   it('refuses money that drifted: one wrong 税额 and the form no longer adds up to the task', () => {

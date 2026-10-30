@@ -1,5 +1,8 @@
 # 去报销 runs in a headless browser on the employee's PC (本地执行器), logged in with server-hosted ERP credentials, and ends at a 暂存 draft
 
+**Amended 2026-10-30 (owner): [ADR-0041](0041-erp-browser-mode-is-an-account-setting.md) adds a per-account headed
+debug mode. Headless remains the default. Both modes run through the same paired 本地执行器.**
+
 **Status (2026-10-18): accepted, by [ADR-0037](0037-local-executor-is-the-only-way-to-reimburse.md): the 本地执行器 is the only way to 去报销, without waiting for the spike below. Where this ADR offers the browser extension as a route, ADR-0037 wins.**
 
 Title updated 2026-10-17 to match the amendments below; it used to say "on the server". `10.250.0.222` hosts only the

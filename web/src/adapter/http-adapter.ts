@@ -28,6 +28,9 @@ import {
   PairingFailureSchema,
   PairingViewSchema,
   ErpCredentialsViewSchema,
+  ErpBrowserSettingsSchema,
+  type ErpBrowserSettings,
+  type ErpBrowserSettingsOutcome,
   type ErpCredentialsOutcome,
   type ErpCredentialsView,
   type PairingView,
@@ -208,6 +211,25 @@ export function parseErpCredentialsResponse(status: number, body: unknown): ErpC
   const parsed = ErpCredentialsViewSchema.safeParse(body);
   if (!parsed.success) throw new Error('报销系统账号密码情况的格式与契约不符');
   return parsed.data;
+}
+
+export function parseErpBrowserSettingsResponse(status: number, body: unknown): ErpBrowserSettings {
+  refuseUnauthenticated(status);
+  if (!isSuccess(status)) throw new Error(`浏览器设置加载失败（HTTP ${status}）`);
+  const parsed = ErpBrowserSettingsSchema.safeParse(body);
+  if (!parsed.success) throw new Error('浏览器设置的格式与契约不符');
+  return parsed.data;
+}
+
+export function parseErpBrowserSettingsActionResponse(status: number, body: unknown): ErpBrowserSettingsOutcome {
+  if (isSuccess(status)) {
+    const parsed = ErpBrowserSettingsSchema.safeParse(body);
+    if (parsed.success) return { ok: true, settings: parsed.data };
+    return { ok: false, error: { code: INVALID_RESPONSE_CODE, message: '服务端返回的浏览器设置格式与契约不符。' }, settings: null };
+  }
+  const failure = PairingFailureSchema.safeParse(body);
+  if (failure.success) return { ok: false, error: failure.data.error, settings: null };
+  return { ok: false, error: { code: `http_${status}`, message: `请求失败（HTTP ${status}）` }, settings: null };
 }
 
 // 保存 / 试登录 / 清除 ERP 凭据: success is the new view (a 试登录 that ran and failed included); failure is { error }.
@@ -449,6 +471,24 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
         throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
       }
       return parseErpCredentialsResponse(response.status, await readJson(response));
+    },
+    async getErpBrowserSettings() {
+      let response: Response;
+      try {
+        response = await fetch(url(E.getErpBrowserSettings.path));
+      } catch {
+        throw new ServiceUnavailableError(NETWORK_ERROR_MESSAGE);
+      }
+      return parseErpBrowserSettingsResponse(response.status, await readJson(response));
+    },
+    async saveErpBrowserSettings(input) {
+      let response: Response;
+      try {
+        response = await fetch(url(E.saveErpBrowserSettings.path), { method: 'POST', body: JSON.stringify({ browserMode: input.browserMode }), headers: { 'content-type': 'application/json' } });
+      } catch {
+        return { ok: false, error: { code: NETWORK_ERROR_CODE, message: NETWORK_ERROR_MESSAGE }, settings: null };
+      }
+      return parseErpBrowserSettingsActionResponse(response.status, await readJson(response));
     },
     saveErpCredentials: (input) => credentialsAction(url(E.saveErpCredentials.path), { account: input.account, password: input.password }),
     testErpCredentials: () => credentialsAction(url(E.testErpCredentials.path)),

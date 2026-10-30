@@ -233,12 +233,15 @@ _Avoid_：重试、自动恢复、重放
 _Avoid_：共享控制、后台操作、浏览器会话
 
 **本地执行器**（2026-10-18 起是去报销的唯一方式，浏览器扩展取消）：
-员工电脑上用一条安装命令装上的 baox 组件，与一个应用账号配对，在它自己启动、员工看不见的无头浏览器里为该账号执行 ERP 动作；每次去报销都用该账号的 ERP 凭据登录，结束时登出并关闭浏览器。它只观察和操作 ERP 页面，判断始终由 baox 服务端作出。应用账号没有配对的本地执行器时，不能去报销。
+员工电脑上用一条安装命令装上的 baox 组件，与一个应用账号配对，在它自己启动的专用浏览器里为该账号执行 ERP 动作；默认无头运行，账号可在设置页选择有头模式供观察调试。两种模式都由同一本地执行器用该账号的 ERP 凭据登录，结束时登出并关闭浏览器。它只观察和操作 ERP 页面，判断始终由 baox 服务端作出。应用账号没有配对的本地执行器时，不能去报销。
 _Avoid_：本地组件、客户端、守护进程、无头浏览器、浏览器扩展、插件
 
 **配对**（2026-10-18 由 `扩展配对` 更名）：
 一个本地执行器与一个应用账号之间的绑定；每个应用账号同时只有一个有效配对，新配对使旧配对作废。它独立于应用登录：退出登录不撤销配对，撤销配对也不退出登录。
 _Avoid_：扩展配对、登录、授权、绑定浏览器、解除配对（撤销一个配对只说撤销配对）
+
+**报销系统浏览器模式**（2026-10-30）：
+应用账号在设置页保存的本地执行器浏览器显示偏好，默认无头，可选有头供观察调试。每次去报销、对账或试登录在启动时读取一次；修改不影响正在运行的浏览器，也不改变执行器路径、凭据或配对。
 
 **配对码**：
 应用为一个应用账号签发的一次性短码，十分钟内有效，用来建立配对；它在配对成功时作废。本地执行器的安装命令里就带着它。
@@ -285,7 +288,7 @@ ERP 在新增费用报销单时根据当前登录身份和系统设置带出的�
 _Avoid_：公司规则、个人绑定
 
 **项目号**：
-A project number (项目号) is the ERP-assigned business identifier, unique within a personal book and within the public book. Different members may record the same number independently, but a personal entry cannot duplicate a public project number; it is not a selector's display index. A locally admitted number and name are planning records, not proof that the current ERP project master data accepts that pair; a later read-only ERP check establishes current referenceability.
+A project number (项目号) is the ERP-assigned business identifier, unique within a personal book and within the public book. Different members may record the same number independently, but a personal entry cannot duplicate a public project number; it is not a selector's display index. A local name can be abbreviated. Before ERP import, the number must resolve to one audited, enabled ERP project; its official name replaces the local name in the current task and its source project book without changing the chosen project number.
 _Avoid_：项目编号、项目序号、项目索引
 
 **项目归属**：
@@ -305,11 +308,11 @@ _Avoid_：ERP 账号、员工身份、个人绑定、用户档案
 _Avoid_：超级用户、运维、ERP 管理员
 
 **个人项目簿**：
-The personal project book (个人项目簿) is the project collection maintained by its owning app account, using manually entered project numbers and names that are checked against ERP before invoice import. Entries can be edited, deactivated, reactivated, or deleted from the personal collection; deletion preserves historical reimbursement records and releases the number for later intake; only currently selectable entries from the owner's book or the public project book may receive new assignments, and later book changes do not rewrite existing task selections.
+The personal project book (个人项目簿) is the project collection maintained by its owning app account. Its names can be abbreviated and are updated from ERP by project number before invoice import. Entries can be edited, deactivated, reactivated, or deleted from the personal collection; deletion preserves historical reimbursement records and releases the number for later intake. Only currently selectable entries from the owner's book or the public project book may receive new assignments. Later manual book changes do not rewrite existing task selections.
 _Avoid_：任意项目号、第二套项目主数据
 
 **公共项目簿**：
-The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may add, edit, deactivate, reactivate, or delete its entries. Deletion releases the public number reservation while preserving historical reimbursement records. A public entry reserves its number from personal admission; promoting existing same-number personal entries to a public project requires explicit confirmation and preserves historical task selections. Ordinary members may only view and select public entries.
+The public project book (公共项目簿) is the project collection maintained by administrators and visible to every app account, with active entries available for task selection. Only administrators may manually add, edit, deactivate, reactivate, or delete its entries. When a member uses a public project for reimbursement, the system can update its name from the uniquely matched, usable ERP project without changing its number or availability. Deletion releases the public number reservation while preserving historical reimbursement records. A public entry reserves its number from personal admission; promoting existing same-number personal entries to a public project requires explicit confirmation and preserves historical task selections. Ordinary members cannot manually maintain public entries.
 _Avoid_：全局项目目录、项目目录、共享个人项目簿
 
 **本地市内交通**：
@@ -341,7 +344,7 @@ _Avoid_：删除任务、清理任务、取消报销
 _Avoid_：任务作废、自动清理、删除任务
 
 **主数据只读核对**：
-用 ERP 自带的查询服务确认一条主数据在 ERP 目录里存在、名称一致、已审核且未禁用的动作；它只查不写，不打开任何单据。它证明该主数据可被引用，不证明引用它的费用明细能保存成功。
+用 ERP 自带的查询服务确认主数据存在、已审核且未禁用的动作。项目按项目号唯一匹配，并采用 ERP 正式名称；费用项目仍要求编码和名称一致。它不修改 ERP、不打开任何单据，项目名称可同步到本地项目簿。它证明该主数据可被引用，不证明引用它的费用明细能保存成功。
 _Avoid_：项目校验、同步主数据、拉取目录、验证项目合法性
 
 **Project-number evidence level (项目号来源等级)**：
@@ -352,7 +355,7 @@ _Avoid_：项目已确认、项目有效、项目已验证
 
 ### 写入回读
 
-往 ERP 控件里写完一个值之后，**从非编辑态的单元格文本重新读一遍**，用它判断这个值 ERP 到底收没收到。输入框里看得见的值不算数：金蝶控件有"编辑态可见、失焦后丢失"的假成功，下拉更会把点中的选项静默丢掉。F7 类字段按编码写、回读出的是名称，所以"预期回读成什么"必须另有出处（费用项目取自主数据只读核对，项目取项目号后缀）。
+往 ERP 控件里写完一个值之后，**从非编辑态的单元格文本重新读一遍**，用它判断这个值 ERP 到底收没收到。输入框里看得见的值不算数：金蝶控件有"编辑态可见、失焦后丢失"的假成功，下拉更会把点中的选项静默丢掉。F7 类字段按编码写、回读出的是名称，所以"预期回读成什么"必须另有出处；项目与费用项目均采用本次主数据只读核对得到的正式名称。
 
 _Avoid_：写入成功、已填写、设置好了、值已生效
 

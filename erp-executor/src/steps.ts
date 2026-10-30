@@ -762,7 +762,8 @@ export async function importInvoices(page: WritePage, { budget = IMPORT_BUDGET, 
   // Anything short of 执行失败：0 stops the run, and the window is left open so #32's capture keeps ERP's own words
   // (ADR-0027: the run aborts to 转人工 carrying the verbatim text; 申请解绑 and 删除发票 are never clicked).
   if (answer.failed !== 0) {
-    throw new ExecutorError('INVOICE_IMPORT_REFUSED', `报销系统没有收下全部发票：${answer.text ?? ''}`);
+    const code = typeof answer.failed === 'number' && answer.failed > 0 ? 'INVOICE_IMPORT_REJECTED' : 'INVOICE_IMPORT_REFUSED';
+    throw new ExecutorError(code, `报销系统没有收下全部发票：${answer.text ?? ''}`);
   }
   // 处理结果 floats over the form at z-index 10005 with no 遮罩, so every later click aimed at the form underneath
   // would land on the report instead — V-54: the fill's very first act, 事由, was delivered to a SPAN「接收发票」
@@ -843,7 +844,12 @@ export async function addDetailRow(page: WritePage, { timeoutMs = 15_000 } = {})
   let after: number | null = null;
   let clicks = 0;
   do {
-    if (clicks++ > 0) await outwaitBlocker(page, page.session);
+    if (clicks++ > 0) {
+      await outwaitBlocker(page, page.session);
+      after = await count();
+      if ((after !== null && after > before) || Date.now() >= deadline) break;
+    }
+    if (Date.now() >= deadline) break;
     await clickCss(page, page.session, 'a[id$="tbNewList"]', '新增明细行');
     const windowMs = Math.min(ROW_CONFIRM_MS, budget / 3, Math.max(0, deadline - Date.now()));
     after = await waitFor(count, (rows) => rows !== null && rows > before, windowMs, paceOf(page).pollMs);

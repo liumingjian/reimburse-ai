@@ -14,6 +14,7 @@ import { DEFAULT_ERP_CONFIG, type ErpConfig } from './erp/config';
 import { createFillJobs, type FillExecutor, type JobCredentials, type RecordFacts } from './erp/fill-jobs';
 import type { ReconcileExecutor } from './erp/reconcile-job';
 import { createReconcileJobs } from './erp/reconcile-jobs';
+import { mountErpBrowserSettingsRoutes } from './erp/browser-settings-http';
 import { createCredentialVault } from './erp/credential-vault';
 import { createErpCredentialService, erpCredentialsReady } from './erp/hosted-sign-in';
 import { mountErpCredentialRoutes } from './erp/hosted-sign-in-http';
@@ -323,6 +324,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   });
   mountPairingRoutes(app, pairings, publicOrigin);
   mountErpCredentialRoutes(app, erpCredentials);
+  mountErpBrowserSettingsRoutes(app, db);
 
   // Legacy import (旧数据导入) as the signed-in account sees it; only the owner of a failed run may retry or skip.
   app.get('/api/legacy-import', async (c) => c.json(await legacy.view(accountOf(c).accountId)));

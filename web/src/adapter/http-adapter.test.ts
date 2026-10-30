@@ -52,6 +52,8 @@ describe('端点表', () => {
                       ? '/api/legacy-import'
                       : pairing.has(name)
                         ? '/api/pairing'
+                        : name === 'getErpBrowserSettings' || name === 'saveErpBrowserSettings'
+                          ? '/api/erp-browser-settings'
                         : erpCredentials.has(name)
                           ? '/api/erp-credentials'
                           : '/api/tasks';

@@ -59,15 +59,30 @@ describe('ERP 凭据 on the settings page', () => {
 
     expect(saved.status).toBe(200);
     expect(await view(saved)).toMatchObject({ available: true, status: 'authorised', erpAccount: 'zhangsan', message: null, checkedAt: expect.any(String) });
-    expect(trials).toEqual([{ erpOrigin: ERP_ORIGIN, credentials: { account: 'zhangsan', password: PASSWORD } }]);
+    expect(trials).toEqual([{ erpOrigin: ERP_ORIGIN, browserMode: 'headless', credentials: { account: 'zhangsan', password: PASSWORD } }]);
     const read = await (await alice.request('/api/erp-credentials')).text();
     expect(read).not.toContain(PASSWORD);
     const row = await server.db.selectFrom('erp_credential').selectAll().executeTakeFirstOrThrow();
     expect(JSON.stringify(row)).not.toContain(PASSWORD);
   });
 
+  it('uses the saved mode for each trial and preserves it when credentials are cleared', async () => {
+    await executor();
+    await save();
+    const before = await server.db.selectFrom('erp_credential').selectAll().executeTakeFirstOrThrow();
+    await alice.post('/api/erp-browser-settings', { browserMode: 'headed' });
+    expect(await server.db.selectFrom('erp_credential').selectAll().executeTakeFirstOrThrow()).toEqual(before);
+    await alice.post('/api/erp-credentials/test', {});
+    expect(trials.map((trial) => trial.browserMode)).toEqual(['headless', 'headed']);
+    await alice.post('/api/erp-credentials/clear', {});
+    expect(await (await alice.request('/api/erp-browser-settings')).json()).toEqual({ browserMode: 'headed' });
+    await save();
+    expect(trials.at(-1)?.browserMode).toBe('headed');
+  });
+
   it('deletes the password at once when ERP refuses it, and has nothing left to try', async () => {
     await executor({ ok: false, code: SIGN_IN_REFUSED_CODE, message: 'ERP 拒绝了这组账号密码：密码错误。' });
+    await alice.post('/api/erp-browser-settings', { browserMode: 'headed' });
     expect(await view(await save())).toMatchObject({ status: 'refused', erpAccount: 'zhangsan', message: 'ERP 拒绝了这组账号密码：密码错误。' });
     expect((await server.db.selectFrom('erp_credential').select('password_sealed').executeTakeFirstOrThrow()).password_sealed).toBeNull();
 
@@ -75,6 +90,7 @@ describe('ERP 凭据 on the settings page', () => {
     expect(again.status).toBe(400);
     expect(await again.json()).toMatchObject({ error: { code: 'erp_credentials_none' } });
     expect(trials).toHaveLength(1);
+    expect(await (await alice.request('/api/erp-browser-settings')).json()).toEqual({ browserMode: 'headed' });
   });
 
   it('keeps them untested, with the reason, when the 试登录 fails for any other reason', async () => {

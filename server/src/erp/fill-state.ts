@@ -11,6 +11,7 @@ import { type ApprovedPreview, type ErpAccount, type ExecutorEvent, type Precond
 import type { DraftLookup } from '@baox/erp-executor/draft';
 import { noFormOpen, type ReconcileVerdict } from './reconcile';
 import { storedEvents } from './jobs';
+import { withProjectNames } from './project-names';
 import { reconcileFromEvents } from './reconcile-job';
 
 // One judged reconcile read-back: the verdict (after the form-instance / target check), the bill number it read, and
@@ -197,7 +198,7 @@ export async function loadErp(tx: Db, taskId: string): Promise<ErpRecord> {
     facts: { jobId: job.job_id, trigger: job.trigger, revision: job.revision, phase, reassign, reconciling, drafting: mark !== null },
     attempted: attempt !== undefined,
     job,
-    frozen: JSON.parse(job.plan) as FrozenJob,
+    frozen: events.reduce((frozen, event) => event.type === 'catalog_confirmed' ? withProjectNames(frozen, event.projects) : frozen, JSON.parse(job.plan) as FrozenJob),
     events,
     result,
     writerResult,

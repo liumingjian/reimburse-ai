@@ -43,6 +43,15 @@ describe('moneyModelSettled — has ERP taken what the cells show', () => {
 describe('computedTotalProblem — does ERP agree with the plan', () => {
   const planned = { net: '1677.36', tax: '100.64' };
 
+  it('accepts readable blank tax only as zero, retaining amount and computed-total checks', () => {
+    const zero = { net: '21.63', tax: '0.00' };
+    expect(computedTotalProblem(row('21.63', '', '21.63'), zero, 'row')).toBeNull();
+    expect(computedTotalProblem(row('21.63', '', '21.00'), zero, 'row')).not.toBeNull();
+    expect(computedTotalProblem(row('21.63', '', '21.63'), { net: '21.63', tax: '0.63' }, 'row')).not.toBeNull();
+    expect(computedTotalProblem({ 费用金额: '21.63', 申请报销金额: '21.63' }, zero, 'row')).not.toBeNull();
+    expect(computedTotalProblem(row('', '', '21.63'), zero, 'row')).not.toBeNull();
+  });
+
   it('passes a row whose cells match the plan and whose computed column is their sum', () => {
     expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,778.00'), planned, '明细第 1 行')).toBeNull();
   });
@@ -76,7 +85,7 @@ describe('computedTotalProblem — does ERP agree with the plan', () => {
     expect(computedTotalProblem(row('¥1,677.36', '¥100.64', '¥1,778.00'), { net: '1677.36', tax: '100.64' }, '明细第 11 行')).toBe(null);
     // A cell that does not hold what was asked for is caught by the same reading, computed column or not.
     expect(computedTotalProblem(row('¥32.18', '¥0.32', '¥32.50'), { net: '32.19', tax: '0.32' }, '明细第 1 行')).toMatch(/费用金额/);
-    expect(computedTotalProblem(row('¥32.18', '', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toMatch(/读不出金额/);
+    expect(computedTotalProblem(row('¥32.18', '', '¥32.18'), { net: '32.18', tax: '0.32' }, '明细第 1 行')).toMatch(/税额.*不是要写的 0.32/);
   });
 
   it('says so when ERP computed nothing at all', () => {

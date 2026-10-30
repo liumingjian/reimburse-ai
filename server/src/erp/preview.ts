@@ -189,6 +189,7 @@ export function buildErpWritePreview({ task, built, lines, selection, catalog, e
 
     const invoiceType = text(raw?.invoiceType ?? raw?.invoiceTypeLabel ?? event?.invoiceType ?? event?.invoiceTypeLabel);
     normalizedLines.push({
+      ...(typeof raw?.no === 'number' ? { no: raw.no } : {}),
       lineId: lineId!, eventId, voucherMaterialId: materialId!,
       maskedNumber: text(raw?.maskedNumber ?? event?.maskedNumber),
       invoiceNumber: text(raw?.invoiceNumber ?? event?.invoiceNumber),

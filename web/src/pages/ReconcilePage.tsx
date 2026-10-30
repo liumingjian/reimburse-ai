@@ -9,6 +9,7 @@ import { useAction } from '../shell/useAction';
 import { UnverifiedDraftReview } from './DraftReview';
 import { PAGE_COPY } from './page-copy';
 import { ReadbackTable } from './ReadbackTable';
+import { ErpDetailActivity } from './ErpDetailActivity';
 
 // 对账页：写入中止后停在这里。页面只说一件事：顶部一条错误通知（写入结果不确定，副标题是中止原因）；
 // 事实（单据编号、对账中断点、处置状态、建议处置、对账结果句）放进摘要条；逐行比对照旧；
@@ -68,6 +69,8 @@ export function ReconcilePage({ snapshot }: { snapshot: TaskSnapshot }) {
           {erp.review ? <UnverifiedDraftReview review={erp.review} /> : null}
         </section>
       ) : null}
+
+      <ErpDetailActivity activity={erp.detailActivity} running={false} />
 
       {/* 报销系统自己的原话（逐字，不改写）和写入停下时的裁剪截图。 */}
       {reconcile.capture ? (

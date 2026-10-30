@@ -26,6 +26,12 @@ safety.
     passed live on 2026-10-14 against a known holder and a free number (S12, erp-headless-v1.md item 4).
 - **Limit.** At most two automatic re-runs per 去报销, each recorded with its cause. When they are used up, the
   disposition is 原地等待, with 重新去报销 left to the user as today.
+  - Amended 2026-10-30 with the owner: stop automatic re-runs immediately when ERP explicitly reports failed
+    invoice imports. An unreadable or ambiguous reply is not an explicit rejection.
+  - Stop early when a fresh form fails again with the same supported error code, candidate line identity and
+    column. Record that failure identity in the frozen re-run plan; do not compare ERP row numbers or error text.
+    Failures without this evidence retain the two-re-run limit. Advancing to another field can still recover.
+  - Early stopping does not prove that ERP was unchanged. Keep the existing 对账 and manual disposition paths.
 - **After the 暂存 attempt has started**, nothing is re-run. The result is reconciled through WebAPI by the ownership
   marker:
   - exactly one matching draft whose model agrees with the plan → **ERP 草稿已交接**;

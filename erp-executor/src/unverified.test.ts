@@ -39,7 +39,8 @@ const WHY_NO_RECORDING = {
 // Raised 64 → 65 for a blank assistant window that stays up on its × (live 2026-10-21, once).
 // Raised 65 → 66 for ERP's computed 申请报销金额 trailing a money cell by seconds (live 2026-10-21, 1 of 10 runs).
 // Raised 66 → 67 for a money commit ERP's model never takes until it is written again (live 2026-10-21, 3 of 10).
-const UNVERIFIED_CEILING = 67;
+// Raised 67 → 68 for committed zero detail tax rendering blank (owner QA 2026-10-30); typing replay masks values.
+const UNVERIFIED_CEILING = 68;
 const MARKER = /@unverified:\s*(.*?)\s*(?:-->|\*\/|$)/gm;
 const REASON = /\[([a-z]+)\]$/;
 const testing = fileURLToPath(new URL('./testing/', import.meta.url));

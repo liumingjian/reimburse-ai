@@ -73,6 +73,8 @@ export const HTTP_ENDPOINTS = {
   // ERP 凭据 (ADR-0033): every answer is the ErpCredentialsView, never the password. Saving and 试登录 wait for the
   // 试登录 (up to about five minutes); one that ran and failed is in the view, not an { error }.
   getErpCredentials: { method: 'GET', path: '/api/erp-credentials', body: 'none', fields: [] },
+  getErpBrowserSettings: { method: 'GET', path: '/api/erp-browser-settings', body: 'none', fields: [] },
+  saveErpBrowserSettings: { method: 'POST', path: '/api/erp-browser-settings', body: 'json', fields: ['browserMode'] },
   saveErpCredentials: { method: 'POST', path: '/api/erp-credentials', body: 'json', fields: ['account', 'password'] },
   testErpCredentials: { method: 'POST', path: '/api/erp-credentials/test', body: 'json', fields: [] },
   clearErpCredentials: { method: 'POST', path: '/api/erp-credentials/clear', body: 'json', fields: [] },

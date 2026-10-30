@@ -58,6 +58,8 @@ export type FakeInvoice = {
 export type FakeReceiptLedger = Map<string, string[]>;
 export type FakeMasterData = { code: string; name: string; documentStatus?: string; forbidStatus?: string };
 export type FakeErpOptions = {
+  /** @unverified: ERP displays a committed zero detail tax as blank (owner QA 2026-10-30); no typing recording backs it [typing] */
+  zeroTaxDisplaysBlank?: boolean;
   origin?: string;
   loggedIn?: boolean;
   /**
@@ -816,7 +818,7 @@ const kendoDate = (raw: string) => {
       case '项目': return options.projects.find((p) => p.code === raw)?.name ?? '';
       case '费用项目': return options.expenseItems.find((p) => p.code === raw)?.name ?? '';
       case '费用金额':
-      case '税额': return cents(raw) === null ? '' : money(cents(raw)!);
+      case '税额': return (column === '税额' && options.zeroTaxDisplaysBlank && cents(raw) === 0) || cents(raw) === null ? '' : money(cents(raw)!);
       default: return raw;
     }
   }

@@ -13,6 +13,7 @@ import { createTaskService } from '../tasks';
 import { tempDataDir } from '../test/harness';
 import { DatabaseTooNewError, openDatabase } from './database';
 import { MIGRATIONS } from './migrations';
+import { readErpBrowserSettings, saveErpBrowserSettings } from '../erp/browser-settings';
 import { loadPrintFacts } from '../print/facts';
 
 // Startup migration safety (ADR-0015): a VACUUM INTO backup before migrating an existing database (last 5 kept),
@@ -70,6 +71,23 @@ async function priorVersionFixture(migration: string): Promise<string> {
   await db.destroy();
   return owner;
 }
+
+it('migrates existing accounts to the headless default and persists each preference across reopening', async () => {
+  const owner = await priorVersionFixture('0025_432_one_pairing');
+  let db = await openDatabase(databasePath(dataDir));
+  try {
+    expect(await readErpBrowserSettings(db, owner)).toEqual({ browserMode: 'headless' });
+    await saveErpBrowserSettings(db, owner, { browserMode: 'headed' });
+    await expect(sql`INSERT INTO erp_browser_setting (account_id, browser_mode) VALUES ('missing-account', 'headless')`.execute(db)).rejects.toThrow();
+    await expect(sql`UPDATE erp_browser_setting SET browser_mode = 'invalid' WHERE account_id = ${owner}`.execute(db)).rejects.toThrow();
+    await db.destroy();
+    db = await openDatabase(databasePath(dataDir));
+    expect(await readErpBrowserSettings(db, owner)).toEqual({ browserMode: 'headed' });
+    expect(await db.selectFrom('material').select('material_id').execute()).toEqual([{ material_id: 'old-material' }]);
+  } finally {
+    await db.destroy();
+  }
+});
 
 describe('migrations on an existing database', () => {
   it('upgrades the deployed maintenance schema without reopening its admitted barrier', async () => {

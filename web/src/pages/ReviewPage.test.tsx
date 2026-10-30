@@ -44,10 +44,10 @@ describe('整单明细确认', () => {
     expect(within(table()).getAllByRole('rowgroup')).toHaveLength(2);
     expect(rows.map((row) => cells(row)[0])).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
     expect(rows.map((row) => cells(row)[8])).toEqual([REMOTE, REMOTE, REMOTE, REMOTE, REMOTE, REMOTE, '长途交通', '长途交通', '住宿']);
-    // 住宿：住宿地/城市为上海，起止日期为入住与离店；费用金额是不含税金额。
-    expect(cells(rows[8])).toEqual(['9', '发票1', 'P-2307 / 华东客户交付', '2026-08-09', '2026-08-22', '上海', '', '', '住宿', 'FY020102 / 住宿费', '增值税发票', '3433.96', '206.04', '3640.00']);
+    // 住宿：住宿地/城市为上海，起止日期为入住与离店；费用金额取总额，税额为零。
+    expect(cells(rows[8])).toEqual(['9', '发票1', 'P-2307 / 华东客户交付', '2026-08-09', '2026-08-22', '上海', '', '', '住宿', 'FY020102 / 住宿费', '增值税发票', '3640.00', '0.00', '3640.00']);
     // 交通：结束日期与起始日期相同。
-    expect(cells(rows[0])).toEqual(['1', '发票2', 'P-3312 / 产品调研', '2026-08-10', '2026-08-10', '上海', '虹桥枢纽', '漕河泾', REMOTE, 'FY020103 / 外地市内交通费', '普通发票', '25.92', '0.77', '26.69']);
+    expect(cells(rows[0])).toEqual(['1', '发票2', 'P-3312 / 产品调研', '2026-08-10', '2026-08-10', '上海', '虹桥枢纽', '漕河泾', REMOTE, 'FY020103 / 外地市内交通费', '普通发票', '26.69', '0.00', '26.69']);
     expect(cells(rows[4]).slice(1, 8)).toEqual(['发票6', 'P-3312 / 产品调研', '2026-08-15', '2026-08-15', '上海', '张江高科', '漕河泾开发区']);
     expect(cells(rows[6]).slice(3, 8)).toEqual(['2026-08-09', '2026-08-09', '', '杭州东', '上海虹桥']);
     // 13 列表格里没有文件名、参考材料与合计行。
@@ -83,6 +83,23 @@ describe('整单明细确认', () => {
     expect(printLink()).toBeNull();
     expect(claimButton()).toBeNull();
     expect(screen.queryByRole('button', { name: '追加材料' })).toBeNull();
+  });
+
+  test('确认前后每行展示填报总额和零税额，保留原发票净额与税额', async () => {
+    const adapter = renderReview();
+    await screen.findByRole('heading', { name: '整单明细确认' });
+    const before = await adapter.getSnapshot('T1');
+    expect(before.lines.some((line) => line.taxAmount !== '0.00')).toBe(true);
+    const expectAmounts = () => {
+      expect(bodyRows().map((row) => cells(row).slice(-3))).toEqual(
+        before.lines.map((line) => [line.grossAmount, '0.00', line.grossAmount]),
+      );
+    };
+    expectAmounts();
+    fireEvent.click(checkbox());
+    await screen.findByRole('button', { name: '去报销' });
+    expectAmounts();
+    expect((await adapter.getSnapshot('T1')).lines).toEqual(before.lines);
   });
 
   test('去报销卡片说明由 baox 本地执行器登录报销系统、暂存后交给你提交，并在去报销按钮旁一句话提醒报销系统里的登录会被退出', async () => {
@@ -246,13 +263,13 @@ describe('整单明细确认', () => {
     const stopped = await adapter.getSnapshot('T1');
     expect(stopped).toMatchObject({ step: { kind: 'assign_projects' }, erp: { status: 'idle', steps: [] }, confirmation: { status: 'confirmed' } });
     expect(stopped.catalog.problems).toEqual([
-      { subject: '项目号 P-2307', reference: null, reason: '项目 P-2307 在报销系统里的名称是「改过名的项目」，与本地的「华东客户交付」不一致', resolver: '要你处理' },
+      { subject: '项目号 P-2307', reference: null, reason: '项目 P-2307「华东客户交付」在报销系统里查不到', resolver: '要你处理' },
     ]);
 
     window.location.hash = '#/task/T1/project';
     render(<App adapter={adapter} />);
     expect(await screen.findByRole('heading', { name: '项目归属' })).toBeTruthy();
-    expect(screen.getAllByRole('alert').map((node) => node.textContent).join('')).toContain('改过名的项目');
+    expect(screen.getAllByRole('alert').map((node) => node.textContent).join('')).toContain('在报销系统里查不到');
     for (const no of [7, 8, 9]) fireEvent.click(screen.getByRole('checkbox', { name: `选择明细 No.${no}` }));
     assignViaPicker('P-1180');
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认覆盖' }));

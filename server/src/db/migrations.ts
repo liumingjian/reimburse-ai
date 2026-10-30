@@ -808,6 +808,15 @@ const onePairing432: Migration = {
   },
 };
 
+const erpBrowserSettings: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema.createTable('erp_browser_setting')
+      .addColumn('account_id', 'text', (c) => c.primaryKey().notNull().references('account.account_id'))
+      .addColumn('browser_mode', 'text', (c) => c.notNull().check(sql`browser_mode IN ('headless', 'headed')`))
+      .execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -842,4 +851,5 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0023_412_erp_job_route': erpJobRoute423,
   '0024_412_install_code': installCode412,
   '0025_432_one_pairing': onePairing432,
+  '0026_erp_browser_settings': erpBrowserSettings,
 };

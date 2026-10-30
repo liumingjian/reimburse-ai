@@ -1,6 +1,7 @@
 import type { ActionError, AssignProjectLinesInput, CreateTaskInput, PlacementSlot, ProjectAssignmentInput } from './actions';
 import type { AccountList, AccountListOutcome, AccountUpdateInput, AuthOutcome, ChangePasswordInput, CredentialsInput, Session } from './auth';
 import type { ErpCredentialsOutcome, ErpCredentialsView, SaveErpCredentialsInput } from './erp-credentials';
+import type { ErpBrowserSettings, ErpBrowserSettingsOutcome, SaveErpBrowserSettingsInput } from './erp-browser-settings';
 import type { PairingView, PairingChangeOutcome } from './channel';
 import type { CreatePairingCodeInput } from './local-executor';
 import type { LegacyImport, LegacyImportOutcome } from './legacy-import';
@@ -111,6 +112,8 @@ export interface AppAdapter {
   // ERP 凭据 (ADR-0033): read the view (never the password); save, which runs a 试登录 through the paired baox 本地执行器;
   // run the 试登录 again; clear, which deletes them.
   getErpCredentials(): Promise<ErpCredentialsView>;
+  getErpBrowserSettings(): Promise<ErpBrowserSettings>;
+  saveErpBrowserSettings(input: SaveErpBrowserSettingsInput): Promise<ErpBrowserSettingsOutcome>;
   saveErpCredentials(input: SaveErpCredentialsInput): Promise<ErpCredentialsOutcome>;
   testErpCredentials(): Promise<ErpCredentialsOutcome>;
   clearErpCredentials(): Promise<ErpCredentialsOutcome>;

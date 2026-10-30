@@ -167,6 +167,20 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
   const confirmed = await latestConfirmation(tx, task.task_id);
   facts.confirmation = confirmationStatus(digest, confirmed, facts.lastReopenRevision);
   const erp = await loadErp(tx, task.task_id);
+  if (facts.confirmation === 'confirmed' && erp.job?.confirmation_digest === confirmed?.digest) {
+    const names = new Map(erp.frozen?.judge.projects.map(project => [project.code, project.name]) ?? []);
+    for (const line of lines) if (line.projectCode && names.has(line.projectCode)) line.projectName = names.get(line.projectCode)!;
+    if (assignment) {
+      const view = assignment.view;
+      const rename = <T extends { projectNumber: string; projectName: string }>(entry: T): T => ({ ...entry, projectName: names.get(entry.projectNumber) ?? entry.projectName });
+      assignment = { ...assignment, view: { ...view,
+        assignments: view.assignments.map(rename), working: view.working.map(rename), reselect: view.reselect.map(rename),
+        deadlineWarnings: view.deadlineWarnings.map(rename),
+        usage: view.usage.map(entry => ({ ...entry, name: names.get(entry.number) ?? entry.name })),
+        projects: view.projects.map(entry => ({ ...entry, name: names.get(entry.number) ?? entry.name })),
+      } };
+    }
+  }
   facts.erp = erp.facts;
   return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, erp, print };
 }

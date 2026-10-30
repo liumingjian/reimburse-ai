@@ -91,7 +91,7 @@ describe('去报销 on a fake executor', () => {
     const mismatch = await scene.settled();
     expect(mismatch).toMatchObject({ stage: 'project', step: { kind: 'assign_projects' }, erp: { status: 'idle' }, catalog: { status: 'mismatch' } });
     expect(mismatch.catalog.problems).toEqual([expect.objectContaining({ subject: '项目号 P-2307', resolver: '要你处理' })]);
-    expect(mismatch.catalog.problems[0]!.reason).toContain('改过名的项目');
+    expect(mismatch.catalog.problems[0]!.reason).toContain('在报销系统里查不到');
     expect(server.erpLease.holder(scene.client.account.accountId)).toBeNull();
     expect((await taskList(scene.client)).tasks[0]).toMatchObject({ abandonable: true });
 

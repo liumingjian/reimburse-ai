@@ -141,6 +141,8 @@ describe('ERP draft flow (草稿填写与保存)', () => {
     const preview = makePreview();
     expect([preview.lines[0]!.netAmount, preview.lines[0]!.taxAmount, preview.lines[0]!.netAmountSource, preview.lines[0]!.taxAmountSource])
       .toEqual(['644.95', '58.05', 'erp_receipt', 'erp_receipt']);
+    expect(preview.fieldPlan!.details[0]!.fields.filter(field => ['费用金额', '税额'].includes(field.column)))
+      .toMatchObject([{ column: '费用金额', value: '703.00' }, { column: '税额', value: '0.00' }]);
     expect(preview.lines[1]!.endDate).toBe('2026-08-27');
     expect(preview.lines[2]!.routePlan).toEqual({ origin: '时代天逸', destination: '傍西酒堂', source: 'vision_candidate' });
     expect(preview.fieldPlan!.details[0]!.fields.some((field) => field.column === '出发地')).toBe(true);

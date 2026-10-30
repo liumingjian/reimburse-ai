@@ -3,7 +3,7 @@
 // (matchTaskLines, the strict per-line comparison). Inputs, codes and messages are kept.
 
 import { validInvoiceTypeSource, writableInvoiceType } from '@baox/erp-executor/invoice-type';
-import type { Readings } from '@baox/erp-executor/protocol';
+import { erpDetailAmounts, type Readings } from '@baox/erp-executor/protocol';
 
 const MONEY = /^\d+(?:\.\d{1,2})?$/;
 const SAFE_RECEIPT = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -184,6 +184,7 @@ const normalizeReceiptBinding = (raw: any, index: number) => {
   const invoiceNumberText = textOf(raw?.invoiceNumber) || identity?.[1] || '';
   const receiptNumber = receiptNumberOf(raw?.receiptNumber ?? raw?.receiptNo);
   return { index, voucherMaterialId, identityKey, invoiceNumber: invoiceNumberText, receiptNumber,
+    netAmount: amountOf(raw?.netAmount), taxAmount: amountOf(raw?.taxAmount),
     valid: !!voucherMaterialId && !!identity && invoiceNumberText === identity[1] && !!receiptNumber };
 };
 const receiptBindingsOf = (expected: any) => (!Array.isArray(expected?.receiptBindings)
@@ -318,6 +319,10 @@ export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: Grid
     const actualNet = amountOf(row.values?.[RECEIPT_NET_COLUMN]);
     const actualTax = amountOf(row.values?.[TAX_COLUMN]);
     const expectedGross = sumKnown(group.items.map((item) => item.total));
+    const expectedNet = binding.netAmount ?? sumKnown(group.items.map(item => item.net));
+    const expectedTax = binding.taxAmount ?? sumKnown(group.items.map(item => item.tax));
+    if (expectedNet !== null && actualNet !== expectedNet) reasons.push(`任务凭证组 ${group.key} 的收票不含税金额与原始预览不一致`);
+    if (expectedTax !== null && actualTax !== expectedTax) reasons.push(`任务凭证组 ${group.key} 的收票税额与原始预览不一致`);
     if (actualGross === null || actualNet === null || actualTax === null) reasons.push(`任务凭证组 ${group.key} 的收票不含税金额、税额或价税合计不可读`);
     if (actualGross !== null && actualNet !== null && actualTax !== null && actualNet + actualTax !== actualGross) {
       reasons.push(`任务凭证组 ${group.key} 的收票不含税金额与税额不守恒`);
@@ -337,13 +342,12 @@ export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: Grid
     const receiptTax = receipt ? amountOf(receipt.values?.[TAX_COLUMN]) : null;
     const targetNet = item.net ?? (singleLine ? receiptNet : null);
     const targetTax = item.tax ?? (singleLine ? receiptTax : null);
-    amountSources.push({ line: item.index + 1,
-      net: item.net === null ? (targetNet === null ? 'unknown' : 'erp_receipt') : 'expected_preview',
-      tax: item.tax === null ? (targetTax === null ? 'unknown' : 'erp_receipt') : 'expected_preview' });
+    amountSources.push({ line: item.index + 1, net: 'reimbursement_gross_no_tax', tax: 'reimbursement_gross_no_tax' });
     if (item.net === null && targetNet === null) reasons.push(`任务第 ${item.index + 1} 行不含税金额在票面未知，且对应收票没有可读值；不从合计反推`);
     if (item.tax === null && targetTax === null) reasons.push(`任务第 ${item.index + 1} 行税额在票面未知，且对应收票没有可读值；不从合计反推`);
-    item.targetNet = targetNet;
-    item.targetTax = targetTax;
+    const amounts = erpDetailAmounts({ totalAmount: expectedLines[item.index]!.totalAmount });
+    item.targetNet = amountOf(amounts.expenseAmount);
+    item.targetTax = amountOf(amounts.taxAmount);
   }
 
   // TOTALS, NOT LINE BY LINE (the owner's decision, 2026-09-20). Matching every task line to its own ERP detail
@@ -356,15 +360,20 @@ export function matchTaskLines(grid: GridLike, expected: any, receiptsGrid: Grid
   // So the detail side is now judged on the three money totals of the whole form and on the row count (checked
   // above). The receipt side above is untouched: each 收票 row still has to be the invoice the preview says it is.
   const detailColumns = [DETAIL_COLUMN, NET_COLUMN, TAX_COLUMN];
+  const detailAmount = (value: unknown, column: string) =>
+    column === TAX_COLUMN && typeof value === 'string' && value.trim() === '' ? 0 : amountOf(value);
   for (const column of detailColumns) if (!columnOf(grid, column)) reasons.push(`明细网格没有「${column}」列，不能核对金额合计`);
   if (detailColumns.every((column) => columnOf(grid, column))) {
+    for (const [index, row] of rows.entries()) {
+      if (detailAmount(row.values?.[TAX_COLUMN], TAX_COLUMN) !== 0) reasons.push(`ERP 明细第 ${index + 1} 行税额不是零`);
+    }
     const totals = [
       { label: DETAIL_COLUMN, column: DETAIL_COLUMN, expected: sumKnown(expectedData.map((item) => item.total)) },
       { label: NET_COLUMN, column: NET_COLUMN, expected: sumKnown(expectedData.map((item) => item.targetNet)) },
       { label: TAX_COLUMN, column: TAX_COLUMN, expected: sumKnown(expectedData.map((item) => item.targetTax)) },
     ];
     for (const { label, column, expected: wanted } of totals) {
-      const actual = sumKnown(rows.map((row) => amountOf(row.values?.[column])));
+      const actual = sumKnown(rows.map((row) => detailAmount(row.values?.[column], column)));
       if (actual === null) { reasons.push(`ERP 明细里有读不出的「${label}」，不能核对合计`); continue; }
       // An expected total that is unknown already drew its own reason above; it is not reported twice here.
       if (wanted !== null && actual !== wanted) {

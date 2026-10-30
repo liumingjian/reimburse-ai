@@ -34,6 +34,17 @@ describe('reconcile job on the fake ERP', () => {
     expect(attempts).toEqual([]);
   });
 
+  it('reports a missing ERP page without claiming the saved credentials are missing', async () => {
+    const server = stubServer({ taskId });
+    const result = await runReconcileJob(reconcilePlan(taskId), {
+      browser: { listPages: async () => [], attach: async () => { throw new Error('no page to attach'); } },
+      channel: server.channel, pace: FAST_PACE, probeWaitMs: 0,
+    });
+    expect(result).toMatchObject({ status: 'aborted', code: 'erp_no_tab' });
+    expect(result.message).not.toContain('设置页');
+    expect(server.attempts).toEqual([]);
+  });
+
   it('stops on the login page when there is nothing to sign in with, without a read-back or any input', async () => {
     const fake = await createFakeErp(fakeErpOptions({ loggedIn: false }));
     const { result, events, sent } = await reconcile(fake);

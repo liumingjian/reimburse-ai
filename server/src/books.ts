@@ -206,6 +206,7 @@ type Append = {
   admissionSource?: 'manual';
   maintenanceAction?: MaintenanceAction;
   previousNumber?: string | null;
+  verdict?: LegacyVerdict;
   deadlineOn?: string | null;
 };
 
@@ -245,7 +246,7 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
         number: event.number,
         action: event.action,
         name: event.name ?? null,
-        verdict: null,
+        verdict: event.verdict ?? null,
         expires_on: null,
         deadline_on: event.deadlineOn ?? null,
         admission_source: event.admissionSource ?? null,
@@ -259,6 +260,20 @@ async function append(tx: BookDb, ref: BookRef, actorAccountId: string, at: stri
 }
 
 type IntakeDecision = 'admitted' | 'duplicate' | 'public_reserved' | 'personal_collision';
+
+/** ERP facts refresh only the book selected by this task; this is not a manual public-book edit. */
+export async function syncProjectNames(db: Db, accountId: string, taskId: string, projects: readonly { code: string; name: string }[], at: string): Promise<void> {
+  const submitted = await db.selectFrom('project_submission').select('selection').where('task_id', '=', taskId).where('account_id', '=', accountId).orderBy('revision', 'desc').executeTakeFirst();
+  if (!submitted) return;
+  const selected = Object.values(JSON.parse(submitted.selection) as Record<string, { number: string; source: ProjectSource }>);
+  for (const scope of ['personal', 'public'] as const) {
+    const ref: BookRef = scope === 'personal' ? { scope, ownerAccountId: accountId } : { scope };
+    const numbers = new Set(selected.filter(pin => pin.source === scope).map(pin => pin.number));
+    const existing = await readBook(db, ref);
+    const changes = projects.filter(project => numbers.has(project.code) && existing.some(entry => entry.number === project.code && entry.name !== project.name));
+    await append(db, ref, accountId, at.replace(/\.\d{3}(?=Z|[+-])/, ''), changes.map(project => ({ number: project.code, name: project.name, action: 'checked', verdict: 'confirmed' })));
+  }
+}
 type EditDecision = 'edited' | 'missing' | 'duplicate' | 'public_reserved' | 'personal_collision';
 type LifecycleDecision = 'deactivated' | 'restored' | 'not_found' | 'already_active' | 'already_inactive' | 'public_reserved';
 type DeleteDecision = 'deleted' | 'not_found';

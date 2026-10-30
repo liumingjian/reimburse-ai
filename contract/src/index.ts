@@ -10,6 +10,7 @@ export * from './legacy-import';
 export * from './channel';
 export * from './local-executor';
 export * from './erp-credentials';
+export * from './erp-browser-settings';
 export * from './http';
 export * from './adapter';
 export * from './lodging-evidence';
