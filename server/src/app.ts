@@ -1,4 +1,4 @@
-import { SummaryResolutionSchema } from '@baox/contract';
+import { SummaryResolutionSchema, SummaryPrintInformationSchema } from '@baox/contract';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, INVOICE_BLOB_PATH, PAIRING_PATH, PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, EXECUTOR_OFFLINE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
@@ -609,7 +609,7 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
   // 去打印 (#190): print settings only, without a stepToken (contract); see `printChange` in tasks.ts.
   'resolve-reimbursement-summary': taskAction(SummaryResolutionSchema, (tasks, id, input) => tasks.resolveReimbursementSummary(id, input)),
-  'generate-reimbursement-summary': taskAction(z.object({}), (tasks, id) => tasks.generateReimbursementSummary(id)),
+  'generate-reimbursement-summary': taskAction(z.object({ printInformation: SummaryPrintInformationSchema.optional() }), (tasks, id, input) => tasks.generateReimbursementSummary(id, input.printInformation)),
   'generate-print-sheet': taskAction(z.object({}), (tasks, id) => tasks.generatePrintSheet(id)),
   'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),
   'crop-placement': taskAction(CropInputSchema, (tasks, id, { pageId, slot, corners }) => tasks.cropPlacement(id, pageId, slot, corners)),

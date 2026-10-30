@@ -66,6 +66,51 @@ it('generates a printable independent workbook from the standing confirmation an
   await local.disconnect();
 });
 
+it('retains task print corrections without changing confirmation, evidence or the employee profile', async () => {
+  server = await scenarioServer({ erpExecutor: 'paired' });
+  const scene = await scenario(server).at('actions');
+  let tenant = 'test';
+  const local = fakeLocalExecutor(server.app.executorHub, await pair(scene.client), { trySignIn: async () => ({ ok: true, employeeProfile: { status: 'ready', erpAccount: 'synthetic', tenant, name: '测试员工', department: '测试部门' } }) });
+  await local.connect();
+  await scene.client.post('/api/erp-credentials', { account: 'synthetic', password: 'test-password' });
+  const original = await scene.accept('generate-reimbursement-summary');
+  const before = original.reimbursementSummary;
+  if (before.status !== 'generated') throw new Error('missing summary');
+  const printInformation = { reimbursementDate: '2026-09-18', name: '打印姓名', department: '打印部门', billIdentifier: 'BX-463', businessTripIdentifier: 'CC-463' };
+  const edited = await scene.accept('generate-reimbursement-summary', { printInformation });
+  expect(edited.confirmation).toEqual(original.confirmation);
+  expect(edited.lines).toEqual(original.lines);
+  expect(edited.materials).toEqual(original.materials);
+  const summary = edited.reimbursementSummary;
+  if (summary.status !== 'generated') throw new Error('missing edited summary');
+  expect(summary.data).toMatchObject(printInformation);
+  expect(summary.data.rows).toEqual(before.data.rows);
+  expect((await scene.client.request(before.url)).status).toBe(404);
+  expect((await scene.client.request(before.previewUrl)).status).toBe(404);
+  expect(await (await scene.client.request(summary.previewUrl)).text()).toContain('打印姓名');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const repeated = (await scene.accept('generate-reimbursement-summary')).reimbursementSummary;
+    expect(repeated).toEqual(summary);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await (await scene.client.request(summary.url)).arrayBuffer());
+    const sheet = workbook.worksheets[0]!;
+    expect(['C4', 'F4', 'C3', 'F3'].map(cell => sheet.getCell(cell).value)).toEqual(['打印姓名', '打印部门', 'BX-463', 'CC-463']);
+    expect(sheet.getCell('I3').value).toBe(46283);
+  }
+  const cleared = (await scene.accept('generate-reimbursement-summary', { printInformation: { ...printInformation, billIdentifier: '', businessTripIdentifier: '' } })).reimbursementSummary;
+  expect(cleared.status).toBe('generated');
+  const credentials = await scene.client.request('/api/erp-credentials');
+  expect(await credentials.json()).toMatchObject({ employeeProfile: { name: '测试员工', department: '测试部门' } });
+  await scene.accept('generate-reimbursement-summary', { printInformation });
+  tenant = 'new-tenant';
+  await scene.client.post('/api/erp-credentials/test', {});
+  const refreshed = (await scene.accept('generate-reimbursement-summary')).reimbursementSummary;
+  expect(refreshed).toMatchObject({ status: 'generated', data: { name: '测试员工', department: '测试部门', employeeIdentity: { tenant: 'new-tenant' }, reimbursementDate: '2026-09-18', billIdentifier: 'BX-463', businessTripIdentifier: 'CC-463' } });
+  await scene.accept('reopen-upload');
+  expect(await scene.refused('generate-reimbursement-summary', { printInformation })).toEqual({ status: 400, code: 'not_confirmed' });
+  await local.disconnect();
+});
+
 it('uses five confirmed category amounts across projects and counts repeated voucher lines once', async () => {
   const preset = presetParser();
   server = await scenarioServer({ erpExecutor: 'paired', parser: {
@@ -138,7 +183,7 @@ it('refuses failed identity retrieval, retries, and persists the current summary
   expect(await scene.refused('generate-reimbursement-summary')).toEqual({ status: 400, code: 'employee_profile_unavailable' });
   expect((await scene.snapshot()).reimbursementSummary.status).toBe('ready');
   fail = false;
-  const generated = (await scene.accept('generate-reimbursement-summary')).reimbursementSummary;
+  const generated = (await scene.accept('generate-reimbursement-summary', { printInformation: { reimbursementDate: '2026-09-18', name: '持久打印姓名', department: '持久打印部门', billIdentifier: '', businessTripIdentifier: '' } })).reimbursementSummary;
   if (generated.status !== 'generated') throw new Error('missing summary');
   const original = await (await scene.client.request(generated.url)).arrayBuffer();
   local.disconnect();

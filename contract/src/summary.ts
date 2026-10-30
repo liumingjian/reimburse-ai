@@ -11,6 +11,15 @@ export const SummaryInputSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('stay-days'), lineId: z.string(), label: z.string(), date: DateSchema }),
 ]);
 export type SummaryInput = z.infer<typeof SummaryInputSchema>;
+export const SummaryPrintInformationSchema = z.object({
+  reimbursementDate: DateSchema.refine(value => {
+    const date = new Date(`${value}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, '请输入有效的报销日期'),
+  name: z.string().trim().min(1).max(100), department: z.string().trim().min(1).max(200),
+  billIdentifier: z.string().trim().max(100), businessTripIdentifier: z.string().trim().max(100),
+});
+export type SummaryPrintInformation = z.infer<typeof SummaryPrintInformationSchema>;
 export const SummaryDataSchema = z.object({
   employeeIdentity: z.object({ erpAccount: z.string(), tenant: z.string() }),
   reimbursementDate: DateSchema, name: z.string(), department: z.string(),

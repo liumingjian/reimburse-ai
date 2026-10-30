@@ -1,7 +1,7 @@
 import { loadResolutions, summaryInputs } from './summary/resolutions';
 import type { SummaryResolution } from '@baox/contract';
 import { summaryPreview } from './summary/preview';
-import { SummaryDataSchema, type EmployeeProfileView } from '@baox/contract';
+import { SummaryDataSchema, type SummaryPrintInformation, type EmployeeProfileView } from '@baox/contract';
 import { summaryData } from './summary/data';
 import { summaryWorkbook } from './summary/workbook';
 import { createHash, randomUUID } from 'node:crypto';
@@ -196,7 +196,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     });
   }
 
-  async function generateReimbursementSummary(taskId: string): Promise<TaskSnapshot> {
+  async function generateReimbursementSummary(taskId: string, printInformation?: SummaryPrintInformation): Promise<TaskSnapshot> {
     const task = await taskRow(db, taskId);
     const loaded = await loadFacts(db, task);
     const admission = taskPolicy(loaded.facts, loaded.erp).admit('summary', null);
@@ -205,10 +205,14 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     if (current.status === 'unavailable') throw new ActionRefusedError({ code: 'summary_inputs_unresolved', message: current.reasons.join('；') }, await snapshot(taskId));
     const profile = await ensureProfile?.(accountId);
     if (!profile || profile.status !== 'ready') throw new ActionRefusedError({ code: 'employee_profile_unavailable', message: profile?.status === 'failed' ? profile.message : '请在设置中重试获取员工信息。' }, await snapshot(taskId));
-    if (current.status === 'generated' && current.data.name === profile.name && current.data.department === profile.department && current.data.employeeIdentity.erpAccount === profile.erpAccount && current.data.employeeIdentity.tenant === profile.tenant) return snapshot(taskId);
-    const prior = await db.selectFrom('reimbursement_summary').select('data').where('task_id', '=', taskId).orderBy('revision', 'desc').executeTakeFirst();
-    const date = prior ? SummaryDataSchema.parse(JSON.parse(prior.data)).reimbursementDate : new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
-    const data = summaryData(loaded.lines, profile, date, await loadResolutions(db, taskId, loaded.confirmed?.revision ?? 0));
+    const prior = await db.selectFrom('reimbursement_summary').select('data').where('task_id', '=', taskId).where('account_id', '=', accountId).orderBy('revision', 'desc').executeTakeFirst();
+    const previous = prior ? SummaryDataSchema.parse(JSON.parse(prior.data)) : null;
+    const date = previous?.reimbursementDate ?? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
+    const retained = previous && previous.employeeIdentity.erpAccount === profile.erpAccount && previous.employeeIdentity.tenant === profile.tenant
+      ? { name: previous.name, department: previous.department } : {};
+    const printDefaults = { reimbursementDate: date, billIdentifier: previous?.billIdentifier ?? '', businessTripIdentifier: previous?.businessTripIdentifier ?? '' };
+    const data = { ...summaryData(loaded.lines, profile, date, await loadResolutions(db, taskId, loaded.confirmed?.revision ?? 0)), ...printDefaults, ...retained, ...printInformation };
+    if (current.status === 'generated' && JSON.stringify(current.data) === JSON.stringify(data)) return snapshot(taskId);
     const bytes = await summaryWorkbook(data);
     const sha256 = writeBlob(dataDir, bytes);
     return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, at, revision }) => {

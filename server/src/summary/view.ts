@@ -15,6 +15,6 @@ export async function loadSummary(db: Db, taskId: string, accountId: string, con
   const data = SummaryDataSchema.parse(JSON.parse(stored.data));
   const credential = await db.selectFrom('erp_credential').select(['employee_profile', 'erp_account']).where('account_id', '=', accountId).executeTakeFirst();
   const profile = EmployeeProfileViewSchema.parse(credential?.employee_profile ? JSON.parse(credential.employee_profile) : { status: 'missing' });
-  if (profile.status !== 'ready' || profile.erpAccount !== credential?.erp_account || profile.erpAccount !== data.employeeIdentity.erpAccount || profile.tenant !== data.employeeIdentity.tenant || profile.name !== data.name || profile.department !== data.department) return { status: 'ready' };
+  if (profile.status !== 'ready' || profile.erpAccount !== credential?.erp_account || profile.erpAccount !== data.employeeIdentity.erpAccount || profile.tenant !== data.employeeIdentity.tenant) return { status: 'ready' };
   return { status: 'generated', data, url: `/api/tasks/${taskId}/reimbursement-summary/${stored.summary_id}`, previewUrl: `/api/tasks/${taskId}/reimbursement-summary/${stored.summary_id}/preview`, fileName: '报销汇总表.xlsx' };
 }
