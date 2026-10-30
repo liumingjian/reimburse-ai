@@ -39,7 +39,7 @@ export async function summaryPreview(data: SummaryData): Promise<string> {
   const values = new Map<string, string>();
   for (const match of sheet.matchAll(/<c\b([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/c>)/g)) { const address = /\br="([^"]+)"/.exec(match[1] ?? '')?.[1]; const value = /<t[^>]*>([\s\S]*?)<\/t>/.exec(match[2] ?? '')?.[1]; if (address && value) values.set(address, value.replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"')); }
   values.set('C4', data.name); values.set('F4', data.department); values.set('H3', '报销日期'); values.set('I3', data.reimbursementDate); values.set('C3', data.billIdentifier); values.set('F3', data.businessTripIdentifier);
-  data.rows.forEach((row, index) => { const cells = [['F6','D6'], ['F7','D7'], ['F8','D8'], ['K6','I6'], ['F9','D9']][index]; if (cells && (row.voucherCount || Number(row.amount))) { values.set(cells[0]!, row.amount); values.set(cells[1]!, String(row.voucherCount)); } if (row.days) values.set('E6', String(row.days)); });
+  data.rows.forEach((row, index) => { const cells = [['F6','D6'], ['F7','D7'], ['F8','D8'], ['K6','I6'], ['F9','D9']][index]; if (cells && (row.voucherCount || Number(row.amount))) { values.set(cells[0]!, row.amount); values.set(cells[1]!, String(row.voucherCount)); } if (row.days !== null && (row.voucherCount || Number(row.amount))) values.set('E6', String(row.days)); });
   values.set('D17', data.total); values.set('B18', uppercase(data.total));
   const merges = [...sheet.matchAll(/<mergeCell ref="([^"]+)"\s*\/>/g)].map(match => { const [a = 'A1', b = a] = match[1]!.split(':'); return { start: point(a), end: point(b) }; });
   const sum = (sizes: number[], end: number) => sizes.slice(0, end).reduce((a,b) => a+b, 0);
