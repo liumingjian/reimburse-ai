@@ -33,7 +33,7 @@ export function createErpFlow(bus: MockBus, paired: () => boolean): ErpFlow {
     const current = bus.draft(taskId);
     if (!erpRunLive(current, run, 'running')) return;
     current.task.updatedAt = bus.now();
-    // `?fault=catalog-mismatch`: the catalog step finds a project renamed in the ERP. Nothing was imported; like the
+    // `?fault=catalog-mismatch`: the catalog step cannot find the project in the ERP. Nothing was imported; like the
     // server, the job ends, the ERP view is idle again and the task goes back to project assignment (项目归属) with the
     // catalog problems. The confirmation stands until the assignment changes.
     const mismatch = index === ERP_STEP_INDEX.catalog && options.fault === 'catalog-mismatch' ? catalogMismatch(current.projectAssignment) : null;

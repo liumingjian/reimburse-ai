@@ -146,7 +146,7 @@ test('弹层打开时也没有英文文案（动过报销系统的作废确认�
   // 「归入项目」面板的 Carbon 搜索框：占位文字与输入后出现的清除按钮都是中文。
   const assignPanel = page.getByRole('complementary', { name: '归入项目' });
   const search = assignPanel.getByRole('searchbox', { name: '查找项目' });
-  await expect(search).toHaveAttribute('placeholder', '搜项目号或名称');
+  await expect(search).toHaveAttribute('placeholder', '搜项目序号或项目号');
   await search.fill('没有这个项目');
   await expect(assignPanel.getByRole('button', { name: '清除查找' })).toBeVisible();
   await expect(assignPanel.getByText('没有匹配的项目')).toBeVisible();
