@@ -32,13 +32,13 @@ test('正常路径：提交项目归属后直接进入整单确认，没有核�
   await page.screenshot({ path: testInfo.outputPath('review-after-submit.png'), fullPage: true });
 });
 
-test('?fault=catalog-mismatch：去报销时报销信息核对发现项目改了名，导入之前停下，回到项目归属；改派后重新提交回到整单确认', async ({ page }, testInfo) => {
+test('?fault=catalog-mismatch：去报销时报销信息核对发现项目查不到，导入之前停下，回到项目归属；改派后重新提交回到整单确认', async ({ page }, testInfo) => {
   await page.goto(open('?seed=actions&fault=catalog-mismatch', '#/task/T1/review'));
   await page.getByRole('button', { name: '去报销', exact: true }).click();
   // The job stops at its catalog step; the ERP page closes and points back to the task's current stage.
   await page.getByRole('link', { name: '回到当前阶段' }).click();
   await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-  await expect(page.getByRole('alert').filter({ hasText: '项目 P-2307 在报销系统里的名称是「改过名的项目」' })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: '项目 P-2307「华东客户交付」在报销系统里查不到' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('catalog-mismatch.png'), fullPage: true });
 
   await reassign(page, [7, 8, 9], 'P-1180 内部培训');

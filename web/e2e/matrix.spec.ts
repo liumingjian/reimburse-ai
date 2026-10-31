@@ -79,13 +79,13 @@ const FAULT_SCENARIOS: Readonly<Record<Fault, (page: Page) => Promise<void>>> = 
     await expect(page.getByText('还剩 5 个')).toBeVisible();
     await expect(page.getByLabel('待确认项清单').getByRole('button', { name: /曹操出行_行程单\.pdf/ })).toBeVisible();
   },
-  // The catalog is checked inside the ERP job: a renamed project stops it before anything is imported, and the task
+  // The catalog is checked inside the ERP job: a missing project stops it before anything is imported, and the task
   // is back at project assignment (项目归属) with the problem shown.
   'catalog-mismatch': async (page) => {
     await startErp(page, 'catalog-mismatch');
     await page.getByRole('link', { name: '回到当前阶段' }).click();
     await expect(page).toHaveURL(/#\/task\/T1\/project$/);
-    await expect(page.getByRole('alert').filter({ hasText: '改过名的项目' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: '项目 P-2307「华东客户交付」在报销系统里查不到' })).toBeVisible();
   },
   'erp-write-aborted': async (page) => {
     await startErp(page, 'erp-write-aborted');
