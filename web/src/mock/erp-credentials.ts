@@ -3,7 +3,7 @@ import type { ErpCredentialsOutcome, ErpCredentialsView, SaveErpCredentialsInput
 // ERP 凭据 as the mock server plays them. There is no 本地执行器 in the mock, so every 试登录 succeeds except for the
 // password `wrong`, which ERP "refuses": the password is dropped, as on the server.
 
-const NONE: ErpCredentialsView = { available: true, status: 'none', erpAccount: null, savedAt: null, checkedAt: null, message: null };
+const NONE: ErpCredentialsView = { employeeProfile: { status: 'missing' }, available: true, status: 'none', erpAccount: null, savedAt: null, checkedAt: null, message: null };
 
 export type ErpCredentialsFlow = {
   getErpCredentials(): Promise<ErpCredentialsView>;

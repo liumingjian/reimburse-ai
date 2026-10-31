@@ -163,28 +163,28 @@ const judged = (bucket: ReconcileBucket, action: '原地等待' | '转人工', e
 // Every task action the policy admits, per ERP phase and 对账 verdict. These are the snapshot's `allowedActions`: the
 // buttons the pages show and the page gate, the 重新去报销 path and 任务作废 all read this one answer.
 describe('taskPolicy: allowed actions by ERP phase', () => {
-  const beforeErp: TaskAction[] = ['upload', 'reopen_upload', 'exclude_material', 'answer_pending', 'set_home_city', 'assign_project_lines', 'submit_project_assignment', 'start_erp_write', 'print', 'void_task'];
+  const beforeErp: TaskAction[] = ['upload', 'reopen_upload', 'exclude_material', 'answer_pending', 'set_home_city', 'assign_project_lines', 'submit_project_assignment', 'start_erp_write', 'print', 'summary', 'void_task'];
   const unknown = { ...confirmed, erp: job('unknown') };
   it.each<[string, Partial<TaskFacts>, Partial<ErpRecord>, TaskAction[]]>([
     ['confirmed, no job yet: 去报销 and every change before it', confirmed, {}, beforeErp],
     ['a fill job running: nothing, not even 作废', { ...confirmed, erp: job('running') }, {}, []],
     ['aborted before any attempt: as before 去报销', { ...confirmed, erp: job('aborted') }, {}, beforeErp],
-    ['an attempt without a write result: frozen, print and 作废 remain', { ...confirmed, erp: job('aborted') }, { attempted: true }, ['print', 'void_task']],
+    ['an attempt without a write result: frozen, print and 作废 remain', { ...confirmed, erp: job('aborted') }, { attempted: true }, ['print', 'summary', 'void_task']],
     ['a catalog mismatch: reassign, no 去报销 until resubmitted', { ...confirmed, erp: job('catalog_mismatch', { reassign: true }) }, {}, beforeErp.filter((action) => action !== 'start_erp_write')],
-    ['write result unknown, not read yet: 开始对账 or 转人工', unknown, { attempted: true }, ['reconcile', 'hand_off', 'print', 'void_task']],
-    ['对账 says 原地等待: 重新对账 or 转人工', unknown, { attempted: true, ...judged('未知', '原地等待') }, ['reconcile', 'hand_off', 'print', 'void_task']],
-    ['对账 says 转人工: only 转人工', unknown, { attempted: true, ...judged('不自洽', '转人工') }, ['hand_off', 'print', 'void_task']],
-    ['imported, not filled, no 单据编号: 重新去报销 or 转人工', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工') }, ['hand_off', 'refill', 'print', 'void_task']],
-    ['imported, not filled, a 单据编号 read: only 转人工', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工', { billNo: 'BX-1' }) }, ['hand_off', 'print', 'void_task']],
-    ['the fill result carried a 单据编号: no 重新去报销', unknown, { attempted: true, result: { type: 'result', status: 'unknown', code: null, message: null, billNo: 'BX-1', capture: null }, ...judged('未保存·已导入未写明细', '转人工') }, ['hand_off', 'print', 'void_task']],
-    ['no 费用报销单 open: 重新去报销, 重新对账 or 转人工', unknown, { attempted: true, ...judged('未知', '原地等待', { noForm: true }) }, ['reconcile', 'hand_off', 'refill', 'print', 'void_task']],
-    ['after 暂存, not looked up yet: 开始对账 or 转人工, never 重新去报销', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true }, ['reconcile', 'hand_off', 'print', 'void_task']],
-    ['after 暂存, the lookup got no answer: 重新对账 or 转人工', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '原地等待', { draft: { outcome: 'unread', draftId: null, found: 0 } }) }, ['reconcile', 'hand_off', 'print', 'void_task']],
-    ['after 暂存, no draft found: only 转人工, not 重新去报销 even with no form', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '转人工', { noForm: true, draft: { outcome: 'none', draftId: null, found: 0 } }) }, ['hand_off', 'print', 'void_task']],
+    ['write result unknown, not read yet: 开始对账 or 转人工', unknown, { attempted: true }, ['reconcile', 'hand_off', 'print', 'summary', 'void_task']],
+    ['对账 says 原地等待: 重新对账 or 转人工', unknown, { attempted: true, ...judged('未知', '原地等待') }, ['reconcile', 'hand_off', 'print', 'summary', 'void_task']],
+    ['对账 says 转人工: only 转人工', unknown, { attempted: true, ...judged('不自洽', '转人工') }, ['hand_off', 'print', 'summary', 'void_task']],
+    ['imported, not filled, no 单据编号: 重新去报销 or 转人工', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工') }, ['hand_off', 'refill', 'print', 'summary', 'void_task']],
+    ['imported, not filled, a 单据编号 read: only 转人工', unknown, { attempted: true, ...judged('未保存·已导入未写明细', '转人工', { billNo: 'BX-1' }) }, ['hand_off', 'print', 'summary', 'void_task']],
+    ['the fill result carried a 单据编号: no 重新去报销', unknown, { attempted: true, result: { type: 'result', status: 'unknown', code: null, message: null, billNo: 'BX-1', capture: null }, ...judged('未保存·已导入未写明细', '转人工') }, ['hand_off', 'print', 'summary', 'void_task']],
+    ['no 费用报销单 open: 重新去报销, 重新对账 or 转人工', unknown, { attempted: true, ...judged('未知', '原地等待', { noForm: true }) }, ['reconcile', 'hand_off', 'refill', 'print', 'summary', 'void_task']],
+    ['after 暂存, not looked up yet: 开始对账 or 转人工, never 重新去报销', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true }, ['reconcile', 'hand_off', 'print', 'summary', 'void_task']],
+    ['after 暂存, the lookup got no answer: 重新对账 or 转人工', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '原地等待', { draft: { outcome: 'unread', draftId: null, found: 0 } }) }, ['reconcile', 'hand_off', 'print', 'summary', 'void_task']],
+    ['after 暂存, no draft found: only 转人工, not 重新去报销 even with no form', { ...confirmed, erp: job('unknown', { drafting: true }) }, { attempted: true, ...judged('未知', '转人工', { noForm: true, draft: { outcome: 'none', draftId: null, found: 0 } }) }, ['hand_off', 'print', 'summary', 'void_task']],
     ['a 对账 job running: nothing, not even 作废', { ...confirmed, erp: job('unknown', { reconciling: true }) }, { attempted: true }, []],
-    ['ERP 草稿已交接: print and 作废', { ...confirmed, erp: job('drafted', { drafting: true }) }, { attempted: true }, ['print', 'void_task']],
-    ['a saved draft: print and 作废', { ...confirmed, erp: job('saved') }, { attempted: true }, ['print', 'void_task']],
-    ['转人工: print and 作废', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, { attempted: true }, ['print', 'void_task']],
+    ['ERP 草稿已交接: print and 作废', { ...confirmed, erp: job('drafted', { drafting: true }) }, { attempted: true }, ['print', 'summary', 'void_task']],
+    ['a saved draft: print and 作废', { ...confirmed, erp: job('saved') }, { attempted: true }, ['print', 'summary', 'void_task']],
+    ['转人工: print and 作废', { ...confirmed, lifecycle: 'handed_off', erp: job('unknown') }, { attempted: true }, ['print', 'summary', 'void_task']],
     ['voided: nothing', { ...confirmed, lifecycle: 'voided' }, {}, []],
     ['an imported legacy task: only 作废', { lifecycle: 'handed_off', origin: 'legacy', legacyOutcome: 'draft_handed_over' }, {}, ['void_task']],
     ['the parser job running: nothing, not even 作废', { ...run, parse: { waiting: 1, openPendingItems: 0, blockers: [] } }, {}, []],
@@ -272,5 +272,15 @@ describe('taskPolicy: void', () => {
     ['voided already', { lifecycle: 'voided' }, {}, closed],
   ])('%s', (_name, patch, erp, admission) => {
     expect(taskPolicy(facts(patch), record(erp)).admit('void_task', null)).toEqual(admission);
+  });
+});
+
+describe('reimbursement summary eligibility', () => {
+  it.each([
+    ['unconfirmed', submitted, { code: 'not_confirmed', message: '请先完成整单明细确认。' }],
+    ['invalidated', { ...submitted, confirmation: 'invalidated' }, { code: 'not_confirmed', message: '请先完成整单明细确认。' }],
+    ['confirmed', confirmed, 'ok'],
+  ] as const)('%s', (_name, patch, expected) => {
+    expect(taskPolicy(facts(patch), NO_ERP).admit('summary', null)).toEqual(expected);
   });
 });

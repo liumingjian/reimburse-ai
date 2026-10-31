@@ -187,5 +187,12 @@
     "set_home_city",
     "print",
     "void_task"
-  ]
+  ],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "cause": "not-confirmed",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  }
 }

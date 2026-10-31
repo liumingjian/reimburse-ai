@@ -1,3 +1,5 @@
+import { loadSummary } from './summary/view';
+import type { ReimbursementSummary } from '@baox/contract';
 import type { Line, PendingAnswer } from '@baox/contract';
 import { sql } from 'kysely';
 import type { Db } from './db/database';
@@ -46,6 +48,7 @@ export type LoadedTask = {
   erp: ErpRecord;
   // 打印稿 (#190): settings, payment screenshots and the latest composed sheet.
   print: PrintFacts;
+  summary: ReimbursementSummary;
 };
 
 const viewMaterial = (row: MaterialRow): ViewMaterial => ({
@@ -182,7 +185,8 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
     }
   }
   facts.erp = erp.facts;
-  return { facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, erp, print };
+  const summary = await loadSummary(tx, task.task_id, task.account_id, facts.lifecycle === 'voided' || facts.origin === 'legacy' ? 'unconfirmed' : facts.confirmation, confirmed?.revision ?? null, lines);
+  return { summary, facts, view, runId: current?.run_id ?? null, parsed: new Set(results.map((result) => result.material_id)), homeCity, rules, assignment, legacy, lines, digest, confirmed, erp, print };
 }
 
 // Per voucher, the revision of its latest 支付截图 upload, removed since or not.

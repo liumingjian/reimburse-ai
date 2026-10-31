@@ -36,6 +36,6 @@ describe('allowed actions in the snapshot', () => {
     gate.release();
     const done = await scene.settled();
     expect(done).toMatchObject({ stage: 'done', erp: { outcome: 'drafted' } });
-    expect(done.allowedActions).toEqual(['print', 'void_task']);
+    expect(done.allowedActions).toEqual(['print', 'summary', 'void_task']);
   });
 });

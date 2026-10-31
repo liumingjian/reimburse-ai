@@ -1,3 +1,4 @@
+import { summaryInputsFixtureParser } from './parse/testing/summary-inputs';
 import { resolveDataDir } from './data-dir';
 import { cdpExecutors } from './erp/cdp-executor';
 import { catalogMismatch, drafted, noFormOpen, notSignedIn, scripted, uncertainSave, type Script } from './erp/testing/fake-executor';
@@ -19,6 +20,7 @@ const SCRIPTS: Readonly<Record<string, Script>> = { drafted, uncertain_save: unc
 
 const script = SCRIPTS[process.env['BAOX_ERP_FAKE'] ?? ''];
 const PARSERS: Readonly<Record<string, () => ReturnType<typeof invoiceVariantFixtureParser>>> = {
+  'summary-inputs': summaryInputsFixtureParser,
   'invoice-variants': invoiceVariantFixtureParser,
   'uncertain-invoice-type': uncertainInvoiceTypeFixtureParser,
 };

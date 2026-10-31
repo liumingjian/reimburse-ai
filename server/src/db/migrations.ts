@@ -817,6 +817,12 @@ const erpBrowserSettings: Migration = {
   },
 };
 
+const employeeProfile: Migration = {
+  async up(db) {
+    await db.schema.alterTable('erp_credential').addColumn('employee_profile', 'text').execute();
+  },
+};
+
 export const MIGRATIONS: Record<string, Migration> = {
   '0001_initial': initial,
   // Lexical order: 0002_180 runs before 0002_193 on a fresh or 0001-only database. Neither depends on the other.
@@ -852,4 +858,25 @@ export const MIGRATIONS: Record<string, Migration> = {
   '0024_412_install_code': installCode412,
   '0025_432_one_pairing': onePairing432,
   '0026_erp_browser_settings': erpBrowserSettings,
+  '0027_employee_profile': employeeProfile,
+  '0028_reimbursement_summary': { async up(db) {
+    await db.schema.createTable('reimbursement_summary')
+      .addColumn('summary_id', 'text', c => c.primaryKey())
+      .addColumn('task_id', 'text', c => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', c => c.notNull().references('account.account_id'))
+      .addColumn('confirmation_revision', 'integer', c => c.notNull())
+      .addColumn('data', 'text', c => c.notNull())
+      .addColumn('xlsx_sha256', 'text', c => c.notNull())
+      .addColumn('created_at', 'text', c => c.notNull())
+      .addColumn('revision', 'integer', c => c.notNull()).execute();
+    await appendOnly(db, 'reimbursement_summary');
+  } },
+  '0029_summary_resolution': { async up(db) {
+    await db.schema.createTable('summary_resolution')
+      .addColumn('task_id', 'text', c => c.notNull().references('task.task_id'))
+      .addColumn('confirmation_revision', 'integer', c => c.notNull())
+      .addColumn('revision', 'integer', c => c.notNull())
+      .addColumn('data', 'text', c => c.notNull()).execute();
+    await appendOnly(db, 'summary_resolution');
+  } },
 };

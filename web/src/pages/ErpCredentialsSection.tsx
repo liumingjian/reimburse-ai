@@ -111,6 +111,11 @@ export function ErpCredentialsSection() {
               {view.checkedAt ? `；${ERP_CREDENTIALS_COPY.checkedAt}：${formatDateTime(view.checkedAt)}` : ''}
             </p>
           ) : null}
+          {view.employeeProfile.status === 'ready' ? (
+            <p>报销汇总表员工信息：{view.employeeProfile.name}；部门：{view.employeeProfile.department}</p>
+          ) : saved ? (
+            <InlineNotification kind="warning" lowContrast hideCloseButton title={view.employeeProfile.status === 'failed' ? view.employeeProfile.message : '尚未读取报销汇总表员工信息，请重新试登录读取。'} />
+          ) : null}
           {view.message ? <InlineNotification kind={view.status === 'refused' ? 'error' : 'warning'} lowContrast hideCloseButton title={view.message} /> : null}
           {showForm ? (
             <form

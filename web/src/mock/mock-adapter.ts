@@ -269,6 +269,8 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     ...pairing.flow,
     ...createErpCredentialsFlow(),
     ...browserSettings.flow,
+    async resolveReimbursementSummary() { return bus.fail('summary_inputs_unresolved', '请先完成整单明细确认。'); },
+    async generateReimbursementSummary() { return bus.fail('employee_profile_unavailable', '请连接本地执行器后获取员工信息。'); },
     ...createPrintFlow(bus),
     ...createErpFlow(bus, pairing.paired),
   };

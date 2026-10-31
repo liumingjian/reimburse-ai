@@ -1,3 +1,4 @@
+import { ReimbursementSummarySchema } from './summary';
 import { z } from 'zod';
 import { AmountSchema, DateSchema, DateTimeSchema, IdSchema, StepTokenSchema, UrlSchema } from './primitives';
 import { TaskActionSchema, TaskStageSchema } from './stage';
@@ -1241,6 +1242,7 @@ export const TaskSnapshotSchema = z.object({
   confirmation: ConfirmationSchema,
   paymentScreenshots: z.array(PaymentScreenshotSchema),
   printSheet: PrintSheetSchema,
+  reimbursementSummary: ReimbursementSummarySchema,
   projectAssignment: ProjectAssignmentSchema,
   catalog: CatalogSchema,
   preparation: PreparationSchema,

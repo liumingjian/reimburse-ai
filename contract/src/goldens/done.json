@@ -711,6 +711,10 @@
   },
   "allowedActions": [
     "print",
+    "summary",
     "void_task"
-  ]
+  ],
+  "reimbursementSummary": {
+    "status": "ready"
+  }
 }

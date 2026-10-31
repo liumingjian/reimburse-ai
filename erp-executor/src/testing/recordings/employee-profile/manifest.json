@@ -1,0 +1,138 @@
+{
+  "flow": "employee-profile",
+  "name": "employee-profile",
+  "description": "Read-only personal information from the user menu; no reimbursement form is opened or edited.",
+  "command": "pnpm --filter @baox/erp-executor probe employee-profile --record employee-profile --reuse-login-recording new-form",
+  "recordedAt": "2026-10-30",
+  "erpBuild": "8.2.830.9",
+  "result": {
+    "read": true
+  },
+  "loggedOut": {
+    "name": "login",
+    "file": "login.html",
+    "url": "http://erp.antute.com.cn/k3cloud/html5/index.aspx",
+    "title": "金蝶云星空",
+    "viewport": {
+      "width": 2048,
+      "height": 937,
+      "devicePixelRatio": 2
+    },
+    "resVer": "?ver=8.2.830.9",
+    "loginInfo": null,
+    "frames": [],
+    "count": 101,
+    "pruned": 97
+  },
+  "loginSource": "new-form",
+  "pages": [
+    {
+      "name": "page-1",
+      "file": "01-page-1.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 1200,
+        "height": 685,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [
+        {
+          "path": "iframe#992544a4-5353-46ca-ae50-b51076de47c2-FPANELWEBBROWSE-FPANELWEBBROWSE",
+          "src": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+          "box": [
+            19,
+            77,
+            1159,
+            606
+          ]
+        }
+      ],
+      "count": 141,
+      "pruned": 1179,
+      "click": {
+        "tag": "span",
+        "id": "",
+        "controlId": "06ed9144-8b9e-4daf-988e-11c8cb6f1828-FBTNUSER-FBTNUSER",
+        "text": "{{DISPLAY_NAME}}"
+      }
+    },
+    {
+      "name": "page-2",
+      "file": "02-page-2.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 1200,
+        "height": 685,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [
+        {
+          "path": "iframe#992544a4-5353-46ca-ae50-b51076de47c2-FPANELWEBBROWSE-FPANELWEBBROWSE",
+          "src": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+          "box": [
+            19,
+            77,
+            1159,
+            606
+          ]
+        }
+      ],
+      "count": 194,
+      "pruned": 1126,
+      "click": {
+        "tag": "span",
+        "id": "06ed9144-8b9e-4daf-988e-11c8cb6f1828-FBTNUSER-tbPersonInfo",
+        "controlId": "06ed9144-8b9e-4daf-988e-11c8cb6f1828-FBTNUSER-tbPersonInfo",
+        "text": "个人信息（{{DISPLAY_NAME}}）"
+      }
+    },
+    {
+      "name": "employee-profile",
+      "file": "03-employee-profile.html",
+      "url": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+      "title": "金蝶云星空",
+      "viewport": {
+        "width": 1200,
+        "height": 685,
+        "devicePixelRatio": 2
+      },
+      "resVer": "?ver=8.2.830.9",
+      "loginInfo": {
+        "user": "{{ACCOUNT}}",
+        "lan": "＊",
+        "acc": "{{TENANT}}",
+        "ver": "＊"
+      },
+      "frames": [
+        {
+          "path": "iframe#992544a4-5353-46ca-ae50-b51076de47c2-FPANELWEBBROWSE-FPANELWEBBROWSE",
+          "src": "http://erp.antute.com.cn/k3cloud/html5/dform.aspx",
+          "box": [
+            19,
+            77,
+            1159,
+            606
+          ]
+        }
+      ],
+      "count": 338,
+      "pruned": 1207
+    }
+  ]
+}

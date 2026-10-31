@@ -64,7 +64,7 @@ function batchFiles(batchId: string, materials: readonly MaterialRow[], rejectio
   return entries.sort((a, b) => a.order - b.order).map((entry) => entry.file);
 }
 
-export function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed, erp, print }: LoadedTask, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
+export function projectSnapshot(task: TaskTable, { facts, view, homeCity, assignment, legacy, lines, digest, confirmed, erp, print, summary }: LoadedTask, batches: readonly UploadBatchTable[], rejections: readonly UploadRejectionTable[], materials: readonly MaterialRow[]): TaskSnapshot {
   const { stage, step, blockers, allowedActions } = taskPolicy(facts, erp);
   // A batch that added a material formed the next inventory version.
   const versionOf = new Map<string, string>();
@@ -88,6 +88,7 @@ export function projectSnapshot(task: TaskTable, { facts, view, homeCity, assign
     pendingItems: withScreenshotGroups(view.pendingItems, print, screenshotsLocked(facts.confirmation, erp.attempted)),
     blockers,
     lines,
+    reimbursementSummary: summary,
     lodgingEvidence: projectLodgingEvidence({ materials: snapshotMaterials, lines }),
     confirmation: confirmationView(digest, confirmed, facts.lastReopenRevision, lines) satisfies Confirmation,
     ...printView(task.task_id, task.name, print, sheetState(print, facts.confirmation, confirmed?.revision ?? null), view.trios),

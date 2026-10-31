@@ -1,3 +1,4 @@
+import { SummaryResolutionSchema, SummaryPrintInformationSchema } from '@baox/contract';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { ADMIN_ERRORS, AssignProjectLinesInputSchema, ConfirmReviewInputSchema, CreateTaskInputSchema, CropInputSchema, PlacementSlotSchema, INVOICE_BLOB_PATH, PAIRING_PATH, PAIRING_ERRORS, FORBIDDEN_CODE, ERP_ACTION_ERRORS, ERP_CREDENTIAL_ERRORS, ERP_CREDENTIALS_MISSING_CODE, ERP_IN_USE_CODE, EXECUTOR_OFFLINE_CODE, PendingAnswerSchema, ProjectAssignmentInputSchema, ProjectBookEditInputSchema, ProjectBookIntakeInputSchema, ProjectBookLifecycleInputSchema, PublicProjectConversionInputSchema, SetHomeCityInputSchema, SNAPSHOT_EVENT, STALE_STEP_CODE, STALE_STEP_HTTP_STATUS, STALE_STEP_NOTICE, UPLOAD_MAX_FILE_BYTES, UPLOAD_REJECT_MESSAGES, type ProjectBookResult, type TaskSnapshot } from '@baox/contract';
@@ -150,7 +151,7 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
   };
   // Every task service is scoped to one account; the parser job gets the owner's service for each task it drives.
   const serviceFor = (accountId: string) =>
-    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: erpService });
+    createTaskService(db, dataDir, accountId, { onChange: (snapshot) => publish(snapshot, accountId), erp: erpService, ensureProfile: erpCredentials.ensureProfile });
   // A restart ends every ERP job the old process ran: each gets its result before any request is served (a fill with
   // a durable attempt -> reconcile; never a replay). Recovery itself is a background write and therefore runs only
   // while the durable barrier is open. A closed barrier with unfinished jobs becomes durable `unknown`, rather than
@@ -472,6 +473,16 @@ export function createApp({ db, dataDir, webDist = null, now = () => new Date(),
     return c.body(readFileSync(found.path), 200, { 'Content-Type': servedType(found.mime), 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': NOSNIFF });
   });
 
+  // Current summary URLs are revocable and never use the immutable file route.
+  app.get('/api/tasks/:id/reimbursement-summary/:summaryId/preview', async c => {
+    const svg = await tasksOf(c).reimbursementSummaryPreview(c.req.param('id'), c.req.param('summaryId'));
+    return svg ? c.body(svg, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store', 'X-Content-Type-Options': NOSNIFF }) : failure(c, 404, 'not_found', '没有当前报销汇总表。');
+  });
+  app.get('/api/tasks/:id/reimbursement-summary/:summaryId', async c => {
+    const path = await tasksOf(c).reimbursementSummaryFile(c.req.param('id'), c.req.param('summaryId'));
+    if (!path || !existsSync(path)) return failure(c, 404, 'not_found', '没有当前报销汇总表。');
+    return c.body(readFileSync(path), 200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': "attachment; filename*=UTF-8''%E6%8A%A5%E9%94%80%E6%B1%87%E6%80%BB%E8%A1%A8.xlsx", 'Cache-Control': 'no-store' });
+  });
   // The cropped screenshot of ERP's error dialog when the write stopped (`reconcile.capture.screenshotUrl`).
   app.get('/api/tasks/:id/erp-capture', async (c) => {
     const png = await tasksOf(c).erpCapture(c.req.param('id'));
@@ -597,6 +608,8 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   // account's job never refuses this one (ADR-0019).
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),
   // 去打印 (#190): print settings only, without a stepToken (contract); see `printChange` in tasks.ts.
+  'resolve-reimbursement-summary': taskAction(SummaryResolutionSchema, (tasks, id, input) => tasks.resolveReimbursementSummary(id, input)),
+  'generate-reimbursement-summary': taskAction(z.object({ printInformation: SummaryPrintInformationSchema.optional() }), (tasks, id, input) => tasks.generateReimbursementSummary(id, input.printInformation)),
   'generate-print-sheet': taskAction(z.object({}), (tasks, id) => tasks.generatePrintSheet(id)),
   'rotate-placement': taskAction(z.object({ pageId: z.string().min(1), slot: PlacementSlotSchema, rotate: z.boolean() }), (tasks, id, { pageId, slot, rotate }) => tasks.rotatePlacement(id, pageId, slot, rotate)),
   'crop-placement': taskAction(CropInputSchema, (tasks, id, { pageId, slot, corners }) => tasks.cropPlacement(id, pageId, slot, corners)),

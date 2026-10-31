@@ -152,3 +152,17 @@ describe('设置页：只有本地执行器', () => {
     expect(copy).not.toMatch(/ERP|Node|重试|扩展|[\u2013\u2014]/);
   });
 });
+
+describe('设置页：报销汇总表员工信息', () => {
+  test('展示已保存的姓名和部门，读取失败时可通过试登录重试', async () => {
+    const adapter = createMockAdapter({ seed: 'actions', fault: null });
+    const credentials = { available: true, status: 'authorised' as const, erpAccount: 'tester', savedAt: '2026-10-31T00:00:00Z', checkedAt: '2026-10-31T00:00:00Z', message: null };
+    adapter.getErpCredentials = async () => ({ ...credentials, employeeProfile: { status: 'failed', message: '员工信息读取失败，请重新试登录。' } });
+    adapter.testErpCredentials = async () => ({ ok: true, credentials: { ...credentials, employeeProfile: { status: 'ready', erpAccount: 'tester', tenant: '测试账套', name: '测试员工', department: '末条任职部门', retrievedAt: '2026-10-31T00:00:00Z' } } });
+    window.location.hash = '/settings';
+    render(<App adapter={adapter} />);
+    expect(await screen.findByText('员工信息读取失败，请重新试登录。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: ERP_CREDENTIALS_COPY.test }));
+    expect(await screen.findByText('报销汇总表员工信息：测试员工；部门：末条任职部门')).toBeTruthy();
+  });
+});

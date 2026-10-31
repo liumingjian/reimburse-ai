@@ -46,8 +46,8 @@ export const invoiceBlobPath = (sha256: string): string => `${INVOICE_BLOB_PATH}
 //
 // Raise MINIMUM_EXECUTOR_VERSION (and EXECUTOR_VERSION with it) when a change is one an older 本地执行器 must not be
 // allowed to run; installed executors update themselves to the server's program (ADR-0035).
-export const EXECUTOR_VERSION = '1.2.0';
-export const MINIMUM_EXECUTOR_VERSION = '1.2.0';
+export const EXECUTOR_VERSION = '1.3.0';
+export const MINIMUM_EXECUTOR_VERSION = '1.3.0';
 
 // Dotted numbers only, the shape `manifest.json` allows. Returns <0, 0 or >0 like any comparator; a missing part
 // counts as 0, so `1.2` and `1.2.0` are the same version.

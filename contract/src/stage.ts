@@ -139,6 +139,7 @@ export const TASK_ACTIONS = [
   'hand_off',
   'refill',
   'print',
+  'summary',
   'void_task',
 ] as const;
 export const TaskActionSchema = z.enum(TASK_ACTIONS);

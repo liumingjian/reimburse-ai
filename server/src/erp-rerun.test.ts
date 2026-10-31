@@ -32,7 +32,7 @@ async function executor(scripts: FillRunner[]): Promise<FakeLocalExecutor> {
   });
   let run = 0;
   const localExecutor = fakeLocalExecutor(server.app.executorHub, PairingTokenSchema.parse(await redeemed.json()).token, {
-    trySignIn: async () => ({ ok: true }),
+    trySignIn: async () => ({ ok: true, employeeProfile: { status: 'failed', message: 'Synthetic executor has no personal-information page.' } }),
     fill: (plan, channel, trigger) => scripts[Math.min(run++, scripts.length - 1)]!(plan, channel, trigger),
   });
   await localExecutor.connect();

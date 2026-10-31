@@ -1,3 +1,9 @@
+import { loadResolutions, summaryInputs } from './summary/resolutions';
+import type { SummaryResolution } from '@baox/contract';
+import { summaryPreview } from './summary/preview';
+import { SummaryDataSchema, type SummaryPrintInformation, type EmployeeProfileView } from '@baox/contract';
+import { summaryData } from './summary/data';
+import { summaryWorkbook } from './summary/workbook';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
@@ -144,7 +150,7 @@ export const AUTO_RERUN_LIMIT = 2;
 // Results the server, not the executor, gave the job: the run may still hold the page, so nothing starts over on it.
 const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECONNECT_EXPIRED_CODE, REOBSERVATION_MISMATCH_CODE, EXECUTOR_OFFLINE_CODE, EXECUTOR_CONNECTION_LOST_CODE]);
 
-export type TaskServiceOptions = { onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
+export type TaskServiceOptions = { ensureProfile?: (accountId: string) => Promise<EmployeeProfileView>; onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 
 async function excludeOnce(tx: Tx, taskId: string, accountId: string, materialId: string, revision: number, at: string): Promise<void> {
   const existing = await tx.selectFrom('material_exclusion').select('exclusion_id').where('material_id', '=', materialId).executeTakeFirst();
@@ -153,7 +159,7 @@ async function excludeOnce(tx: Tx, taskId: string, accountId: string, materialId
 
 // Scoped to one account: every read and write sees only that account's tasks (ADR-0018). Another account's task is
 // indistinguishable from a missing one.
-export function createTaskService(db: Db, dataDir: string, accountId: string, { onChange = () => {}, erp }: TaskServiceOptions = {}) {
+export function createTaskService(db: Db, dataDir: string, accountId: string, { onChange = () => {}, erp, ensureProfile }: TaskServiceOptions = {}) {
   async function taskRow(tx: Tx, taskId: string): Promise<TaskTable> {
     const row = await tx.selectFrom('task').selectAll().where('task_id', '=', taskId).where('account_id', '=', accountId).executeTakeFirst();
     if (!row) throw new TaskNotFoundError(taskId);
@@ -170,7 +176,50 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     const task = await taskRow(db, taskId);
     const { batches, rejections } = await uploadHistory(db, taskId);
     const materials = await materialRows(db, taskId);
-    return projectSnapshot(task, await loadFacts(db, task, materials), batches, rejections, materials);
+    const loaded = await loadFacts(db, task, materials);
+    return projectSnapshot(task, loaded, batches, rejections, materials);
+  }
+
+  async function resolveReimbursementSummary(taskId: string, input: SummaryResolution): Promise<TaskSnapshot> {
+    const task = await taskRow(db, taskId);
+    return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, revision, loaded }) => {
+      const confirmedRevision = loaded.confirmed?.revision;
+      if (confirmedRevision !== input.confirmationRevision) throw new ActionRefusedError({ code: 'stale_summary_resolution', message: '整单确认已变化，请刷新后重新填写。' });
+      const empty = { confirmationRevision: input.confirmationRevision, voucherCounts: [], stayDays: [] };
+      const applicable = summaryInputs(loaded.lines, empty);
+      const validVouchers = input.voucherCounts.every(choice => applicable.some(item => item.kind === 'voucher-count' && item.voucherMaterialId === choice.voucherMaterialId && item.categories.includes(choice.category)));
+      const validStays = input.stayDays.every(choice => applicable.some(item => item.kind === 'stay-days' && item.lineId === choice.lineId));
+      if (!validVouchers || !validStays || new Set(input.voucherCounts.map(c => c.voucherMaterialId)).size !== input.voucherCounts.length || new Set(input.stayDays.map(c => c.lineId)).size !== input.stayDays.length) throw new ActionRefusedError({ code: 'invalid_summary_resolution', message: '张数归属或住宿天数不适用于当前确认明细。' });
+      const prior = await loadResolutions(tx, taskId, input.confirmationRevision);
+      const data: SummaryResolution = { confirmationRevision: input.confirmationRevision, voucherCounts: [...prior.voucherCounts.filter(c => !input.voucherCounts.some(next => next.voucherMaterialId === c.voucherMaterialId)), ...input.voucherCounts], stayDays: [...prior.stayDays.filter(c => !input.stayDays.some(next => next.lineId === c.lineId)), ...input.stayDays] };
+      await tx.insertInto('summary_resolution').values({ task_id: taskId, confirmation_revision: input.confirmationRevision, revision, data: JSON.stringify(data) }).execute();
+    });
+  }
+
+  async function generateReimbursementSummary(taskId: string, printInformation?: SummaryPrintInformation): Promise<TaskSnapshot> {
+    const task = await taskRow(db, taskId);
+    const loaded = await loadFacts(db, task);
+    const admission = taskPolicy(loaded.facts, loaded.erp).admit('summary', null);
+    if (admission !== 'ok' && admission !== 'stale') throw new ActionRefusedError({ code: admission.code, message: admission.message }, await snapshot(taskId));
+    const current = loaded.summary;
+    if (current.status === 'unavailable') throw new ActionRefusedError({ code: 'summary_inputs_unresolved', message: current.reasons.join('；') }, await snapshot(taskId));
+    const profile = await ensureProfile?.(accountId);
+    if (!profile || profile.status !== 'ready') throw new ActionRefusedError({ code: 'employee_profile_unavailable', message: profile?.status === 'failed' ? profile.message : '请在设置中重试获取员工信息。' }, await snapshot(taskId));
+    const prior = await db.selectFrom('reimbursement_summary').select('data').where('task_id', '=', taskId).where('account_id', '=', accountId).orderBy('revision', 'desc').executeTakeFirst();
+    const previous = prior ? SummaryDataSchema.parse(JSON.parse(prior.data)) : null;
+    const date = previous?.reimbursementDate ?? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
+    const retained = previous && previous.employeeIdentity.erpAccount === profile.erpAccount && previous.employeeIdentity.tenant === profile.tenant
+      ? { name: previous.name, department: previous.department } : {};
+    const printDefaults = { reimbursementDate: date, billIdentifier: previous?.billIdentifier ?? '', businessTripIdentifier: previous?.businessTripIdentifier ?? '' };
+    const data = { ...summaryData(loaded.lines, profile, date, await loadResolutions(db, taskId, loaded.confirmed?.revision ?? 0)), ...printDefaults, ...retained, ...printInformation };
+    if (current.status === 'generated' && JSON.stringify(current.data) === JSON.stringify(data)) return snapshot(taskId);
+    const bytes = await summaryWorkbook(data);
+    const sha256 = writeBlob(dataDir, bytes);
+    return mutate(taskId, stepToken(task.task_id, task.revision), 'summary', async ({ tx, at, revision }) => {
+      const credential = await tx.selectFrom('erp_credential').select('employee_profile').where('account_id', '=', accountId).executeTakeFirst();
+      if (credential?.employee_profile !== JSON.stringify(profile)) throw new ActionRefusedError({ code: 'employee_profile_changed', message: '员工信息已变化，请重新生成报销汇总表。' });
+      await tx.insertInto('reimbursement_summary').values({ summary_id: randomUUID(), task_id: taskId, account_id: accountId, confirmation_revision: loaded.confirmed?.revision ?? 0, data: JSON.stringify(data), xlsx_sha256: sha256, created_at: at, revision }).execute();
+    });
   }
 
   // One accepted change: load the task's facts, ask `taskPolicy` whether `action` is admitted (stepToken, closed task,
@@ -778,6 +827,20 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
     },
 
     // ---- 去打印 (#190): only on a confirmed task; none of these touch the confirmation ----
+    generateReimbursementSummary,
+    resolveReimbursementSummary,
+    async reimbursementSummaryPreview(taskId: string, summaryId: string) {
+      const task = await taskRow(db, taskId);
+      const view = (await loadFacts(db, task)).summary;
+      return view.status === 'generated' && view.url.endsWith(`/${summaryId}`) ? summaryPreview(view.data) : null;
+    },
+    async reimbursementSummaryFile(taskId: string, summaryId: string) {
+      const task = await taskRow(db, taskId);
+      const view = (await loadFacts(db, task)).summary;
+      if (view.status !== 'generated' || !view.url.endsWith(`/${summaryId}`)) return null;
+      const stored = await db.selectFrom('reimbursement_summary').select('xlsx_sha256').where('summary_id', '=', summaryId).where('account_id', '=', accountId).executeTakeFirst();
+      return stored ? blobPath(dataDir, stored.xlsx_sha256) : null;
+    },
     generatePrintSheet: (taskId: string) => printChange(taskId, (state) => printActions.generate(state)),
     rotatePlacement: (taskId: string, pageId: string, slot: PlacementSlot, rotate: boolean) => printChange(taskId, (state) => printActions.rotate(state, pageId, slot, rotate)),
     cropPlacement: (taskId: string, pageId: string, slot: PlacementSlot, corners: Corners) => printChange(taskId, (state) => printActions.crop(state, pageId, slot, corners)),
