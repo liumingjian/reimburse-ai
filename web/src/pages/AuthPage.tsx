@@ -5,6 +5,7 @@ import { useAppStore } from '../adapter/context';
 import { ActionGroup } from '../shell/ActionGroup';
 import { AppShell } from '../shell/AppShell';
 import { PageHeader } from '../shell/PageHeader';
+import { ONBOARDING_HASH } from '../router';
 
 // 应用账号 (app accounts, ADR-0018): before anything else the browser needs a session. Which form shows is decided by
 // the server's session status: no account yet → create the admin; otherwise log in, or register a new account.
@@ -108,6 +109,9 @@ function CredentialsForm({ mode, onSwitch, registrationNotice, onRegistered }: {
         </ActionGroup>
         {registrationNotice ? <p className="app-caption" role="status">{registrationNotice}</p> : null}
       </form>
+      <p className="app-onboarding-entry">
+        第一次使用？<a href={ONBOARDING_HASH} target="_blank" rel="noopener noreferrer">观看入门视频</a>（Windows）
+      </p>
     </section>
   );
 }

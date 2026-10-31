@@ -11,6 +11,7 @@ export type Route =
   | { kind: 'settings'; returnTo?: string }
   | { kind: 'password' }
   | { kind: 'admin' }
+  | { kind: 'onboarding' }
   | { kind: 'task'; taskId: string; page: TaskPage | null }
   | { kind: 'redirect'; to: string };
 
@@ -23,6 +24,7 @@ export const SETTINGS_HASH = '#/settings';
 export const SETTINGS_PASSWORD_HASH = '#/settings/password';
 // Account administration has a separate administrator-only entry; project books use PROJECTS_HASH.
 export const ADMIN_HASH = '#/admin';
+export const ONBOARDING_HASH = '#/onboarding';
 
 export function taskHash(taskId: string, page: TaskPage): string {
   return `#/task/${encodeURIComponent(taskId)}/${page}`;
@@ -56,6 +58,7 @@ export function parseHash(hash: string): Route {
   }
   if (head === 'settings' && second === 'password' && parts.length === 2) return { kind: 'password' };
   if (head === 'admin' && parts.length === 1) return { kind: 'admin' };
+  if (head === 'onboarding' && parts.length === 1) return { kind: 'onboarding' };
   if (head === 'task' && second && parts.length === 2) return { kind: 'task', taskId: second, page: null };
   if (head === 'task' && second && third && parts.length === 3 && isTaskPage(third)) return { kind: 'task', taskId: second, page: third };
   return { kind: 'redirect', to: TASKS_HASH };

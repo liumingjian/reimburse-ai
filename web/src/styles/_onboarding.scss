@@ -1,0 +1,16 @@
+.app-onboarding-entry { margin-top: 2rem; }
+.app-tutorial { max-width: 1600px; margin: 0 auto; }
+.app-tutorial > .app-caption { margin-bottom: 1.5rem; }
+.app-tutorial-layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 1.5rem; margin-top: 1.5rem; }
+.app-tutorial-player { display: block; width: 100%; aspect-ratio: 16 / 9; background: #161616; }
+.app-tutorial-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 1.5rem; padding: 1rem 0; }
+.app-tutorial-tools select { padding: .5rem; background: var(--cds-field, #fff); color: inherit; border: 1px solid var(--cds-border-strong, #8d8d8d); }
+.app-tutorial-chapters { background: var(--cds-layer, #fff); }
+.app-tutorial-chapters h2 { font-size: 1.25rem; padding: 1rem; }
+.app-tutorial-chapters ol { list-style: none; }
+.app-tutorial-chapters button { display: flex; width: 100%; gap: 1rem; padding: .9rem 1rem; border: 0; border-top: 1px solid var(--cds-border-subtle, #e0e0e0); text-align: left; background: transparent; color: inherit; cursor: pointer; font: inherit; line-height: 1.5; }
+.app-tutorial-chapters time { color: var(--cds-text-secondary, #525252); font-variant-numeric: tabular-nums; }
+.app-tutorial-chapters button:hover { background: var(--cds-layer-hover, #e8e8e8); }
+.app-tutorial-chapters button[aria-current] { background: var(--cds-layer-selected, #e0e0e0); box-shadow: inset 3px 0 var(--cds-link-primary, #0f62fe); }
+.app-tutorial-chapters button:focus-visible { outline: 2px solid var(--cds-focus, #0f62fe); outline-offset: -2px; }
+@media (max-width: 1000px) { .app-tutorial-layout { grid-template-columns: minmax(0, 1fr); } }

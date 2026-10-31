@@ -25,7 +25,8 @@
     "@carbon/styles": "1.115.0",
     "pdfjs-dist": "6.1.200",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "zod": "4.6.2"
   },
   "devDependencies": {
     "@baox/fixtures": "workspace:*",

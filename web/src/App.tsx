@@ -9,6 +9,7 @@ import { VALIDATE_SNAPSHOTS } from './env';
 import { AdminPage, ADMIN_COPY } from './pages/AdminPage';
 import { AuthPage, AuthPending, ChangePasswordPage } from './pages/AuthPage';
 import { ProjectBookPage } from './pages/ProjectBookPage';
+import { OnboardingPage } from './pages/OnboardingPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TaskListPage } from './pages/TaskListPage';
 import { PAGE_COPY, TaskRoute } from './pages/TaskRoute';
@@ -32,6 +33,8 @@ function titleOf(route: Route): string {
       return '修改密码';
     case 'admin':
       return ADMIN_COPY.title;
+    case 'onboarding':
+      return '入门视频';
     case 'task':
       return route.page ? PAGE_COPY[route.page].title : '报销任务';
     case 'redirect':
@@ -62,6 +65,8 @@ function Routes() {
       return <ChangePasswordPage required={false} />;
     case 'admin':
       return <AdminPage />;
+    case 'onboarding':
+      return <OnboardingPage />;
     case 'task':
       return <TaskRoute key={route.taskId} taskId={route.taskId} page={route.page} />;
     case 'redirect':
@@ -70,9 +75,11 @@ function Routes() {
 }
 
 // 登录门 (auth gate, ADR-0018): until the browser has a session every route shows the create-admin / login page instead
-// (the route is kept, so a deep link opens in place after signing in). Every page is behind the gate.
+// (the route is kept, so a deep link opens in place after signing in). The onboarding video is public.
 function AuthGate({ children }: { children: ReactNode }) {
+  const route = useRoute();
   const session = useSession();
+  if (route.kind === 'onboarding') return children;
   const data = session.data;
   if (data) return data.status === 'signed_in' ? children : data.status === 'password_change_required' ? <ChangePasswordPage /> : <AuthPage session={data} />;
   return <AuthPending error={session.status === 'error' ? session.error : null} />;

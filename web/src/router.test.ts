@@ -2,6 +2,10 @@ import { describe, expect, test } from 'vitest';
 import { parseHash, settingsHash, taskHash } from './router';
 
 describe('hash 路由', () => {
+  test('the public onboarding page has its own route', () => {
+    expect(parseHash('#/onboarding')).toEqual({ kind: 'onboarding' });
+    expect(parseHash('#/onboarding/extra')).toEqual({ kind: 'redirect', to: '#/tasks' });
+  });
   test('the 设置页 opened from a task keeps only a valid local task destination', () => {
     expect(parseHash(settingsHash({ taskId: 'task with spaces', page: 'review' }))).toEqual({ kind: 'settings', returnTo: '#/task/task%20with%20spaces/review' });
     expect(parseHash(settingsHash())).toEqual({ kind: 'settings' });
