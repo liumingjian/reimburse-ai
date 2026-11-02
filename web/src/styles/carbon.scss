@@ -60,6 +60,7 @@ $system-mono: (ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
 
 @use './app-rules';
 @use './app-pages';
+@use './onboarding';
 
 :root {
   @include theme.theme();

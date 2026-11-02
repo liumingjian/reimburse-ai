@@ -16,9 +16,21 @@
 }
 
 http://10.250.0.222:8888 {
+	# Public tutorial media lives outside releases and invoice storage. file_server supports byte ranges.
+	handle_path /media/onboarding/* {
+		root * /opt/tools/baox/media/onboarding
+		header X-Content-Type-Options nosniff
+		@current path /current.json
+		header @current Cache-Control "no-cache"
+		@versioned not path /current.json
+		header @versioned Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
 	# Node binds 127.0.0.1:4319 only. reverse_proxy also carries the WebSocket upgrade on /api/extension/channel
 	# (Host passed through as above, so the upgrade meets the same guard), and flushes the SSE task streams at once.
-	reverse_proxy 127.0.0.1:4319
+	handle {
+		reverse_proxy 127.0.0.1:4319
+	}
 }
 
 # Adding a domain later is an upgrade (see the doc). Set BAOX_PUBLIC_ORIGIN for install.sh to the new origin and turn
@@ -27,6 +39,7 @@ http://10.250.0.222:8888 {
 # needs the ACME DNS challenge instead of the default HTTP one.
 #
 # https://baox.example.com {
+# 	# Keep the /media/onboarding/* handler above when moving to a domain.
 # 	reverse_proxy 127.0.0.1:4319
 # }
 #

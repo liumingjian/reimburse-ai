@@ -74,6 +74,7 @@ and its closing condition binds this instance: **the gaps must be closed before 
 | `/opt/tools/baox/current` | root (symlink) | The running release, `releases/<name>` |
 | `/opt/tools/baox/releases/<name>/` | baox | One built source tree per deployed tarball; the last 3 are kept |
 | `/opt/tools/baox/data/` | baox, 0700 | `BAOX_DATA_DIR`: `baox.sqlite` and the invoice originals |
+| `/opt/tools/baox/media/onboarding/` | root, readable by baox | Approved public tutorial media and its version manifest; see [publishing](onboarding-video.md) |
 | `/opt/tools/baox/data/maintenance-gate.sock` | baox, 0600 | Local-only maintenance controller socket; never exposed over HTTP |
 | `/opt/tools/baox/runtime/node` | root | Node at the version in `.nvmrc`, for baox only |
 | `/opt/tools/baox/runtime/pnpm-<version>/` | root | pnpm at the version in `package.json` `packageManager`, for the build |

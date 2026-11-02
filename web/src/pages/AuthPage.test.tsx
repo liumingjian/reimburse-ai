@@ -21,6 +21,23 @@ function fill(username: string, password: string) {
 }
 
 describe('登录门：应用账号', () => {
+  test('login and registration offer the same tutorial in a new tab', async () => {
+    renderAt('#/tasks', { auth: 'signed-out' });
+    await heading(AUTH_COPY.loginTitle);
+    expect(screen.getByRole('link', { name: '观看入门视频' }).getAttribute('target')).toBe('_blank');
+    fireEvent.click(screen.getByRole('button', { name: AUTH_COPY.toRegister }));
+    await heading(AUTH_COPY.registerTitle);
+    expect(screen.getByRole('link', { name: '观看入门视频' }).getAttribute('href')).toBe('#/onboarding');
+  });
+  test('the signed-in header opens the tutorial separately from the current task', async () => {
+    renderAt('#/task/T1/upload');
+    await heading('上传材料');
+    const link = screen.getByRole('link', { name: '入门视频' });
+    expect(link.getAttribute('href')).toBe('#/onboarding');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+    expect(window.location.hash).toBe('#/task/T1/upload');
+  });
   test('?auth=setup：只能创建管理员；创建后直接进入任务列表，顶栏是这个账号', async () => {
     renderAt('#/tasks', { auth: 'setup' });
     await heading(AUTH_COPY.setupTitle);

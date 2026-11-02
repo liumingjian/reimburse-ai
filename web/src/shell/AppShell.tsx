@@ -3,13 +3,13 @@ import { Button, Header, HeaderGlobalBar, HeaderMenuItem, HeaderName, HeaderNavi
 import { UserAvatar } from '@carbon/icons-react';
 import { useAppState, useAppStore } from '../adapter/context';
 import { IS_MOCK } from '../env';
-import { ADMIN_HASH, PROJECTS_HASH, SETTINGS_HASH, TASKS_HASH, navigate } from '../router';
+import { ADMIN_HASH, ONBOARDING_HASH, PROJECTS_HASH, SETTINGS_HASH, TASKS_HASH, navigate } from '../router';
 
 export const SERVICE_DOWN_NOTICE = '连不上报销服务，请检查网络后重试；如果一直这样，请联系维护者';
 export const LOGOUT_LABEL = '退出登录';
 export const ADMIN_TAG = '管理员';
 
-type Nav = 'tasks' | 'projects' | 'settings' | 'admin';
+type Nav = 'tasks' | 'projects' | 'settings' | 'admin' | 'onboarding';
 
 type Props = {
   nav: Nav;
@@ -52,6 +52,9 @@ export function AppShell({ nav, stepBar, children }: Props) {
                 {item.label}
               </HeaderMenuItem>
             ))}
+            <HeaderMenuItem href={ONBOARDING_HASH} target="_blank" rel="noopener noreferrer">
+              入门视频
+            </HeaderMenuItem>
           </HeaderNavigation>
         ) : null}
         <HeaderGlobalBar>
