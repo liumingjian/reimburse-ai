@@ -71,19 +71,11 @@ export async function afterAttempts(tx: Db, jobId: string, event: ResultEvent): 
   return { ...event, status: 'unknown', message };
 }
 
-/**
- * Every ERP job ends within its deadline, whatever its executor does: a 本地执行器 whose socket stays up while its
- * runner hangs opens no reconnection window, and a page that never settles never answers. Past the deadline the server
- * takes no more of the job's events, lets the ones already being recorded land (an `attempt_started` among them must be
- * on record before the result is judged), records `aborted` through the job's own path — which `afterAttempts` turns
- * into `unknown`, so 对账, once an attempt is durable — and aborts the executor's signal. Generous on purpose: a slow but
- * healthy run must never meet it.
- */
-export const FILL_JOB_DEADLINE_MS = 15 * 60_000;
+export const FILL_JOB_IDLE_TIMEOUT_MS = 15 * 60_000;
 export const RECONCILE_JOB_DEADLINE_MS = 5 * 60_000;
 export const JOB_DEADLINE_CODE = 'erp_job_deadline';
 export const JOB_DEADLINE_COPY = {
-  fill: '这次去报销超过 15 分钟还没有结束，应用把它停下了。',
+  fill: '这次去报销连续 15 分钟没有进展，应用把它停下了。',
   reconcile: '这次对账超过 5 分钟还没有结束，应用把它停下了。对账只读，不会改动报销系统，可以再对账一次。',
 } as const;
 const JOB_CLOSED_MESSAGE = '这次任务已经结束，应用不再接受它的进展。';
@@ -94,33 +86,48 @@ const JOB_CLOSED_MESSAGE = '这次任务已经结束，应用不再接受它的�
  * in-flight events have landed and its signal has been aborted; the caller then records the deadline result.
  */
 export async function withinDeadline(
-  { deadlineMs, schedule }: { deadlineMs: number; schedule: Schedule },
+  { policy, schedule }: { policy: { kind: 'absolute'; timeoutMs: number } | { kind: 'idle'; timeoutMs: number; progressed: (event: ExecutorEvent) => boolean }; schedule: Schedule },
   emit: ExecutorChannel['emit'],
   execute: (channel: ExecutorChannel, signal: AbortSignal) => Promise<unknown>,
 ): Promise<boolean> {
   const controller = new AbortController();
   const inFlight = new Set<Promise<unknown>>();
   let closed = false;
+  let cancel = () => {};
+  let generation = 0;
+  let expire: () => void = () => {};
+  const overdue = new Promise<'overdue'>((resolve) => {
+    expire = () => {
+      closed = true;
+      resolve('overdue');
+      controller.abort();
+    };
+  });
+  const arm = () => {
+    cancel();
+    const current = ++generation;
+    cancel = schedule(() => {
+      if (!closed && current === generation) expire();
+    }, policy.timeoutMs);
+  };
   const gated = (async (event: ExecutorEvent) => {
     if (closed) throw new Error(JOB_CLOSED_MESSAGE);
-    const reply = (emit as (event: ExecutorEvent) => Promise<unknown>)(event);
+    const reply = (emit as (event: ExecutorEvent) => Promise<unknown>)(event).then((answer) => {
+      if (!closed && policy.kind === 'idle' && policy.progressed(event)) arm();
+      return answer;
+    });
     const settled = reply.then(() => undefined, () => undefined);
     inFlight.add(settled);
     void settled.then(() => inFlight.delete(settled));
     return reply;
   }) as ExecutorChannel['emit'];
-  let cancel = () => {};
-  const overdue = new Promise<'overdue'>((resolve) => {
-    cancel = schedule(() => resolve('overdue'), deadlineMs);
-  });
+  arm();
   try {
-    if ((await Promise.race([execute({ emit: gated }, controller.signal), overdue])) !== 'overdue') return false;
-    closed = true;
-    controller.abort();
-    await Promise.allSettled([...inFlight]);
-    return true;
+    return (await Promise.race([execute({ emit: gated }, controller.signal), overdue])) === 'overdue';
   } finally {
+    closed = true;
     cancel();
+    await Promise.allSettled([...inFlight]);
   }
 }
 
@@ -160,11 +167,35 @@ export async function ensureResult(db: Db, jobId: string, taskId: string, kind: 
 // service's call. `serverEnded`: the server, not the executor, gave the run its result (deadline, a throw, none at all).
 export type FillSettled = (run: FillRun, outcome: { serverEnded: boolean }) => Promise<unknown>;
 
-export function createFillJobs({ db, lease, execute, record, schedule = realTimer, deadlineMs = FILL_JOB_DEADLINE_MS, onSettled, credentials = NO_CREDENTIALS }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts; schedule?: Schedule; deadlineMs?: number; onSettled?: FillSettled; credentials?: JobCredentials }) {
+export function createFillJobs({ db, lease, execute, record, schedule = realTimer, idleTimeoutMs = FILL_JOB_IDLE_TIMEOUT_MS, onSettled, credentials = NO_CREDENTIALS }: { db: Db; lease: ErpLease; execute: FillExecutor; record: RecordFacts; schedule?: Schedule; idleTimeoutMs?: number; onSettled?: FillSettled; credentials?: JobCredentials }) {
   const active = new Set<Promise<void>>();
 
   async function drive({ jobId, accountId, taskId, trigger, frozen, maintenance }: FillRun): Promise<{ serverEnded: boolean }> {
     let serverEnded = false;
+    const milestones = new Set<string>();
+    const doneByStep = new Map<string, number>();
+    const progressed = (event: ExecutorEvent): boolean => {
+      let milestone: string;
+      switch (event.type) {
+        case 'step': {
+          if (event.status === 'failed') return false;
+          milestone = `step:${event.step}:${event.status}`;
+          const done = event.progress?.done ?? 0;
+          const advanced = done > (doneByStep.get(event.step) ?? 0);
+          if (advanced) doneByStep.set(event.step, done);
+          const first = !milestones.has(milestone);
+          milestones.add(milestone);
+          return first || advanced;
+        }
+        case 'catalog_confirmed': milestone = event.type; break;
+        case 'attempt_started': milestone = `attempt:${event.action}`; break;
+        case 'readback': milestone = `readback:${event.stage}`; break;
+        default: return false;
+      }
+      if (milestones.has(milestone)) return false;
+      milestones.add(milestone);
+      return true;
+    };
     const at = () => new Date().toISOString();
     const append = (write: (tx: Db) => Promise<void>) => record(accountId, taskId, write);
     let erpAccount: ErpAccount | null = null;
@@ -218,7 +249,7 @@ export function createFillJobs({ db, lease, execute, record, schedule = realTime
     // Typed through `as`: it is set inside the callback, where control flow would not see it.
     let answered = null as ResultEvent | null;
     try {
-      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, async (gated, signal) => {
+      const overdue = await withinDeadline({ policy: { kind: 'idle', timeoutMs: idleTimeoutMs, progressed }, schedule }, channel.emit, async (gated, signal) => {
         answered = await withCredentials(credentials, accountId, (used) => execute(frozen.plan, gated, { trigger, signal, credentials: used }));
       });
       if (overdue && !finished) {

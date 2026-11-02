@@ -35,7 +35,7 @@ export function createReconcileJobs({ db, lease, execute, record, schedule = rea
     const channel = { emit: emit as ExecutorChannel['emit'] };
     try {
       let answered = null as ResultEvent | null;
-      const overdue = await withinDeadline({ deadlineMs, schedule }, channel.emit, async (gated, signal) => {
+      const overdue = await withinDeadline({ policy: { kind: 'absolute', timeoutMs: deadlineMs }, schedule }, channel.emit, async (gated, signal) => {
         answered = await withCredentials(credentials, accountId, (used) => execute(plan, gated, { signal, credentials: used }));
       });
       if (overdue && !finished) await channel.emit({ type: 'result', status: 'aborted', code: JOB_DEADLINE_CODE, message: JOB_DEADLINE_COPY.reconcile, billNo: null, capture: null });
