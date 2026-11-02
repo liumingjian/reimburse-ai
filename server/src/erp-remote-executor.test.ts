@@ -8,7 +8,7 @@ import { channelWatch, createChannelClient, type ClientSocket } from '@baox/chan
 import { createLocalRunner } from '@baox/local-executor/runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogMismatch, noFormOpen, notSignedIn, TEST_ERP_ACCOUNT, uncertainSave } from './erp/testing/fake-executor';
-import { FILL_JOB_DEADLINE_MS, JOB_DEADLINE_CODE } from './erp/fill-jobs';
+import { FILL_JOB_IDLE_TIMEOUT_MS, JOB_DEADLINE_CODE, RECONCILE_JOB_DEADLINE_MS } from './erp/fill-jobs';
 import { fakeLocalExecutor, type FakeLocalExecutor, type FillRunner, type ReconcileRunner } from './erp/testing/fake-local-executor';
 import { COMPATIBILITY, ERP_ACCOUNT, ERP_ORIGIN, FAST_PACE } from '@baox/erp-executor/testing/scenario';
 import { BACKSTOP_MS } from './test/deadlines';
@@ -548,6 +548,50 @@ describe('an interrupted 去报销', () => {
 // A 本地执行器 that stays connected but never finishes (a page that hangs, a runner stuck on an await): the socket is
 // healthy, so no window ever opens. The server's own deadline is what ends the job.
 describe('a job that outlives its deadline', () => {
+  it('still stops reconciliation at five minutes despite step progress', async () => {
+    let start!: (channel: ExecutorChannel) => void;
+    const started = new Promise<ExecutorChannel>((resolve) => { start = resolve; });
+    await connected(await pair(alice), { fill: uncertainSave, reconcile: async (_plan, channel) => {
+      await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
+      start(channel);
+      return new Promise<never>(() => undefined);
+    } });
+    const scene = await actionsOnFakeErp();
+    await scene.run('start-erp-write');
+    await scene.accept('reconcile');
+    const channel = await started;
+    timers.advanceBy(RECONCILE_JOB_DEADLINE_MS - 60_000);
+    await channel.emit({ type: 'step', step: 'chromium', status: 'done' });
+    timers.advanceBy(60_000);
+    await scene.settled();
+    expect(await resultsOf(scene.task.taskId)).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'aborted', code: JOB_DEADLINE_CODE, message: expect.stringContaining('对账超过 5 分钟') })]));
+    expect(timers.pending(RECONCILE_JOB_DEADLINE_MS)).toBe(0);
+    expect(server.erpLease.holder(alice.account.accountId)).toBeNull();
+  });
+
+  it('finishes a fill taking over 15 minutes while its steps keep progressing', async () => {
+    let elapsed = 0;
+    const seen = new Set<string>();
+    const token = await pair(alice);
+    await connected(token, { fill: (plan, channel, trigger) => realExecutor(token)(plan, {
+      emit: (async (event: ExecutorEvent) => {
+        if (event.type === 'step' && !seen.has(`${event.step}:${event.status}`)) {
+          seen.add(`${event.step}:${event.status}`);
+          timers.advanceBy(4 * 60_000);
+          elapsed += 4 * 60_000;
+        }
+        return (channel.emit as (event: ExecutorEvent) => Promise<unknown>)(event);
+      }) as ExecutorChannel['emit'],
+    }, trigger) });
+    const scene = await actionsOnFakeErp();
+
+    const done = await scene.run('start-erp-write');
+
+    expect(elapsed).toBeGreaterThan(15 * 60_000);
+    expect(done).toMatchObject({ stage: 'done', erp: { outcome: 'drafted' } });
+    expect(timers.pending(FILL_JOB_IDLE_TIMEOUT_MS)).toBe(0);
+  });
+
   async function hanging(onPlan: (plan: FillPlan, channel: ExecutorChannel) => Promise<void>) {
     let wire!: ExecutorChannel;
     // Set once every event `onPlan` sent has been acknowledged, so the deadline never races one still on the wire.
@@ -563,7 +607,7 @@ describe('a job that outlives its deadline', () => {
     const scene = await actionsOnFakeErp();
     await scene.accept('start-erp-write');
     const deadline = Date.now() + BACKSTOP_MS;
-    while (!acknowledged || timers.pending(FILL_JOB_DEADLINE_MS) === 0) {
+    while (!acknowledged || timers.pending(FILL_JOB_IDLE_TIMEOUT_MS) === 0) {
       if (Date.now() > deadline) throw new Error('the job never started');
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -575,7 +619,7 @@ describe('a job that outlives its deadline', () => {
       await channel.emit({ type: 'step', step: 'chromium', status: 'running' });
     });
 
-    timers.elapse(FILL_JOB_DEADLINE_MS);
+    timers.elapse(FILL_JOB_IDLE_TIMEOUT_MS);
     const stopped = await scene.settled();
 
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: JOB_DEADLINE_CODE }]);
@@ -587,13 +631,44 @@ describe('a job that outlives its deadline', () => {
     expect((await journal(scene.task.taskId)).map((event) => event.type)).toEqual(['step', 'result']);
   });
 
+  it('counts inactivity from the last completed row, without renewing for repeated activity timestamps', async () => {
+    const activity = { lineId: 'line-1', row: 1, column: 'amount', action: 'wait_model' as const, startedAt: '2026-11-02T00:00:00.000Z', reportedAt: '2026-11-02T00:00:00.000Z', attempt: 1 };
+    const { scene, wire } = await hanging(async (plan, channel) => {
+      await channel.emit(attemptStarted(plan));
+      await channel.emit({ type: 'step', step: 'fill', status: 'running', progress: { done: 0, total: 3 } });
+    });
+    timers.advanceBy(14 * 60_000);
+    await wire().emit({ type: 'step', step: 'fill', status: 'running', progress: { done: 1, total: 3, activity } });
+    timers.advanceBy(14 * 60_000);
+    expect(await resultsOf(scene.task.taskId)).toEqual([]);
+    await wire().emit({ type: 'step', step: 'fill', status: 'running', progress: { done: 1, total: 3, activity: { ...activity, reportedAt: '2026-11-02T00:14:00.000Z', attempt: 2 } } });
+    timers.advanceBy(60_000);
+    const stopped = await scene.settled();
+    expect(stopped.stage).toBe('reconcile');
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'unknown', code: JOB_DEADLINE_CODE, message: expect.stringContaining('连续 15 分钟没有进展') }]);
+    expect(timers.pending(FILL_JOB_IDLE_TIMEOUT_MS)).toBe(0);
+  });
+
+  it('does not renew for repeated readback polling at the same stage', async () => {
+    const readback = { type: 'readback', stage: 'after_fill', readings: {
+      formMode: { readable: true, value: 'new' }, billNo: { readable: true, value: null },
+      receiptsGrid: { ok: false, reason: 'loading' }, detailGrid: { ok: false, reason: 'loading' },
+    } } satisfies ExecutorEvent;
+    const { scene, wire } = await hanging(async (_plan, channel) => { await channel.emit(readback); });
+    timers.advanceBy(14 * 60_000);
+    await wire().emit(readback);
+    timers.advanceBy(60_000);
+    await scene.settled();
+    expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: JOB_DEADLINE_CODE }]);
+  });
+
   it('goes to 对账 when an attempt is on record, and never replays it', async () => {
     const { scene, wire } = await hanging(async (plan, channel) => {
       await channel.emit({ type: 'step', step: 'import', status: 'running' });
       await channel.emit(attemptStarted(plan));
     });
 
-    timers.elapse(FILL_JOB_DEADLINE_MS);
+    timers.elapse(FILL_JOB_IDLE_TIMEOUT_MS);
     const stopped = await scene.settled();
 
     expect(stopped).toMatchObject({ stage: 'reconcile', reconcile: { status: 'pending' } });
@@ -617,7 +692,7 @@ describe('a job that outlives its deadline', () => {
     await scene.accept('start-erp-write');
     await interrupted();
 
-    timers.elapse(FILL_JOB_DEADLINE_MS);
+    timers.elapse(FILL_JOB_IDLE_TIMEOUT_MS);
     await scene.settled();
 
     expect(await resultsOf(scene.task.taskId)).toMatchObject([{ status: 'aborted', code: JOB_DEADLINE_CODE }]);
