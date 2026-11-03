@@ -82,7 +82,7 @@ function Progress({ task, status }: { task: TaskListItem; status: Status }) {
 
 function continueLabel(task: TaskListItem): string | null {
   if (task.stage === 'reconcile') return '查看对账';
-  if (task.stage === 'done') return task.erpOutcome === 'none' ? null : '查看结果';
+  if (task.stage === 'done') return task.printable || task.erpOutcome !== 'none' ? '查看结果' : null;
   return '继续';
 }
 
@@ -140,6 +140,11 @@ function TaskRow({ task, onAbandon }: { task: TaskListItem; onAbandon: (task: Ta
           {label ? (
             <Button kind="ghost" size="sm" href={href}>
               {label}
+            </Button>
+          ) : null}
+          {task.stage === 'done' && task.printable ? (
+            <Button kind="ghost" size="sm" href={taskHash(task.taskId, 'print')}>
+              去打印
             </Button>
           ) : null}
           <AbandonButton task={task} onAbandon={onAbandon} />

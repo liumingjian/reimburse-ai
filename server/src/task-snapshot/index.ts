@@ -37,6 +37,7 @@ export function projectListItem(task: TaskTable, { facts, legacy, erp, lines, di
     erpDraftNo: legacy?.bill_no ?? savedDraftNo,
     pendingCount: facts.parse?.openPendingItems ?? 0,
     erpOutcome: legacy?.outcome === 'handed_off' || (task.origin !== 'legacy' && task.lifecycle === 'handed_off') ? 'handed_off' : 'none',
+    printable: policy.allowedActions.has('print'),
     abandonable: voidable,
     abandonBlockedReason: voidable ? null : ABANDON_TASK_COPY.blockedReason,
     // The confirmation has a sharper wording for a task whose bills are already over in ERP.

@@ -8,6 +8,8 @@ the page shows 填写报销单 and the task cannot be voided.
 ## Sub-features
 
 - `drafted`: the one ending. The job 暂存s the bill and finds it again; the page offers 去报销系统查看 and the 内码.
+- `print-after-drafted`: the completed task retains 查看结果 and 去打印 in the task list; the result page also offers
+  去打印. First-time generation, rotation, download and reopening preserve the confirmed reimbursement and ERP result.
 - `not-signed-in`: ERP sits on its login page and the job has no 凭据. It stops before any attempt and the task is back
   at 整单确认 with the reason.
 - `catalog-mismatch`: 报销信息核对 finds a renamed project. The task goes back to 项目归属 before any import.
@@ -34,6 +36,10 @@ Preconditions: `v.signIn()` then `v.confirmedTask()`. The ERP double comes from 
 - **no-browser.** With `--fake none` the CDP executor finds no browser, because `BAOX_ERP_CHROMIUM=off`. The job stops
   before any attempt and `erp.abortReason` says why.
 - **Proof.** Screenshot and snapshot `drafted`: `erp.outcome` is `drafted` and the 内码 is on the page.
+- **Print after completion.** The same `drafted` scenario returns through the task list, generates the first print
+  sheet, rotates and downloads it, then reopens it from the result page. Evidence: `print-from-list`, `print-rotated`,
+  `print-from-result`. This PDF-only UI run does not exercise four-corner crop; the existing print-settings tests
+  cover crop, and `server/src/task-policy.test.ts` covers printing permissions after completion.
 
 ## Gotchas
 

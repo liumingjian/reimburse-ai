@@ -171,6 +171,11 @@ describe('print settings', () => {
     // The hotel invoice's screenshots are locked with the confirmed list (#331).
     await refused(await upload(hotel.top.materialId), 'screenshot_locked');
     const removed = await client.current(task.task.taskId);
+    expect(removed.stage).toBe(task.stage);
+    expect(removed.erp).toEqual(task.erp);
+    expect(removed.lines).toEqual(task.lines);
+    expect(removed.projectAssignment).toEqual(task.projectAssignment);
+    expect(removed.confirmation).toEqual(task.confirmation);
     expect(removed.printSheet.notices).toEqual(['No.2 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
     expect((await download(removed.printSheet.url ?? '')).getPageCount()).toBe(2);
     await refused(await print(removed, 'remove-payment-screenshot', { screenshotId: 'gone' }), 'screenshot_not_found');
@@ -182,6 +187,27 @@ describe('print settings', () => {
     const bob = await server.signIn('bob');
     expect((await bob.request(removed.printSheet.url ?? '')).status).toBe(404);
   }, 240_000);
+});
+
+describe('print after ERP completion', () => {
+  it('generates the first sheet, adjusts it and downloads it without changing the reimbursement', async () => {
+    const scene = await scenario(server, alice).at('done');
+    const task = scene.reached;
+    expect(task.printSheet.status).toBe('not_generated');
+    const generated = await client.accepted(await print(task, 'generate-print-sheet'));
+    const page = generated.printSheet.pages[0];
+    if (!page?.top) throw new Error('missing invoice placement');
+    const rotated = await client.accepted(await print(generated, 'rotate-placement', { pageId: page.pageId, slot: 'top', rotate: !page.top.rotate }));
+    expect(rotated.printSheet.pages[0]?.top?.rotate).toBe(!page.top.rotate);
+    expect((await download(rotated.printSheet.url ?? '')).getPageCount()).toBe(1);
+    const reopened = await client.accepted(await print(rotated, 'generate-print-sheet'));
+    expect(reopened.printSheet).toEqual(rotated.printSheet);
+    expect(reopened.stage).toBe('done');
+    expect(reopened.erp).toEqual(task.erp);
+    expect(reopened.confirmation).toEqual(task.confirmation);
+    expect(reopened.lines).toEqual(task.lines);
+    expect(reopened.projectAssignment).toEqual(task.projectAssignment);
+  });
 });
 
 // A #331 table screenshot, seeded as tasks from before ADR-0032 hold them.

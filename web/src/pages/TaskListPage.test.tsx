@@ -60,6 +60,31 @@ describe('任务列表', () => {
     expect(within(t1).queryByText('BX20260911-0173')).toBeNull();
   });
 
+  test('完成报销后从列表补打印：保留查看结果，首次生成打印稿并提供下载', async () => {
+    renderApp('#/tasks', 'done');
+    const row = await rowOf('2026-08 上海出差（产品评审）');
+    expect(within(row).getByRole('link', { name: '查看结果' }).getAttribute('href')).toBe('#/task/T1/done');
+    const print = within(row).getByRole('link', { name: '去打印' });
+    expect(print.getAttribute('href')).toBe('#/task/T1/print');
+    fireEvent.click(row);
+    expect(await screen.findByRole('heading', { name: '完成' })).toBeTruthy();
+    const taskPrint = screen.getByRole('link', { name: '去打印' });
+    fireEvent.click(taskPrint);
+    expect(await screen.findByRole('link', { name: '下载打印稿 PDF' })).toBeTruthy();
+  });
+
+  test('服务端判定不可打印的旧版完成任务不显示打印入口', async () => {
+    const adapter = createMockAdapter({ seed: 'done', fault: null });
+    const list = await adapter.listTasks();
+    vi.spyOn(adapter, 'listTasks').mockResolvedValue({ ...list, tasks: list.tasks.map((task) => ({ ...task, printable: false })) });
+    window.location.hash = '#/tasks';
+    render(<App adapter={adapter} />);
+    const row = await rowOf('2026-08 上海出差（产品评审）');
+    expect(within(row).queryByRole('link', { name: '去打印' })).toBeNull();
+    expect(within(row).queryByRole('link', { name: '查看结果' })).toBeNull();
+    expect(within(row).getByRole('button', { name: '作废' })).toBeTruthy();
+  });
+
   test('转人工的任务：徽标显示已转人工（服务端给出的列表字段），而不是对账中', async () => {
     const adapter = createMockAdapter({ seed: null, fault: null });
     const t2 = await adapter.getSnapshot('T2');
@@ -112,9 +137,9 @@ describe('任务列表', () => {
       expect(within(actions).getByRole('button', { name: '作废' })).toBeTruthy();
       expect(within(row).queryByRole('button', { name: '更多' })).toBeNull();
     }
-    // A completed task with no ERP outcome has only the abandonment action.
+    // A saved task with materials retains both result and print entry points.
     const t3 = await rowOf('2026-06 北京培训');
-    expect(within(t3).queryAllByRole('link')).toHaveLength(0);
+    expect(within(t3).getAllByRole('link').map((link) => link.textContent)).toEqual(['查看结果', '去打印']);
     expect(within(t3).getAllByRole('button')).toHaveLength(1);
     expect(within(t3).getByRole('button', { name: '作废' })).toBeTruthy();
   });

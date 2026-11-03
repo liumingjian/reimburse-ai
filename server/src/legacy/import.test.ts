@@ -100,6 +100,7 @@ describe('first-admin creation imports the legacy tree', () => {
     expect(await readBook(server.db, { scope: 'public' })).toEqual([]);
 
     const legacy = list.tasks.map(({ name, stage, erpOutcome, erpDraftNo, abandonable }) => ({ name, stage, erpOutcome, erpDraftNo, abandonable }));
+    expect(list.tasks.every((task) => !task.printable)).toBe(true);
     expect(legacy.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
       [
         { name: '旧版任务 四月出差', stage: 'done', erpOutcome: 'none', erpDraftNo: 'BX-2026-0401', abandonable: true },

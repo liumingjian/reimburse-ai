@@ -354,6 +354,7 @@ export function toListItem(snapshot: TaskSnapshot): TaskListItem {
     erpDraftNo: draftNo,
     pendingCount: openPendingItemCount(snapshot.pendingItems),
     erpOutcome: erpOutcomeOf(snapshot),
+    printable: allowedActionsOf(snapshot).includes('print'),
     ...abandonOf(snapshot),
     updatedAt: snapshot.task.updatedAt,
   };

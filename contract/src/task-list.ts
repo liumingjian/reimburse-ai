@@ -31,6 +31,8 @@ export const TaskListItemSchema = z.object({
   erpDraftNo: z.string().min(1).nullable(),
   pendingCount: z.number().int().nonnegative(),
   erpOutcome: TaskErpOutcomeSchema,
+  // The task policy admits printing, including after ERP completion; legacy imports have no materials to print.
+  printable: z.boolean(),
   // 能否作废由服务端判定。任何状态的任务都可以作废（ADR-0030），只有写入/对账正在跑的那一下不行，
   // abandonBlockedReason 给出原因（页面照抄在不可用的按钮旁）。
   // erpTouched：这个任务动过报销系统，确认框要用 dialogBodyErpTouched 说清作废撤不掉那边的单据。

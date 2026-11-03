@@ -31,11 +31,13 @@ describe('allowed actions in the snapshot', () => {
     expect(running).toMatchObject({ stage: 'erp', step: { kind: 'none' }, erp: { status: 'running' } });
     expect(running.allowedActions).toEqual([]);
     const list = TaskListSchema.parse(await (await scene.client.request('/api/tasks')).json());
-    expect(list.tasks.find((task) => task.taskId === scene.task.taskId)).toMatchObject({ abandonable: false });
+    expect(list.tasks.find((task) => task.taskId === scene.task.taskId)).toMatchObject({ abandonable: false, printable: false });
 
     gate.release();
     const done = await scene.settled();
     expect(done).toMatchObject({ stage: 'done', erp: { outcome: 'drafted' } });
     expect(done.allowedActions).toEqual(['print', 'summary', 'void_task']);
+    const completedList = TaskListSchema.parse(await (await scene.client.request('/api/tasks')).json());
+    expect(completedList.tasks.find((task) => task.taskId === scene.task.taskId)).toMatchObject({ stage: 'done', erpOutcome: 'none', printable: true });
   });
 });

@@ -35,7 +35,7 @@ export function DonePage({ snapshot }: { snapshot: TaskSnapshot }) {
         actions={
           <>
             <Button kind="secondary" href={taskHash(taskId, 'print')} renderIcon={Printer}>
-              打印稿
+              去打印
             </Button>
             <Button kind={mismatched ? 'secondary' : 'primary'} href={TASKS_HASH}>
               返回任务列表
