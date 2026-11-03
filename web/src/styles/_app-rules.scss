@@ -742,6 +742,12 @@ $gutter: $spacing-06;
   }
 }
 
+@media (max-width: 1199px) {
+  .app-task-actions .app-row-actions .cds--btn {
+    padding-inline: $spacing-02;
+  }
+}
+
 // Keep an open refusal tooltip above neighboring sticky action cells.
 .app-table .cds--data-table td.app-task-actions:has(.cds--popover--open) {
   z-index: 4;
