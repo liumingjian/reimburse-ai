@@ -24,6 +24,20 @@ const line = (no: number, voucherMaterialId: string, referenceMaterialIds: strin
 const material = (materialId: string, linkedMaterialIds: string[] = []): Material => ({ materialId, linkedMaterialIds }) as unknown as Material;
 
 describe('planPages', () => {
+  it('names the actual business numbers and both categories when a ride invoice spans cities and another invoice separates its trips', () => {
+    const local = { code: 'local_city_transport', label: '本地市内交通' };
+    const remote = { code: 'remote_city_transport', label: '外地市内交通' };
+    const plans = planPages([
+      { ...line(1, 'ruqi-invoice', ['ruqi-itinerary']), category: local },
+      { ...line(2, 'ruqi-invoice', ['ruqi-itinerary']), category: local },
+      { ...line(3, 'baidu-invoice', ['baidu-itinerary']), category: local },
+      { ...line(4, 'ruqi-invoice', ['ruqi-itinerary']), category: remote },
+    ], [material('ruqi-invoice'), material('ruqi-itinerary'), material('baidu-invoice'), material('baidu-itinerary')]);
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({ nos: 'No.1-2,4', categoryLabel: '本地市内交通 / 外地市内交通', bottomMaterialId: 'ruqi-itinerary', header: 'No.1-2,4 · 08-10 · 本地市内交通 / 外地市内交通 · 300.00' });
+    expect(plans[1]).toMatchObject({ nos: 'No.3', categoryLabel: '本地市内交通', bottomMaterialId: 'baidu-itinerary' });
+  });
+
   it('keeps the supporting materials that do not fit, instead of dropping all but the first', () => {
     const plans = planPages(
       [line(1, 'm-invoice', ['m-folio', 'm-itinerary'])],

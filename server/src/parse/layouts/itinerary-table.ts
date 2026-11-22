@@ -27,6 +27,8 @@ export type ItineraryTableSpec<C extends string> = {
   // The table runs over several pages, its header printed again at the top of each. Without it only the first header's
   // page is read.
   repeatedHeader?: boolean;
+  // A header may vertically centre some labels beside two-line labels. Does not widen the leg-row tolerance.
+  headerTolerance?: number;
 };
 
 // One leg row: its printed 序号 and the observations of each of the layout's columns, top to bottom. A column with nothing in the
@@ -66,7 +68,7 @@ type Header<C extends string> = { y: number; page: number; columns: { key: Key<C
 export function itineraryTable<C extends string>(spec: ItineraryTableSpec<C>): ItineraryTable<C> {
   // The first header row on one page, top to bottom.
   const headerOn = (doc: ParseDoc, page: number): Header<C> | null => {
-    for (const row of rows(doc, page)) {
+    for (const row of rows(doc, page, spec.headerTolerance ?? 3)) {
       const columns = row.flatMap((o): Header<C>['columns'] => {
         const text = compact(o.text);
         const key: Key<C> | undefined = INDEX.test(text) ? INDEX_KEY : spec.columns.find(([pattern]) => pattern.test(text))?.[1];

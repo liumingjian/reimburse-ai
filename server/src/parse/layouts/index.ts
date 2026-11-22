@@ -1,6 +1,8 @@
 import type { Layout } from '../layout';
 import { amapItinerary } from './amap-itinerary';
 import { didiItinerary } from './didi-itinerary';
+import { baiduItinerary } from './baidu-itinerary';
+import { ruqiItinerary } from './ruqi-itinerary';
 import { einvoice } from './einvoice';
 import { diningReceipt } from './dining-receipt';
 import { labelled } from './labelled';
@@ -16,6 +18,8 @@ export const LAYOUTS: readonly Layout[] = [
   rail12306,
   amapItinerary,
   didiItinerary,
+  baiduItinerary,
+  ruqiItinerary,
   labelled,
   machinePrinted,
   paymentScreenshot,

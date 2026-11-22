@@ -42,6 +42,8 @@ export const REQUIRED_EXPECTATIONS: Readonly<Record<string, readonly string[]>> 
   // ride invoice was reaching no line at all, so both are required.
   'ride_itinerary/amap': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].city'],
   'ride_itinerary/didi': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].city'],
+  'ride_itinerary/baidu': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].date', 'segments[0].city', 'segments[0].origin', 'segments[0].destination', 'segments[0].amount'],
+  'ride_itinerary/ruqi': ['applyDate', 'segmentCount', 'itineraryTotal', 'segments[0].date', 'segments[0].city', 'segments[0].origin', 'segments[0].destination', 'segments[0].amount'],
   // #212: a folio exists to prove a hotel invoice's stay dates. Both folio photos reached no layout while every scored
   // row stayed green, because no folio sample was in the corpus at all; a folio sample must write both dates down.
   'hotel_folio/labelled': ['checkIn', 'checkOut'],

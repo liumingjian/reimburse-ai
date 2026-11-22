@@ -42,6 +42,7 @@ Each feature file has an H1 title and one paragraph of user-visible behaviour, t
 
 - [Accounts and sign-in](./accounts.md): 创建管理员, registration, approval, sign-in refusals. No scenario yet.
 - [New task, upload and 盘点](./new-task-upload.md): scenario `new-task-upload`.
+- Original ride-itinerary PDFs through upload, inventory, project assignment, whole-list confirmation and print download: scenario `ride-itineraries`. Set `BAOX_VERIFY_RIDE_CASE` to a private JSON file containing `files`, `homeCity`, independently transcribed `lines`, and `printPages`.
 - [项目归属 and 整单确认](./project-review.md): no scenario yet; `v.confirmedTask()` covers it through the API only.
 - [去报销](./go-erp.md): scenario `drafted`; `--fake not_signed_in`, `--fake catalog_mismatch` and the no-browser path are mapped.
 - [对账 and 转人工](./reconcile.md): scenario `reconcile-uncertain`.

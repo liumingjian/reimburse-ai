@@ -148,7 +148,7 @@ export function slotOf(kind: MaterialKind, key: string): Slot | undefined {
 }
 
 // Per-leg fields of an itinerary, keyed `segments[i].<field>` with a 0-based `i` (#184).
-const SEGMENT_FIELD_LABELS: Readonly<Record<string, string>> = { date: '日期', time: '上车时间', carType: '车型', city: '城市', origin: '起点', destination: '终点', amount: '金额' };
+const SEGMENT_FIELD_LABELS: Readonly<Record<string, string>> = { date: '日期', time: '上车时间', carrier: '服务方', carType: '车型', city: '城市', origin: '起点', destination: '终点', amount: '金额' };
 const SEGMENT_KEY = /^segments\[(\d+)\]\.(\w+)$/;
 
 // The human label of a candidate key: the slot label, or 「第 N 段起点」 for a leg field; the raw key only as a last resort.
