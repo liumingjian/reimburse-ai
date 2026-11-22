@@ -1,0 +1,31 @@
+{
+  "about": "A redacted real ruqi PDF itinerary with wrapped cells; dates, times, amounts, addresses and contact details replaced. Header labels use two baselines; count and total are painted separately over the summary label. Cities are derived from both endpoints.",
+  "outcome": "recognised",
+  "layout": "ride_itinerary/ruqi",
+  "facts": {
+    "applyDate": "2026-06-25",
+    "segmentCount": "3",
+    "itineraryTotal": "72.69",
+    "segments[0].date": "2026-06-04",
+    "segments[0].time": "02:05:46",
+    "segments[0].carType": "经济型",
+    "segments[0].city": "广州市",
+    "segments[0].origin": "广州市甲甲甲甲甲甲(甲甲甲甲甲甲)",
+    "segments[0].destination": "广州市乙乙乙乙乙乙乙乙(乙乙乙)",
+    "segments[0].amount": "35.12",
+    "segments[1].date": "2026-06-04",
+    "segments[1].time": "15:43:45",
+    "segments[1].carType": "经济型",
+    "segments[1].city": "佛山市",
+    "segments[1].origin": "佛山市丙丙丙丙丙丙丙丙-丙丙",
+    "segments[1].destination": "佛山市丁丁丁丁丁-丁丁丁",
+    "segments[1].amount": "12.23",
+    "segments[2].date": "2026-06-18",
+    "segments[2].time": "13:02:57",
+    "segments[2].carType": "经济型",
+    "segments[2].city": "广州市",
+    "segments[2].origin": "广州市戊戊戊戊戊戊",
+    "segments[2].destination": "广州市己己己己",
+    "segments[2].amount": "25.34"
+  }
+}

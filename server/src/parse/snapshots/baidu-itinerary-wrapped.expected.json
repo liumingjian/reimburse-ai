@@ -1,0 +1,18 @@
+{
+  "about": "A redacted real baidu PDF itinerary with wrapped cells; dates, times, amounts, addresses and contact details replaced. The material names Baidu Maps; each trip names its service provider and invoiceable amount.",
+  "outcome": "recognised",
+  "layout": "ride_itinerary/baidu",
+  "facts": {
+    "applyDate": "2026-06-25",
+    "segmentCount": "1",
+    "itineraryTotal": "37.28",
+    "segments[0].date": "2026-06-18",
+    "segments[0].time": "13:21:09",
+    "segments[0].carrier": "曹操出行",
+    "segments[0].carType": "快车",
+    "segments[0].city": "广州",
+    "segments[0].origin": "甲甲甲甲(甲甲甲甲甲)",
+    "segments[0].destination": "乙乙乙乙乙乙(乙乙乙乙乙)乙乙乙",
+    "segments[0].amount": "37.28"
+  }
+}

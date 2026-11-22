@@ -75,8 +75,8 @@ export function place(content: Size, region: Box, rotate: boolean): Placed {
   return rotate ? { x: left, y: bottom + w, width: w, height: h, rotate: -90 } : { x: left, y: bottom, width: w, height: h, rotate: 0 };
 }
 
-// One printed page, in 统一业务序号 (business sequence) order: the lines of one voucher are consecutive, so a voucher
-// with several legs gets a number range (`No.1-3`).
+// One printed page per voucher, in 统一业务序号 (business sequence) order. Sorting by category can separate a voucher's
+// trips, so compress only consecutive numbers and name every category present on the page.
 export type PagePlan = {
   pageId: string;
   voucherMaterialId: string;
@@ -99,6 +99,16 @@ const cents = (amount: string): number => {
 };
 const amountOf = (value: number): string => `${value < 0 ? '-' : ''}${Math.floor(Math.abs(value) / 100)}.${String(Math.abs(value) % 100).padStart(2, '0')}`;
 
+function businessNumbers(lines: readonly Line[]): string {
+  const ranges: { first: number; last: number }[] = [];
+  for (const line of lines) {
+    const previous = ranges.at(-1);
+    if (previous && previous.last + 1 === line.no) previous.last = line.no;
+    else ranges.push({ first: line.no, last: line.no });
+  }
+  return `No.${ranges.map(({ first, last }) => first === last ? String(first) : `${first}-${last}`).join(',')}`;
+}
+
 // Pages from the confirmed lines. The bottom half holds the voucher's reference (itinerary / folio), if any.
 export function planPages(lines: readonly Line[], materials: readonly Material[]): PagePlan[] {
   const groups = new Map<string, Line[]>();
@@ -112,9 +122,9 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
   const plans: PagePlan[] = [];
   for (const [voucherMaterialId, group] of groups) {
     const first = group[0];
-    const last = group.at(-1);
-    if (!first || !last) continue;
-    const nos = first.no === last.no ? `No.${first.no}` : `No.${first.no}-${last.no}`;
+    if (!first) continue;
+    const nos = businessNumbers(group);
+    const categoryLabel = [...new Set(group.map((line) => line.category.label))].join(' / ');
     const grossAmount = amountOf(group.reduce((sum, line) => sum + cents(line.grossAmount), 0));
     const linked = materials.find((material) => material.materialId === voucherMaterialId)?.linkedMaterialIds ?? [];
     const supporting = [...new Set([...group.flatMap((line) => line.referenceMaterialIds), ...linked])].filter((id) => known.has(id) && id !== voucherMaterialId);
@@ -127,9 +137,9 @@ export function planPages(lines: readonly Line[], materials: readonly Material[]
       no: first.no,
       nos,
       date: first.date,
-      categoryLabel: first.category.label,
+      categoryLabel,
       grossAmount,
-      header: `${nos} · ${first.date.slice(5)} · ${first.category.label} · ${grossAmount}`,
+      header: `${nos} · ${first.date.slice(5)} · ${categoryLabel} · ${grossAmount}`,
     });
   }
   return plans;

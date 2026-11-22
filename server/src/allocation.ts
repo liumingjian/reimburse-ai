@@ -13,7 +13,7 @@ import { cents, money } from './money-date';
 // Pure: the inventory view (`inventory-view.ts`) calls `planTransport` once per projection.
 
 // One leg as the itinerary lists it (0-based candidate index `i` → 1-based `index`).
-export type Leg = { index: number; date: string | null; time: string | null; city: string | null; origin: string | null; destination: string | null; amount: string | null };
+export type Leg = { index: number; date: string | null; time: string | null; city: string | null; origin: string | null; destination: string | null; amount: string | null; carrier?: string | null };
 export type LegAmount = { index: number; gross: string; net: string; tax: string };
 export type FaceAmounts = { netAmount?: string; taxAmount?: string; totalAmount?: string };
 
@@ -84,7 +84,7 @@ export function legsOf(values: Readonly<Record<string, string>>): Leg[] {
   const legs: Leg[] = [];
   for (let i = 0; Object.keys(values).some((key) => key.startsWith(`segments[${i}].`)); i += 1) {
     const at = (field: string) => values[`segments[${i}].${field}`] ?? null;
-    legs.push({ index: i + 1, date: at('date'), time: at('time'), city: at('city'), origin: at('origin'), destination: at('destination'), amount: at('amount') });
+    legs.push({ index: i + 1, date: at('date'), time: at('time'), city: at('city'), origin: at('origin'), destination: at('destination'), amount: at('amount'), carrier: at('carrier') });
   }
   return legs;
 }
@@ -121,7 +121,7 @@ export function pairItineraries(invoices: readonly RideInvoice[], itineraries: r
 // ---- the inventory-view hook ----
 
 // A recognised, included material, with `ok` when it raised no 待确认项 of its own. `kindLabel` is its display name, which
-// for a 行程单 names the carrier printed on the face (`高德行程单`, `滴滴行程单`, `曹操出行行程单`).
+// for a 行程单 names its platform or carrier. A trip's own carrier can override that label in its expense summary.
 export type TransportMaterial = { materialId: string; fileName: string; kind: MaterialKind; layout: string; kindLabel: string; values: Readonly<Record<string, string>>; ok: boolean };
 // One candidate line's facts; `leg` is null when the voucher forms a single line.
 export type PlannedLine = { draft: EventDraft; leg: number | null; referenceMaterialIds: string[]; evidenceNote: string | null };
@@ -134,14 +134,14 @@ export type TransportPlan = {
 };
 
 // The carrier a line's summary names: the one in the 行程单's display name, so a third-party carrier issued through 滴滴
-// shows as itself (#451). A 行程单 named otherwise (e.g. one filled in by hand) says 打车.
+// shows as itself (#451). Baidu additionally supplies a per-trip carrier. A 行程单 named otherwise says 打车.
 const summaryBrand = (kindLabel: string) => /^(.+)行程单$/.exec(kindLabel)?.[1] ?? '打车';
 export const ALLOCATION_GIVE_UP_NOTE = '放弃后这张发票不形成明细：请把它连同行程单排除，或补充能逐段核对的行程单后重新盘点。';
 
 const arrow = (from: string | null, to: string | null) => (from && to ? `${from} → ${to}` : null);
 const push = <T>(map: Map<string, T[]>, key: string, value: T) => map.set(key, [...(map.get(key) ?? []), value]);
 
-// Pairs ride-hailing 全电发票 with 行程单 (高德, 滴滴) and decides their per-leg lines or allocation items.
+// Pairs ride-hailing 全电发票 with 行程单 and decides their per-leg lines or allocation items.
 // `answers`: per invoice materialId, the per-leg totals the user gave on its allocation item (#187).
 export function planTransport(materials: readonly TransportMaterial[], answers: ReadonlyMap<string, readonly string[]> = new Map()): TransportPlan {
   const plan: TransportPlan = { lines: new Map(), items: new Map(), links: new Map(), notes: new Map() };
@@ -230,7 +230,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
           evidenceNote: i === 0 ? note : null,
           draft: {
             ...face,
-            summary: `${brand} · ${route ?? `第 ${amounts.index} 段`}`,
+            summary: `${leg?.carrier || brand} · ${route ?? `第 ${amounts.index} 段`}`,
             date: leg?.date ?? face.date,
             grossAmount: amounts.gross,
             netAmount: amounts.net,
