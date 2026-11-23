@@ -1,5 +1,5 @@
 {
-  "revision": 7,
+  "revision": 6,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
     "name": "2000-01-01 新建报销",
@@ -349,9 +349,7 @@
       },
       "manualKinds": [],
       "status": "resolved",
-      "answer": {
-        "choice": "confirm_none"
-      }
+      "answer": null
     }
   ],
   "blockers": [],
@@ -388,6 +386,13 @@
       "taxAmount": "206.04"
     }
   ],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "cause": "not-confirmed",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  },
   "lodgingEvidence": [
     {
       "materialId": "00000000-0000-4000-8000-000000000003",
@@ -583,7 +588,7 @@
   },
   "step": {
     "kind": "confirm_review",
-    "stepToken": "00000000-0000-4000-8000-000000000001.7"
+    "stepToken": "00000000-0000-4000-8000-000000000001.6"
   },
   "allowedActions": [
     "upload",
@@ -598,12 +603,5 @@
     "confirm_review",
     "print",
     "void_task"
-  ],
-  "reimbursementSummary": {
-    "status": "unavailable",
-    "cause": "not-confirmed",
-    "reasons": [
-      "请先完成整单明细确认。"
-    ]
-  }
+  ]
 }

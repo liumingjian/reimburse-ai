@@ -46,7 +46,7 @@ describe('hotel pairing with duplicate amounts (#357)', () => {
     expect(snapshot.lines).toHaveLength(invoices);
     for (const line of snapshot.lines) expect(line).toMatchObject({ date: '2026-08-22', referenceMaterialIds: [], grossAmount: '3640.00' });
     expect(snapshot.pendingItems.filter((item) => item.status === 'open').map((item) => item.itemId).sort()).toEqual([
-      ...invoiceIds.flatMap((id) => [`stay_folio_missing.${id}`, `stay_screenshot_missing.${id}`]),
+      ...invoiceIds.flatMap((id) => [`stay_folio_missing.${id}`]),
       ...folioIds.map((id) => `stay_invoice_missing.${id}`),
     ].sort());
   });

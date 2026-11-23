@@ -620,7 +620,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         } else {
           const found = view.answerables.get(itemId);
           if (!found) return { code: 'item_not_found', message: ACTION_COPY.itemNotFound };
-          if (found.item.status !== 'open' && !found.item.expenseDetails) return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
+          if (found.item.status !== 'open' && !found.item.expenseDetails && !itemId.startsWith('stay_screenshot_missing.')) return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
           verdict = judgeAnswer(found.item, answer, found.check);
           materialId = found.item.materialId;
         }

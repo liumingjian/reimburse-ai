@@ -1,5 +1,5 @@
 {
-  "revision": 18,
+  "revision": 17,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
     "name": "2000-01-01 新建报销",
@@ -349,9 +349,7 @@
       },
       "manualKinds": [],
       "status": "resolved",
-      "answer": {
-        "choice": "confirm_none"
-      }
+      "answer": null
     }
   ],
   "blockers": [],
@@ -388,6 +386,9 @@
       "taxAmount": "206.04"
     }
   ],
+  "reimbursementSummary": {
+    "status": "ready"
+  },
   "lodgingEvidence": [
     {
       "materialId": "00000000-0000-4000-8000-000000000003",
@@ -637,7 +638,7 @@
   },
   "step": {
     "kind": "choose_action",
-    "stepToken": "00000000-0000-4000-8000-000000000001.18"
+    "stepToken": "00000000-0000-4000-8000-000000000001.17"
   },
   "allowedActions": [
     "upload",
@@ -650,8 +651,5 @@
     "print",
     "summary",
     "void_task"
-  ],
-  "reimbursementSummary": {
-    "status": "ready"
-  }
+  ]
 }

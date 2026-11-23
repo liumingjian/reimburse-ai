@@ -101,6 +101,13 @@
   "pendingItems": [],
   "blockers": [],
   "lines": [],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "cause": "not-confirmed",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  },
   "lodgingEvidence": [],
   "confirmation": {
     "status": "unconfirmed",
@@ -180,12 +187,5 @@
     "kind": "none",
     "stepToken": "00000000-0000-4000-8000-000000000001.3"
   },
-  "allowedActions": [],
-  "reimbursementSummary": {
-    "status": "unavailable",
-    "cause": "not-confirmed",
-    "reasons": [
-      "请先完成整单明细确认。"
-    ]
-  }
+  "allowedActions": []
 }

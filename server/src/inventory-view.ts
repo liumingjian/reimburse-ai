@@ -13,7 +13,7 @@ import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
 import { proposeFolio, type FolioProposal, type ProposalStay } from './folio-proposal';
 import { checkPayments, type LabelledStay } from './stay-payments';
-import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
+import { adoptedStayDates, checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -694,6 +694,7 @@ export function inventoryView(
   // 支付截图 materials, placed with the 住宿 invoices (ADR-0032), only over a finished run like the trio below.
   const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const folioValues = new Map(folios.map((folio) => [folio.materialId, folio.values]));
+  const adoptedDates = new Map(stayInvoices.map((invoice) => [invoice.materialId, adoptedStayDates(invoice.materialId, stays.get(invoice.materialId), answers)]));
   const paymentStays = stayInvoices.map((invoice): LabelledStay => {
     const stay = stays.get(invoice.materialId);
     const hotel = stay ? folioValues.get(stay.folioId)?.['hotelName'] : undefined;
@@ -702,8 +703,8 @@ export function inventoryView(
     return {
       invoiceId: invoice.materialId,
       totalAmount,
-      checkIn: stay?.checkIn ?? null,
-      checkOut: stay?.checkOut ?? null,
+      checkIn: adoptedDates.get(invoice.materialId)?.checkIn ?? null,
+      checkOut: adoptedDates.get(invoice.materialId)?.checkOut ?? null,
       issueDate: invoice.values['issueDate'] ?? null,
       hotelNames: [hotel, seller].filter((name): name is string => Boolean(name)),
       label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, stay ? `${stay.checkIn}~${stay.checkOut}` : null, totalAmount),
@@ -804,7 +805,8 @@ export function inventoryView(
     const stay = stays.get(material.materialId);
     const detail = diningItems.get(material.materialId)?.find((item) => item.expenseDetails && item.status === 'resolved');
     const actualDate = detail && fieldAnswer(detail.answer)[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? fieldAnswer(detail.answer)['date'] : undefined;
-    const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : actualDate ? { ...own, date: actualDate } : own;
+    const dates = adoptedDates.get(material.materialId);
+    const draft = dates ? { ...own, date: dates.checkIn, endDate: dates.checkOut } : actualDate ? { ...own, date: actualDate } : own;
     const receiptId = receiptByInvoice.get(material.materialId);
     const referenceMaterialIds = stay ? [stay.folioId] : receiptId ? [receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };

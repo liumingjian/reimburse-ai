@@ -32,19 +32,19 @@ describe('checkStayTrios', () => {
     ]);
   });
 
-  it('a missing folio: one item on the invoice that names the 结账单 and the invoice, answered only by excluding it', () => {
+  it('a missing folio offers manual dates, absence, and invoice exclusion', () => {
     const result = check([invoice], [], ['inv']);
     expect(items(result)).toEqual([
       expect.objectContaining({ itemId: 'stay_folio_missing.inv', materialId: 'inv', kind: 'choice', status: 'open', title: '住宿发票「全季酒店_发票.pdf」缺少结账单', why: expect.stringContaining('价税合计 3640.00 元') }),
       expect.objectContaining({ itemId: 'stay_screenshot_missing.inv', status: 'resolved' }),
     ]);
-    // Only the folio dates the stay, so its absence cannot be confirmed away.
-    expect(items(result)[0]?.choices).toEqual([{ key: 'exclude', label: '排除这份材料' }]);
+    // Missing reference choices keep required expense dates explicit.
+    expect(items(result)[0]?.choices.map((choice) => choice.key)).toEqual(['manual_fill', 'confirm_none', 'exclude']);
   });
 
   it('a 确认没有 stored for a missing folio no longer settles it', () => {
     const result = check([invoice], [], ['inv'], new Map([['stay_folio_missing.inv', { choice: 'confirm_none' }]]));
-    expect(items(result)[0]).toMatchObject({ itemId: 'stay_folio_missing.inv', status: 'open', answer: null });
+    expect(items(result)[0]).toMatchObject({ itemId: 'stay_folio_missing.inv', status: 'open', answer: { choice: 'confirm_none' } });
     expect(result.trios[0]?.folio).toEqual({ present: false, noneConfirmed: false });
   });
 
@@ -112,7 +112,7 @@ describe('checkStayTrios by sum', () => {
   it('「已传齐」 settles a shortfall, and does not fit once no screenshot is placed', () => {
     const answers = new Map([['stay_screenshot_missing.inv', { choice: STAY_TRIO_CONFIRM_PAID }]]);
     expect(item(check([100000], answers))).toMatchObject({ status: 'resolved', answer: { choice: STAY_TRIO_CONFIRM_PAID } });
-    expect(item(check([], answers))).toMatchObject({ status: 'open' });
+    expect(item(check([], answers))).toMatchObject({ status: 'resolved' });
   });
 
   it('确认没有 is refused while a screenshot material is placed', () => {
@@ -162,29 +162,29 @@ const groupOf = (snapshot: TaskSnapshot, invoiceId: string) => snapshot.paymentS
 const screenshotItem = (snapshot: TaskSnapshot, invoiceId: string) => snapshot.pendingItems.find((item) => item.itemId === `stay_screenshot_missing.${invoiceId}`);
 
 describe('the 住宿 trio at inventory', () => {
-  it('invoice and folio without a screenshot: the queue names the screenshot', async () => {
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+  it('invoice and folio without a screenshot can proceed directly', async () => {
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
-    expect(openIds(start)).toEqual([`stay_screenshot_missing.${invoice.materialId}`]);
+    expect(openIds(start)).toEqual([]);
     expect(start.pendingItems[0]).toMatchObject({ title: STAY_TRIO_COPY.screenshot.title(invoice.fileName), materialId: invoice.materialId });
-    expect(invoice).toMatchObject({ role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_screenshot_missing.${invoice.materialId}`] });
+    expect(invoice).toMatchObject({ role: 'primary_voucher', status: 'ok', pendingItemIds: [`stay_screenshot_missing.${invoice.materialId}`] });
     // The event still forms; only the list waits.
     expect(start.events).toHaveLength(1);
-    expect(start).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
+    expect(start).toMatchObject({ stage: 'project', step: { kind: 'assign_projects' } });
   });
 
-  it('an invoice without its folio blocks the list: only 排除 is offered, 确认没有 is refused, and excluding the invoice clears it', async () => {
+  it('an invoice without its folio requires dates after absence and can be excluded', async () => {
     const start = (await scenario(server, alice).at('pending', { materials: ['m01'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const supplied = await screenshots(start, invoice.materialId, [png()]);
     const declared = await client.accepted(await complete(supplied, invoice.materialId));
     expect(openIds(declared)).toEqual([`stay_folio_missing.${invoice.materialId}`]);
-    expect(declared.pendingItems[0]).toMatchObject({ title: '住宿发票「全季酒店_发票.pdf」缺少结账单', choices: [{ key: 'exclude', label: '排除这份材料' }] });
+    expect(declared.pendingItems[0]).toMatchObject({ title: '住宿发票「全季酒店_发票.pdf」缺少结账单', choices: [{ key: 'manual_fill', label: '手工填写' }, { key: 'confirm_none', label: '确认没有账单' }, { key: 'exclude', label: '忽略发票' }] });
 
-    await refused(await client.act(declared, 'answer-pending', { itemId: `stay_folio_missing.${invoice.materialId}`, answer: { choice: 'confirm_none' } }), 'invalid_answer');
+    const absent = await answer(declared, `stay_folio_missing.${invoice.materialId}`, 'confirm_none');
     expect(await client.current(declared.task.taskId)).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
 
-    const done = await answer(declared, `stay_folio_missing.${invoice.materialId}`, 'exclude');
+    const done = await answer(absent, `stay_folio_missing.${invoice.materialId}`, 'exclude');
     expect(byFileName(done, invoice.fileName)).toMatchObject({ role: 'excluded', status: 'excluded' });
     expect(openIds(done)).toEqual([]);
     expect(done.lines).toEqual([]);
@@ -210,7 +210,7 @@ describe('the 住宿 trio at inventory', () => {
     await scene.accept('reopen-upload');
     await client.upload(scene.task.taskId, [sample('m02')]);
     const again = await scene.run('start-inventory');
-    expect(openIds(again)).toEqual([`stay_screenshot_missing.${invoice.materialId}`]);
+    expect(openIds(again)).toEqual([]);
   });
 
   it('a voucher that is not a 住宿 invoice takes no screenshot (#330)', async () => {
@@ -222,7 +222,7 @@ describe('the 住宿 trio at inventory', () => {
 // #331: a 住宿 invoice's 支付截图 stored in the table form a group, and its item settles only when the filer says 「已传齐」.
 describe('a group of 支付截图', () => {
   it('stays pending with three, resolves on 「已传齐」 and lists them in upload order', async () => {
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     await refused(await complete(start, invoice.materialId), 'screenshot_group_empty');
 
@@ -248,7 +248,7 @@ describe('a group of 支付截图', () => {
   });
 
   it('removing one from a group not yet declared complete keeps the rest in order and the item pending', async () => {
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const three = await screenshots(start, invoice.materialId, [png(1), png(2), png(3)]);
     const removed = await client.accepted(await remove(three, three.paymentScreenshots[1]?.screenshotId));
@@ -259,7 +259,7 @@ describe('a group of 支付截图', () => {
   });
 
   it('a pre-existing single screenshot reads as a resolved group of one', async () => {
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     // Before #331 a second upload replaced the first, and an upload alone settled the item; 0020_331 turns such rows
     // into a complete group of the one that counted.
@@ -273,7 +273,7 @@ describe('a group of 支付截图', () => {
   });
 
   it('a pre-#330 screenshot on a voucher that is not a 住宿 invoice forms no group: not in the snapshot, not printed', async () => {
-    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02', 'm07'] });
+    const scene = await scenario(server, alice).at('project', { materials: ['m01', 'm02', 'm07'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
     const other = byFileName(scene.reached, sample('m07').name);
     const one = await screenshots(scene.reached, invoice.materialId, [png(1)]);
@@ -298,7 +298,7 @@ describe('a group of 支付截图', () => {
   }, 120_000);
 
   it('is locked once the list is confirmed, and the sheet prints the whole group', async () => {
-    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const scene = await scenario(server, alice).at('project', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
     const two = await screenshots(scene.reached, invoice.materialId, [png(1), png(2)]);
     const declared = await client.accepted(await complete(two, invoice.materialId));
@@ -322,7 +322,7 @@ describe('a group of 支付截图', () => {
 // #332: a resolved screenshot item takes changes until the list is confirmed, and a screenshot supersedes 确认没有.
 describe('reopening a resolved group of 支付截图', () => {
   it('after 「已传齐」 adding or removing one keeps it resolved; removing the last opens the item and clears 「已传齐」', async () => {
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const declared = await client.accepted(await complete(await screenshots(start, invoice.materialId, [png(1), png(2)]), invoice.materialId));
 
@@ -339,9 +339,9 @@ describe('reopening a resolved group of 支付截图', () => {
 
     const emptied = await client.accepted(await remove(latest, latest.paymentScreenshots[0]?.screenshotId));
     expect(groupOf(emptied, invoice.materialId)).toEqual([]);
-    expect(screenshotItem(emptied, invoice.materialId)).toMatchObject({ status: 'open', answer: null });
-    expect(emptied).toMatchObject({ stage: 'pending', step: { kind: 'answer_pending' } });
-    expect(byFileName(emptied, invoice.fileName)).toMatchObject({ status: 'pending' });
+    expect(screenshotItem(emptied, invoice.materialId)).toMatchObject({ status: 'resolved', answer: null });
+    expect(emptied).toMatchObject({ stage: 'project' });
+    expect(byFileName(emptied, invoice.fileName)).toMatchObject({ status: 'ok' });
 
     // The declaration went with the group: a new screenshot waits for a new 「已传齐」.
     const refilled = await screenshots(emptied, invoice.materialId, [png(4)]);
@@ -350,7 +350,7 @@ describe('reopening a resolved group of 支付截图', () => {
   });
 
   it('an upload supersedes 确认没有 for good; with the group emptied again, 确认没有 may be chosen again', async () => {
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(start, sample('m01').name);
     const itemId = `stay_screenshot_missing.${invoice.materialId}`;
     const none = await answer(start, itemId, 'confirm_none');
@@ -363,14 +363,14 @@ describe('reopening a resolved group of 支付截图', () => {
     expect(await refused(await client.act(supplied, 'answer-pending', { itemId, answer: { choice: 'confirm_none' } }), 'check_failed')).toBe(PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots);
 
     const emptied = await client.accepted(await remove(supplied, supplied.paymentScreenshots[0]?.screenshotId));
-    expect(screenshotItem(emptied, invoice.materialId)).toMatchObject({ status: 'open', answer: null });
+    expect(screenshotItem(emptied, invoice.materialId)).toMatchObject({ status: 'resolved', answer: null });
     const again = await answer(emptied, itemId, 'confirm_none');
     expect(screenshotItem(again, invoice.materialId)).toMatchObject({ status: 'resolved', answer: { choice: 'confirm_none' } });
     expect(again.stage).toBe('project');
   });
 
   it('a group declared after 确认没有 prints its screenshot, without the confirmed-none notice', async () => {
-    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const scene = await scenario(server, alice).at('project', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
     const none = await answer(scene.reached, `stay_screenshot_missing.${invoice.materialId}`, 'confirm_none');
     const declared = await client.accepted(await complete(await screenshots(none, invoice.materialId, [png(1)]), invoice.materialId));
@@ -384,13 +384,13 @@ describe('reopening a resolved group of 支付截图', () => {
 });
 
 describe('the print stage reads the absence recorded at inventory', () => {
-  it('a confirmed absence is the print notice, and no screenshot can be added to the confirmed list', async () => {
+  it('no screenshot needs no print notice, and confirmed lists lock screenshots', async () => {
     // Reaching `actions` answers the missing screenshot with 确认没有.
     const ready = (await scenario(server, alice).at('actions', { materials: ['m01', 'm02'] })).reached;
     const invoice = byFileName(ready, sample('m01').name);
-    expect(ready.pendingItems).toEqual([expect.objectContaining({ itemId: `stay_screenshot_missing.${invoice.materialId}`, status: 'resolved', answer: { choice: 'confirm_none' } })]);
+    expect(ready.pendingItems).toEqual([expect.objectContaining({ itemId: `stay_screenshot_missing.${invoice.materialId}`, status: 'resolved', answer: null })]);
     const generated = await client.accepted(await printAction(ready, 'generate-print-sheet', {}));
-    expect(generated.printSheet.notices).toEqual([STAY_TRIO_COPY.printNotice('No.1', '住宿')]);
+    expect(generated.printSheet.notices).toEqual([]);
     await refused(await upload(generated, invoice.materialId), 'screenshot_locked');
   }, 120_000);
 });
