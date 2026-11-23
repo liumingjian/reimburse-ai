@@ -698,16 +698,17 @@ export function inventoryView(
   const paymentStays = stayInvoices.map((invoice): LabelledStay => {
     const stay = stays.get(invoice.materialId);
     const hotel = stay ? folioValues.get(stay.folioId)?.['hotelName'] : undefined;
+    const dates = adoptedDates.get(invoice.materialId);
     const seller = invoice.values['sellerName'];
     const totalAmount = invoice.values['totalAmount'] ?? '';
     return {
       invoiceId: invoice.materialId,
       totalAmount,
-      checkIn: adoptedDates.get(invoice.materialId)?.checkIn ?? null,
-      checkOut: adoptedDates.get(invoice.materialId)?.checkOut ?? null,
+      checkIn: dates?.checkIn ?? null,
+      checkOut: dates?.checkOut ?? null,
       issueDate: invoice.values['issueDate'] ?? null,
       hotelNames: [hotel, seller].filter((name): name is string => Boolean(name)),
-      label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, stay ? `${stay.checkIn}~${stay.checkOut}` : null, totalAmount),
+      label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, dates ? `${dates.checkIn}~${dates.checkOut}` : null, totalAmount),
     };
   });
   const shots = includedWorked.flatMap((w) => (w.resolved?.kind === 'payment_screenshot' && !w.items.some(isOpen) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
@@ -816,7 +817,7 @@ export function inventoryView(
     const receiptId = receiptByInvoice.get(material.materialId);
     const referenceMaterialIds = stay ? [stay.folioId] : receiptId ? [receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: detail && !receiptId ? (actualDate ? `无餐饮小票；实际用餐日期由员工填写：${actualDate}` : '员工确认没有餐饮小票，按发票金额与开票日期报销') : stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: detail && !receiptId ? (actualDate ? `无餐饮小票；实际用餐日期由员工填写：${actualDate}` : '员工确认没有餐饮小票，按发票金额与开票日期报销') : dates && !stay ? `无结账单；实际住宿日期由员工填写：${dates.checkIn} 至 ${dates.checkOut}` : stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
       lineId: `line.${key}`,
       no: index + 1,

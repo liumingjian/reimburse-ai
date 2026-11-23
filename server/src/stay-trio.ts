@@ -8,8 +8,7 @@ import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from '.
 // Lodging references enrich an invoice; actual stay dates remain mandatory without a folio.
 export type TrioPart = {
   present: boolean;
-  // A stored 确认没有 answer stands for this element: for an invoice whether or not it is present right now (it keeps the
-  // item settled if the invoice goes away); for a screenshot only while the group is empty (#332). Never for a folio.
+  // Absence is independent of the required expense details. Screenshots retain legacy absence answers.
   noneConfirmed: boolean;
 };
 
@@ -70,7 +69,6 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
     kind: 'choice',
     resolver: '要你处理',
     fields: [],
-    // A 住宿 invoice cannot go without its folio: only the folio dates the stay. Its item's only way out is excluding.
     choices: 'confirmNone' in copy ? [{ key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone }, EXCLUDE] : [EXCLUDE],
     allocation: null,
     screenshotGroup: null,
