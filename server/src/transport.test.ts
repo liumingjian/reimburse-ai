@@ -1,3 +1,5 @@
+import type { ReadbackVerdict } from '@baox/erp-executor/protocol';
+import { TEST_ERP_ACCOUNT, type Script } from './erp/testing/fake-executor';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inlineExecutor, type ParseExecutor } from './parse/executor';
 import type { ParseOutcome } from './parse/dispatch';
@@ -363,23 +365,43 @@ describe('ride-hailing without a companion itinerary', () => {
   });
 });
 
-it('confirmed manual ride facts feed print and ERP with the single original invoice', async () => {
-  const { reached: pending } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
-  let current = await client.accepted(await client.act(pending, 'answer-pending', { itemId: pending.pendingItems[0]!.itemId, answer: { choice: 'manual_fill', tripCount: '1', 'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' } }));
-  current = await client.accepted(await client.act(current, 'submit-project-assignment', { purpose: '实际行程', projects: Object.fromEntries(current.lines.map(line => [line.lineId, 'P-2307'])) }));
-  current = await client.accepted(await client.act(current, 'confirm-review', { digest: current.confirmation.digest }));
-  const printed = await client.accepted(await client.act(current, 'generate-print-sheet'));
-  expect(printed.printSheet.pages).toHaveLength(1);
-  await client.accepted(await client.act(printed, 'start-erp-write'));
-  await viWaitForPlan();
-  const plan = server.erp!.runs()[0]!.plan;
-  expect(plan.invoices).toHaveLength(1);
-  expect(printed.lines[0]).toMatchObject({ date: '2026-08-03', route: '机场 → 酒店', grossAmount: '69.19' });
+it('feeds the same confirmed trips to print and ERP with one original invoice', async () => {
+  let approval: ReadbackVerdict | undefined;
+  const erp: Script = async (plan, channel) => {
+    await channel.emit({
+      type: 'attempt_started', attemptId: 'manual-rides-import', action: 'import',
+      preconditions: { targetId: 'erp-page-1', url: plan.erpOrigin, formInstanceId: 'form-1', formMode: 'new', billNo: null, receiptRowCount: 0, detailRowCount: 0 },
+      expectedPostconditions: {}, compatibility: plan.compatibility, erpAccount: TEST_ERP_ACCOUNT,
+    });
+    const values = { 收票单: 'SPD001', 发票号码: '26312000000101557402', 不含税金额: '67.18', 税额: '2.01', 价税合计: '69.19' };
+    approval = await channel.emit({
+      type: 'readback', stage: 'after_import', readings: {
+        formMode: { readable: true, value: 'new' }, billNo: { readable: true, value: null },
+        receiptsGrid: { ok: true, columns: Object.keys(values).map(label => ({ label })), rows: [{ kind: 'data', values }] },
+        detailGrid: { ok: false, reason: 'Not filled yet' },
+      },
+    });
+    const result = { type: 'result', status: 'unknown', code: 'fixture_stop', message: 'Stopped after reading the approved expense lines.', billNo: null, capture: null } as const;
+    await channel.emit(result);
+    return result;
+  };
+  const scene = await scenario(server, signedIn).at('pending', { materials: ['m03'], erp });
+  const manual = await scene.accept('answer-pending', { itemId: scene.reached.pendingItems[0]!.itemId, answer: {
+    choice: 'manual_fill', tripCount: '2',
+    'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店', 'segments[0].amount': '30.00',
+    'segments[1].date': '2026-08-04', 'segments[1].city': '上海', 'segments[1].origin': '酒店', 'segments[1].destination': '车站', 'segments[1].amount': '39.19',
+  } });
+  const assigned = await scene.accept('submit-project-assignment', { purpose: '实际行程', projects: Object.fromEntries(manual.lines.map(line => [line.lineId, 'P-2307'])) });
+  await scene.accept('confirm-review', { digest: assigned.confirmation.digest });
+  const printed = await scene.accept('generate-print-sheet', {});
+  expect(printed.printSheet.pages).toEqual([expect.objectContaining({ bottom: null })]);
+  expect((await scene.run('start-erp-write')).stage).toBe('reconcile');
+  expect(server.erp!.runs()[0]?.plan.invoices).toEqual([expect.objectContaining({ fileName: sample('m03').name })]);
+  expect(approval).toMatchObject({ ok: true, preview: { lines: [
+    { date: '2026-08-03', origin: '机场', destination: '酒店', totalAmount: '30.00', expenseItemCode: 'FY008001' },
+    { date: '2026-08-04', origin: '酒店', destination: '车站', totalAmount: '39.19', expenseItemCode: 'FY010002' },
+  ] } });
 });
-
-async function viWaitForPlan() {
-  for (let i = 0; i < 100 && !server.erp!.runs().length; i += 1) await new Promise(resolve => setTimeout(resolve, 10));
-}
 
 it('late itineraries require an explicit decision before replacing manual trips', async () => {
   const { reached: pending } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
