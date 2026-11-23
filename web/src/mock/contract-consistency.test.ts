@@ -233,7 +233,6 @@ describe('契约 schema', () => {
       ['p2', { origin: '张江高科', destination: '漕河泾开发区' }],
       ['p3', { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }],
       ['p4', { choice: 'exclude' }],
-      ['stay_screenshot_missing.m01', { choice: 'confirm_none' }],
     ] as const;
     for (const [itemId, answer] of answers) {
       snapshot = await adapter.getSnapshot('T1');

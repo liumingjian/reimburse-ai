@@ -83,8 +83,9 @@ export function createPrintFlow(bus: MockBus): PrintFlow {
     // item at once.
     async addPaymentScreenshots(taskId, voucherMaterialId, files) {
       const snapshot = bus.draft(taskId);
-      const refused = refusal(snapshot, voucherMaterialId);
-      if (refused) return refused;
+      const invoiceLine = snapshot.lines.find((line) => line.voucherMaterialId === voucherMaterialId);
+      if (invoiceLine?.category.code !== 'accommodation') return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
+      if (snapshot.confirmation.status === 'confirmed' || snapshot.erp.status !== 'idle') return bus.fail('screenshot_locked', STAY_TRIO_COPY.changeLocked);
       if (files.some((file) => !isImage(file))) return bus.fail('not_image', PAYMENT_SCREENSHOT_ERRORS.notImage);
       const invoice = snapshot.materials.find((material) => material.materialId === voucherMaterialId);
       if (!invoice) return bus.fail('screenshot_not_applicable', PAYMENT_SCREENSHOT_ERRORS.notApplicable);
