@@ -567,6 +567,7 @@ export function inventoryView(
       w.resolved && !w.reference ? [{ materialId: w.m.materialId, fileName: w.m.fileName, kind: w.resolved.kind, layout: w.resolved.layout ?? '', kindLabel: w.resolved.kindLabel, values: w.values, ok: !w.items.some(isOpen) }] : [],
     ),
     allocationAnswers(answers),
+    answers,
   );
   for (const w of includedWorked) {
     for (const item of transport.items.get(w.m.materialId) ?? []) {

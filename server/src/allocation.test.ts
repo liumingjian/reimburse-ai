@@ -131,3 +131,14 @@ describe('pairItineraries: link by equal declared total, uniquely both ways', ()
     });
   });
 });
+
+describe('manual ride expense facts', () => {
+  it('uses actual trip cities and conserves the original invoice across entered trips', async () => {
+    const { planTransport } = await import('./allocation');
+    const invoice = { materialId: 'ride', fileName: 'ride.pdf', kind: 'vat_invoice' as const, layout: '', kindLabel: '发票', values: { ...AA_INVOICE, issueDate: '2026-07-09', itemName: '*运输服务*客运服务' }, ok: true };
+    const answer = { choice: 'manual_fill', tripCount: '2', 'segments[0].date': '2026-07-08', 'segments[0].city': '北京', 'segments[0].origin': '机场', 'segments[0].destination': '酒店', 'segments[0].amount': '30.00', 'segments[1].date': '2026-07-09', 'segments[1].city': '上海', 'segments[1].origin': '酒店', 'segments[1].destination': '车站', 'segments[1].amount': '39.19' };
+    const plan = planTransport([invoice], new Map(), new Map([['ride_itinerary_missing.ride', answer]]));
+    expect(plan.lines.get('ride')?.map(line => [line.draft.city, line.draft.grossAmount, line.referenceMaterialIds])).toEqual([['北京', '30.00', []], ['上海', '39.19', []]]);
+    expect(planTransport([invoice], new Map(), new Map([['ride_itinerary_missing.ride', { ...answer, 'segments[1].amount': '39.20' }]])).lines.get('ride')).toBeUndefined();
+  });
+});

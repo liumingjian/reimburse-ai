@@ -4,6 +4,7 @@ import { CheckmarkFilled, TrashCan, WarningAltFilled } from '@carbon/icons-react
 import {
   DINING_INVOICE_KEY,
   segmentKey,
+  rideTripFields,
   manualKindOf,
   normalizePendingAnswer,
   validatePendingAnswer,
@@ -217,10 +218,12 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   // 手工补填 opens its form here instead of answering (#342).
-  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE);
+  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE || (!!item.rideTrips && chosen === 'confirm_none'));
   const [details, setDetails] = useState<FieldAnswer>(fieldAnswer(item.answer));
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const fills = (key: string) => key === MANUAL_FILL_CHOICE && (item.manualKinds.length > 0 || !!item.expenseDetails);
+  const [absence, setAbsence] = useState(chosen === 'confirm_none');
+  const tripCount = Math.max(1, Math.min(100, Number(details.tripCount) || 1));
   const manual = item.choices.some((choice) => choice.key === 'manual');
   const excludes = item.choices.some((choice) => choice.key === 'exclude');
   const screenshot = group !== undefined && chosen !== 'exclude';
@@ -272,7 +275,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
             className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
             aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
             disabled={(resolved && !item.expenseDetails) || state.busy || (!!item.expenseDetails && !diningAllowed)}
-            onClick={() => (fills(choice.key) ? setFilling(true) : void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }))}
+            onClick={() => { if (item.rideTrips && ['manual_fill', 'confirm_none'].includes(choice.key)) { setAbsence(choice.key === 'confirm_none'); setFilling(true); } else if (fills(choice.key)) setFilling(true); else void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }); }}
           >
             {choice.label}
           </Button>
@@ -290,12 +293,17 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
       </ActionGroup>
       {filling && item.expenseDetails ? <form className="app-form" aria-label="填写费用详情" onSubmit={(event) => {
         event.preventDefault();
-        const answer = { ...details, choice: MANUAL_FILL_CHOICE };
+        const answer = { ...details, ...(item.rideTrips ? { tripCount: String(tripCount) } : {}), choice: absence ? 'confirm_none' : MANUAL_FILL_CHOICE };
         const errors = validatePendingAnswer(item, answer);
         setDetailErrors(errors);
         if (!Object.keys(errors).length) void onSubmit(answer);
       }}>
-        <FieldInputs idPrefix={`expense-${item.itemId}`} fields={item.expenseDetails} values={details} errors={detailErrors} disabled={state.busy || !diningAllowed} onChange={setDetails} />
+        {item.rideTrips ? <TextInput id={`trip-count-${item.itemId}`} labelText="行程段数" type="number" min={1} max={100} value={tripCount} onChange={(event) => {
+          const count = Number(event.target.value);
+          setDetails(previous => Object.fromEntries(Object.entries({ ...previous, tripCount: String(count) }).filter(([key]) => !key.startsWith('segments[') || rideTripFields(Math.max(1, count)).some(field => field.key === key))));
+        }} /> : null}
+        {detailErrors.tripCount ? <p role="alert">{detailErrors.tripCount}</p> : null}
+        <FieldInputs idPrefix={`expense-${item.itemId}`} fields={item.rideTrips ? rideTripFields(tripCount) : item.expenseDetails} values={details} errors={detailErrors} disabled={state.busy || !diningAllowed} onChange={setDetails} />
         <Button type="submit" disabled={state.busy || !diningAllowed}>保存费用详情</Button>
       </form> : filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
     </div>

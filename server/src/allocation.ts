@@ -1,6 +1,7 @@
-import type { MaterialKind, PendingItem } from '@baox/contract';
+import { fieldAnswer, validatePendingAnswer, rideTripFields, type PendingAnswer, type MaterialKind, type PendingItem } from '@baox/contract';
 import { KINDS, type EventDraft } from './kind-policy';
 import { CATEGORIES, vatItemCategory } from './parse/slots';
+import { missingReference } from './pending/missing-reference';
 import { cents, money } from './money-date';
 
 // 逐段分摊 (per-leg allocation) and the ride-hailing invoice ↔ itinerary pairing, ported from 50931a3:kernel/src/events.mjs
@@ -143,7 +144,7 @@ const push = <T>(map: Map<string, T[]>, key: string, value: T) => map.set(key, [
 
 // Pairs ride-hailing 全电发票 with 行程单 and decides their per-leg lines or allocation items.
 // `answers`: per invoice materialId, the per-leg totals the user gave on its allocation item (#187).
-export function planTransport(materials: readonly TransportMaterial[], answers: ReadonlyMap<string, readonly string[]> = new Map()): TransportPlan {
+export function planTransport(materials: readonly TransportMaterial[], answers: ReadonlyMap<string, readonly string[]> = new Map(), details: ReadonlyMap<string, PendingAnswer> = new Map()): TransportPlan {
   const plan: TransportPlan = { lines: new Map(), items: new Map(), links: new Map(), notes: new Map() };
   // One anchor, not two (#210): a ride-hailing invoice here is exactly a face the kind classifier categorises as
   // 市内交通. A second copy of the 税收分类 (tax classification) pattern used to live here and only knew the fine
@@ -173,6 +174,38 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
       status: 'open',
       answer: null,
     });
+  }
+
+  for (const invoice of invoices) {
+    const itemId = `ride_itinerary_missing.${invoice.materialId}`;
+    const stored = details.get(itemId);
+    const values = fieldAnswer(stored ?? null);
+    const manual = ['manual_fill', 'confirm_none'].includes(values.choice ?? '');
+    if (pairs.has(invoice.materialId) && !manual) continue;
+    const item = missingReference({ itemId, materialId: invoice.materialId, title: `「${invoice.fileName}」缺少行程单`, why: '填写实际行程的日期、城市和路线；多段行程的金额须与发票一致。', kind: 'choice', resolver: '要你处理', fields: [], choices: [], allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null }, []);
+    item.rideTrips = { total: invoice.values.totalAmount ?? '' };
+    push(plan.items, invoice.materialId, item);
+    if (!manual || Object.keys(validatePendingAnswer(item, stored!)).length) continue;
+    const legs = legsOf(values);
+    if (legs.length === 1) legs[0]!.amount = invoice.values.totalAmount ?? null;
+    const result = allocate(invoice.values, legs);
+    const face = invoice.ok ? KINDS.vat_invoice.event(invoice.values) : null;
+    if (result.status !== 'adopted' || !face) continue;
+    const itineraryId = pairs.get(invoice.materialId);
+    if (itineraryId) {
+      const itinerary = byId.get(itineraryId)!;
+      const materialLegs = legsOf(itinerary.values);
+      const validated = allocate(invoice.values, materialLegs);
+      const conflictId = `ride_itinerary_conflict.${invoice.materialId}.${itineraryId}`;
+      const decision = fieldAnswer(details.get(conflictId) ?? null).choice;
+      if (validated.status === 'adopted' && decision === 'adopt') continue;
+      push(plan.items, itineraryId, { ...item, itemId: conflictId, materialId: itineraryId, expenseDetails: undefined, rideTrips: undefined, title: '核对后补的行程单', why: `已填行程：${JSON.stringify(legs)}；材料行程：${JSON.stringify(materialLegs)}`, choices: [...(validated.status === 'adopted' ? [{ key: 'adopt', label: '采用行程单' }] : []), { key: 'exclude', label: '排除行程单，保留已填行程' }] });
+      pairs.delete(invoice.materialId);
+    }
+    plan.lines.set(invoice.materialId, result.legs.map((amount, i) => {
+      const leg = legs[i]!;
+      return { leg: legs.length === 1 ? null : leg.index, referenceMaterialIds: [], evidenceNote: null, draft: { ...face, date: leg.date!, city: leg.city, origin: leg.origin, destination: leg.destination, route: arrow(leg.origin, leg.destination), summary: `打车 · ${arrow(leg.origin, leg.destination)}`, grossAmount: amount.gross, netAmount: amount.net, taxAmount: amount.tax } };
+    }));
   }
 
   for (const [invoiceId, itineraryId] of pairs) {

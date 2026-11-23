@@ -64,7 +64,7 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', kindLabel: '高德行程单', role: 'reference', status: 'ok', linkedMaterialIds: [invoice.materialId] });
     expect(invoice).toMatchObject({ role: 'primary_voucher', status: 'ok', linkedMaterialIds: [itinerary.materialId] });
     expect(snapshot.pendingItems).toEqual([]);
-    // Clean inventory: the paired invoice no longer waits on category_city_missing (#188), so the task moves on.
+    // Clean inventory: the paired invoice no longer waits on ride_itinerary_missing (#188), so the task moves on.
     expect(snapshot.stage).toBe('project');
 
     expect(snapshot.lines.map((l) => [l.no, l.invoiceLabel, l.date, l.city, l.origin, l.destination, l.route, l.grossAmount, l.netAmount, l.taxAmount])).toEqual([
@@ -207,10 +207,10 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
     expect(header).toMatchObject({ applyDate: '2026-08-17', segmentCount: '2', itineraryTotal: '27.49' });
   });
 
-  it('an invoice without an itinerary has no expense city and waits on category_city_missing; an itinerary without its invoice links nothing', async () => {
+  it('an invoice without an itinerary has no expense city and waits on ride_itinerary_missing; an itinerary without its invoice links nothing', async () => {
     const { reached: alone } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
     const invoice = byFileName(alone, sample('m03').name);
-    expect(alone.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${invoice.materialId}`]);
+    expect(alone.pendingItems.map((item) => item.itemId)).toEqual([`ride_itinerary_missing.${invoice.materialId}`]);
     expect(alone.lines).toEqual([]);
 
     await rebooted({});
@@ -218,7 +218,7 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
     const itinerary = byFileName(orphan, sample('m04').name);
     expect(itinerary).toMatchObject({ role: 'reference', status: 'ok', linkedMaterialIds: [], checkText: expect.stringContaining('没有对上') });
     const m05 = byFileName(orphan, sample('m05').name);
-    expect(orphan.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${m05.materialId}`]);
+    expect(orphan.pendingItems.map((item) => item.itemId)).toEqual([`ride_itinerary_missing.${m05.materialId}`]);
     expect(orphan.lines).toEqual([]);
     expect(orphan.inventory.ungroupedMaterialIds).toEqual([itinerary.materialId, m05.materialId]);
   });
@@ -282,7 +282,7 @@ describe('ride-hailing invoice + 滴滴 itinerary', () => {
     const invoice = byFileName(snapshot, uploads.invoice.name);
     const itinerary = byFileName(snapshot, uploads.itinerary.name);
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'didi', status: 'pending', linkedMaterialIds: [] });
-    expect(invoice).toMatchObject({ linkedMaterialIds: [], pendingItemIds: [`category_city_missing.${invoice.materialId}`] });
+    expect(invoice).toMatchObject({ linkedMaterialIds: [], pendingItemIds: [`ride_itinerary_missing.${invoice.materialId}`] });
     expect(snapshot.lines).toEqual([]);
   });
 
@@ -338,4 +338,58 @@ describe('ride-hailing invoice + two-page 滴滴 itinerary', () => {
     ]);
     for (const line of snapshot.lines) expect(line).toMatchObject({ voucherMaterialId: voucher.materialId, referenceMaterialIds: [reference.materialId], category: { code: 'remote_city_transport' } });
   });
+});
+
+describe('ride-hailing without a companion itinerary', () => {
+  it('requires actual trips, rejects one cent off, and projects every entered trip from one voucher', async () => {
+    const { reached: pending } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
+    const itemId = pending.pendingItems[0]!.itemId;
+    expect(itemId).toMatch(/^ride_itinerary_missing\./);
+    const answer = { choice: 'confirm_none', tripCount: '2', 'segments[0].date': '2026-08-01', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店', 'segments[0].amount': '30.00', 'segments[1].date': '2026-08-02', 'segments[1].city': '上海', 'segments[1].origin': '酒店', 'segments[1].destination': '车站', 'segments[1].amount': '39.20' };
+    expect((await client.act(pending, 'answer-pending', { itemId, answer })).status).toBe(400);
+    const ready = await client.accepted(await client.act(pending, 'answer-pending', { itemId, answer: { ...answer, 'segments[1].amount': '39.19' } }));
+    expect(ready.stage).toBe('project');
+    expect(ready.lines.map(line => [line.date, line.route, line.grossAmount, line.referenceMaterialIds])).toEqual([
+      ['2026-08-01', '机场 → 酒店', '30.00', []], ['2026-08-02', '酒店 → 车站', '39.19', []],
+    ]);
+    expect(new Set(ready.lines.map(line => line.voucherMaterialId)).size).toBe(1);
+    const single = await client.accepted(await client.act(ready, 'answer-pending', { itemId, answer: { choice: 'manual_fill', tripCount: '1', 'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '家', 'segments[0].destination': '公司' } }));
+    expect(single.lines).toHaveLength(1);
+    expect(single.lines[0]).toMatchObject({ grossAmount: '69.19', date: '2026-08-03' });
+    const excluded = await client.accepted(await client.act(single, 'answer-pending', { itemId, answer: { choice: 'exclude' } }));
+    expect(excluded.lines).toEqual([]);
+  });
+});
+
+it('confirmed manual ride facts feed print and ERP with the single original invoice', async () => {
+  const { reached: pending } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
+  let current = await client.accepted(await client.act(pending, 'answer-pending', { itemId: pending.pendingItems[0]!.itemId, answer: { choice: 'manual_fill', tripCount: '1', 'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' } }));
+  current = await client.accepted(await client.act(current, 'submit-project-assignment', { purpose: '实际行程', projects: Object.fromEntries(current.lines.map(line => [line.lineId, 'P-2307'])) }));
+  current = await client.accepted(await client.act(current, 'confirm-review', { digest: current.confirmation.digest }));
+  const printed = await client.accepted(await client.act(current, 'generate-print-sheet'));
+  expect(printed.printSheet.pages).toHaveLength(1);
+  await client.accepted(await client.act(printed, 'start-erp-write'));
+  await viWaitForPlan();
+  const plan = server.erp!.runs()[0]!.plan;
+  expect(plan.invoices).toHaveLength(1);
+  expect(printed.lines[0]).toMatchObject({ date: '2026-08-03', route: '机场 → 酒店', grossAmount: '69.19' });
+});
+
+async function viWaitForPlan() {
+  for (let i = 0; i < 100 && !server.erp!.runs().length; i += 1) await new Promise(resolve => setTimeout(resolve, 10));
+}
+
+it('late itineraries require an explicit decision before replacing manual trips', async () => {
+  const { reached: pending } = await scenario(server, signedIn).at('pending', { materials: ['m03'] });
+  const manual = await client.accepted(await client.act(pending, 'answer-pending', { itemId: pending.pendingItems[0]!.itemId, answer: { choice: 'manual_fill', tripCount: '1', 'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' } }));
+  await client.accepted(await client.act(manual, 'reopen-upload'));
+  await client.upload(manual.task.taskId, [sample('m04')]);
+  const uploaded = await client.current(manual.task.taskId);
+  await client.accepted(await client.act(uploaded, 'start-inventory'));
+  const late = await client.settled(manual.task.taskId);
+  const conflict = late.pendingItems.find(item => item.itemId.startsWith('ride_itinerary_conflict.'))!;
+  expect(conflict.status).toBe('open');
+  const adopted = await client.accepted(await client.act(late, 'answer-pending', { itemId: conflict.itemId, answer: { choice: 'adopt' } }));
+  expect(adopted.lines).toHaveLength(3);
+  expect(adopted.lines[0]!.date).toBe('2026-08-10');
 });
