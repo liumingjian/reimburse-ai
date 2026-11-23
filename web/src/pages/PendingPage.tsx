@@ -218,7 +218,9 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   // 手工补填 opens its form here instead of answering (#342).
   const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE);
-  const fills = (key: string) => key === MANUAL_FILL_CHOICE && item.manualKinds.length > 0;
+  const [details, setDetails] = useState<FieldAnswer>(fieldAnswer(item.answer));
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const fills = (key: string) => key === MANUAL_FILL_CHOICE && (item.manualKinds.length > 0 || !!item.expenseDetails);
   const manual = item.choices.some((choice) => choice.key === 'manual');
   const excludes = item.choices.some((choice) => choice.key === 'exclude');
   const screenshot = group !== undefined && chosen !== 'exclude';
@@ -269,7 +271,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
             kind={choice.key === 'exclude' ? 'ghost' : 'secondary'}
             className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
             aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
-            disabled={resolved || state.busy}
+            disabled={(resolved && !item.expenseDetails) || state.busy || (!!item.expenseDetails && !diningAllowed)}
             onClick={() => (fills(choice.key) ? setFilling(true) : void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }))}
           >
             {choice.label}
@@ -286,7 +288,16 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
           </Button>
         ) : null}
       </ActionGroup>
-      {filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
+      {filling && item.expenseDetails ? <form className="app-form" aria-label="填写费用详情" onSubmit={(event) => {
+        event.preventDefault();
+        const answer = { ...details, choice: MANUAL_FILL_CHOICE };
+        const errors = validatePendingAnswer(item, answer);
+        setDetailErrors(errors);
+        if (!Object.keys(errors).length) void onSubmit(answer);
+      }}>
+        <FieldInputs idPrefix={`expense-${item.itemId}`} fields={item.expenseDetails} values={details} errors={detailErrors} disabled={state.busy || !diningAllowed} onChange={setDetails} />
+        <Button type="submit" disabled={state.busy || !diningAllowed}>保存费用详情</Button>
+      </form> : filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
     </div>
   );
 }
@@ -450,7 +461,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   };
   // A resolved screenshot item the filer can still change (#332): reachable from the all-done view too.
   const diningAllowed = snapshot.allowedActions.includes('change_dining_evidence');
-  const reopenable = (item: PendingItem) => (diningAllowed && item.dining?.kind === 'receipt') || item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
+  const reopenable = (item: PendingItem) => (diningAllowed && (item.dining?.kind === 'receipt' || !!item.expenseDetails)) || item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
 
   // 选中项的详情：左边原件，右边标题、原因与表单，再往下是读出的字段。
   const detailOf = (item: PendingItem) => {
@@ -528,7 +539,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                           {reopenable(item) ? (
                             <div>
                               <Button kind="ghost" size="sm" aria-expanded={opened?.itemId === item.itemId} onClick={() => setSelectedId(opened?.itemId === item.itemId ? null : item.itemId)}>
-                                {item.dining?.kind === 'receipt' ? '查看或修改关联' : STAY_TRIO_COPY.screenshot.reopen}
+                                {item.expenseDetails ? '查看或修改费用详情' : item.dining?.kind === 'receipt' ? '查看或修改关联' : STAY_TRIO_COPY.screenshot.reopen}
                               </Button>
                             </div>
                           ) : null}

@@ -82,7 +82,7 @@ export const segmentKey = (index: number): string => `segment-${index}`;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)\.\d{2}$/;
 
-type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & Partial<Pick<PendingItem, 'allocation' | 'manualKinds'>>;
+type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & Partial<Pick<PendingItem, 'allocation' | 'manualKinds' | 'expenseDetails'>>;
 
 // 返回按字段 key 归档的错误；空对象表示合法。值先 trim 再判定。
 export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer): Record<string, string> {
@@ -110,6 +110,7 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
   if (item.kind === 'choice') {
     const chosen = (values[PENDING_CHOICE_KEY] ?? '').trim();
     if (!item.choices.some((choice) => choice.key === chosen)) errors[PENDING_CHOICE_KEY] = PENDING_ANSWER_ERRORS.choice;
+    else if (chosen === MANUAL_FILL_CHOICE && item.expenseDetails) Object.assign(errors, fieldErrors(item.expenseDetails, values));
     else if (chosen === MANUAL_FILL_CHOICE && item.manualKinds?.length) {
       const manual = manualKindOf(item, values);
       if (!manual) errors[MANUAL_KIND_KEY] = PENDING_ANSWER_ERRORS.kind;
@@ -146,14 +147,15 @@ function fieldErrors(fields: readonly PendingField[], values: FieldAnswer): Reco
 }
 
 // 去掉首尾空白后的答复；只保留该项定义的键（逐段分摊只保留 amounts 或 giveUp）。
-export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'> & Partial<Pick<PendingItem, 'manualKinds'>>, answer: PendingAnswer): PendingAnswer {
+export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'> & Partial<Pick<PendingItem, 'manualKinds' | 'expenseDetails'>>, answer: PendingAnswer): PendingAnswer {
   if (item.kind === 'allocation') {
     if (!isAllocationAnswer(answer)) return { amounts: [] };
     return 'giveUp' in answer ? { giveUp: true } : { amounts: answer.amounts.map((amount) => amount.trim()) };
   }
   const values = fieldAnswer(answer);
   const manual = item.kind === 'choice' && values[PENDING_CHOICE_KEY]?.trim() === MANUAL_FILL_CHOICE ? manualKindOf(item, values) : undefined;
-  const keys = manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key), ...(manual.diningAssignment ? [DINING_INVOICE_KEY] : [])] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
+  const details = item.kind === 'choice' && values[PENDING_CHOICE_KEY]?.trim() === MANUAL_FILL_CHOICE ? item.expenseDetails : undefined;
+  const keys = details ? [PENDING_CHOICE_KEY, ...details.map((field) => field.key)] : manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key), ...(manual.diningAssignment ? [DINING_INVOICE_KEY] : [])] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
   const out: Record<string, string> = {};
   for (const key of keys) out[key] = (values[key] ?? '').trim();
   return out;

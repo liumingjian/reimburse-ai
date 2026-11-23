@@ -620,13 +620,13 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         } else {
           const found = view.answerables.get(itemId);
           if (!found) return { code: 'item_not_found', message: ACTION_COPY.itemNotFound };
-          if (found.item.status !== 'open') return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
+          if (found.item.status !== 'open' && !found.item.expenseDetails) return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
           verdict = judgeAnswer(found.item, answer, found.check);
           materialId = found.item.materialId;
         }
         if (!verdict.ok) return { code: verdict.code, message: verdict.message };
         const selectedInvoiceId = fieldAnswer(verdict.answer)[DINING_INVOICE_KEY];
-        if (selectedInvoiceId || itemId === editAddress(materialId, DINING_INVOICE_FIELD)) {
+        if (view.answerables.get(itemId)?.item.expenseDetails || selectedInvoiceId || itemId === editAddress(materialId, DINING_INVOICE_FIELD)) {
           const admission = taskPolicy(facts, loaded.erp).admit('change_dining_evidence', token);
           if (admission === 'stale') throw new StaleStepError(await snapshot(taskId));
           if (admission !== 'ok') return admission;

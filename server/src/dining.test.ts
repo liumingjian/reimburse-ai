@@ -31,6 +31,29 @@ beforeEach(async () => {
 afterEach(() => server.close());
 
 describe('dining invoice evidence', () => {
+  it('keeps invoice facts while recording absence and correcting the actual meal date', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11'] });
+    const item = scene.reached.pendingItems[0]!;
+    const original = scene.reached.lines[0]!;
+    const kept = await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'confirm_none' } });
+    expect(kept.stage).toBe('project');
+    expect(kept.lines[0]).toMatchObject({ date: original.date, grossAmount: '240.00', referenceMaterialIds: [] });
+    const corrected = await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', date: '2026-08-12' } });
+    expect(corrected.lines[0]).toMatchObject({ date: '2026-08-12', grossAmount: original.grossAmount, netAmount: original.netAmount, taxAmount: original.taxAmount });
+    expect(corrected.materials[0]!.fields).toEqual(kept.materials[0]!.fields);
+    expect(corrected.pendingItems[0]!.answer).toEqual({ choice: 'manual_fill', date: '2026-08-12' });
+    const assigned = await scene.accept('submit-project-assignment', { purpose: '客户招待', projects: { [corrected.lines[0]!.lineId]: 'P-2307' } });
+    const confirmed = await scene.accept('confirm-review', { digest: assigned.confirmation.digest });
+    expect(confirmed.stage).toBe('actions');
+    expect(await scene.refused('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', date: '2026-08-13' } })).toMatchObject({ code: 'dining_evidence_locked' });
+    await scene.accept('reopen-upload');
+    const inventoried = await scene.run('start-inventory');
+    expect(inventoried.lines[0]!.date).toBe('2026-08-12');
+    const revised = await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', date: '2026-08-13' } });
+    const reassigned = await scene.accept('submit-project-assignment', { purpose: '客户招待', projects: { [revised.lines[0]!.lineId]: 'P-2307' } });
+    expect((await scene.accept('confirm-review', { digest: reassigned.confirmation.digest })).lines[0]!.date).toBe('2026-08-13');
+  });
+
   it('saves manual receipt fields without a selection and never persists the control as a fact', async () => {
     const scene = await scenario(server).at('pending', { materials: ['m11', unknownSlip] });
     const receipt = byFileName(scene.reached, unknownSlip.name);
@@ -336,7 +359,7 @@ describe('dining invoice evidence', () => {
     expect(paired.lines[0]?.referenceMaterialIds).toEqual([byFileName(paired, sample('m13').name).materialId]);
   });
 
-  it('shows a hospitality line last and requires a receipt with exclude as its only answer', async () => {
+  it('shows a hospitality line last and offers the missing receipt workflow', async () => {
     const scene = await scenario(server).at('pending', { materials: ['m11', 'm07', 'm01', 'm02'], stayTrio: 'answered' });
     const snapshot = scene.reached;
     const invoice = byFileName(snapshot, sample('m11').name);
@@ -345,9 +368,9 @@ describe('dining invoice evidence', () => {
     expect(snapshot.lines.at(-1)).toMatchObject({ voucherMaterialId: invoice.materialId, expenseItemCode: 'FY009001', expenseItemName: '招待', grossAmount: '240.00' });
     const itemId = `dining_receipt_missing.${invoice.materialId}`;
     expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toEqual([
-      expect.objectContaining({ itemId, materialId: invoice.materialId, title: '餐饮发票「餐饮_发票.pdf」缺少餐饮小票', choices: [{ key: 'exclude', label: '排除这份材料' }] }),
+      expect.objectContaining({ itemId, materialId: invoice.materialId, title: '餐饮发票「餐饮_发票.pdf」缺少餐饮小票', choices: [{ key: 'manual_fill', label: '手工填写' }, { key: 'confirm_none', label: '确认没有账单' }, { key: 'exclude', label: '忽略发票' }] }),
     ]);
-    expect(await scene.refused('answer-pending', { itemId, answer: { choice: 'confirm_none' } })).toMatchObject({ code: 'invalid_answer' });
+    expect(await scene.refused('answer-pending', { itemId, answer: { choice: 'manual_fill', date: '2026-02-30' } })).toMatchObject({ code: 'invalid_answer' });
     const unchanged = await scene.snapshot();
     expect(unchanged.stage).toBe('pending');
     expect(unchanged.pendingItems.find((item) => item.itemId === itemId)?.status).toBe('open');
