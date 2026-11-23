@@ -21,6 +21,7 @@ import {
   STAY_TRIO_COPY,
   PROJECT_ASSIGNMENT_ERRORS,
   fieldAnswer,
+  pendingSupplementLabel,
   type ActionError,
   type AssignProjectLinesInput,
   type Corners,
@@ -501,7 +502,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const judged = judgeFiles(files);
       return mutate(taskId, token, 'change_dining_evidence', async ({ tx, facts, view, at, revision }) => {
         const item = view.answerables.get(pendingItemId)?.item;
-        if (!item || item.status !== 'open' || !item.dining?.supplement) return { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' };
+        if (!item || !pendingSupplementLabel(item)) return { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传材料。' };
         const accepted = await writeBatch(tx, taskId, judged, at);
         if (accepted.length > 0) await tx.insertInto('inventory_run').values({ run_id: randomUUID(), task_id: taskId, account_id: accountId, version_no: facts.versionNo + 1, revision, started_at: at }).execute();
       });
