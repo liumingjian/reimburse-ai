@@ -23,7 +23,7 @@ describe('a hotel invoice with its 全季 folio', () => {
     await client.accepted(await client.act(uploaded, 'start-inventory'));
     const inventoried = await client.settled(task.taskId);
     // Paired, so the 住宿 trio check (#213) asks only for the payment screenshot; answered here with 确认没有.
-    expect(inventoried.pendingItems.map((item) => item.itemId)).toEqual([`stay_screenshot_missing.${byFileName(inventoried, sample('m01').name).materialId}`]);
+    expect(inventoried.pendingItems).toEqual([]);
     const snapshot = await client.withoutStayGaps(inventoried);
 
     const invoice = byFileName(snapshot, sample('m01').name);
@@ -99,7 +99,7 @@ describe('a hotel invoice with a photographed folio of another chain', () => {
     await client.accepted(await client.act(uploaded, 'start-inventory'));
     const inventoried = await client.settled(task.taskId, 120_000);
     // Paired, so the 住宿 trio check (#213) asks only for the payment screenshot; answered here with 确认没有.
-    expect(inventoried.pendingItems.map((item) => item.itemId)).toEqual([`stay_screenshot_missing.${byFileName(inventoried, sample('m01').name).materialId}`]);
+    expect(inventoried.pendingItems).toEqual([]);
     const snapshot = await client.withoutStayGaps(inventoried);
 
     const invoice = byFileName(snapshot, sample('m01').name);

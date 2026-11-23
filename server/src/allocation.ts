@@ -185,7 +185,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
     const manual = ['manual_fill', 'confirm_none'].includes(values.choice ?? '');
     if (pairs.has(invoice.materialId) && !manual) continue;
     const item = missingReference({ itemId, materialId: invoice.materialId, title: `「${invoice.fileName}」缺少行程单`, why: '填写实际行程的日期、城市和路线；多段行程的金额须与发票一致。', kind: 'choice', resolver: '要你处理', fields: [], choices: [], allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null }, []);
-    if (pairs.has(invoice.materialId)) item.referenceSupplement = undefined;
+    if (pairs.has(invoice.materialId)) { item.referenceSupplement = undefined; item.title = `「${invoice.fileName}」的行程详情`; item.why = ''; }
     item.rideTrips = { total: invoice.values.totalAmount ?? '' };
     push(plan.items, invoice.materialId, item);
     if (!manual || Object.keys(validatePendingAnswer(item, stored!)).length) continue;
@@ -199,7 +199,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
       const itinerary = byId.get(itineraryId)!;
       const materialLegs = legsOf(itinerary.values);
       const validated = allocate(invoice.values, materialLegs);
-      const fingerprint = createHash('sha256').update(JSON.stringify(materialLegs)).digest('hex').slice(0, 16);
+      const fingerprint = createHash('sha256').update(JSON.stringify([materialLegs, legs])).digest('hex').slice(0, 16);
       const conflictId = `ride_itinerary_conflict.${invoice.materialId}.${itineraryId}.${fingerprint}`;
       const decision = fieldAnswer(details.get(conflictId) ?? null).choice;
       const equivalent = legs.length === materialLegs.length && legs.every((leg, index) => {

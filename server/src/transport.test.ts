@@ -392,6 +392,7 @@ it('late itineraries require an explicit decision before replacing manual trips'
   const conflict = late.pendingItems.find(item => item.itemId.startsWith('ride_itinerary_conflict.'))!;
   expect(conflict.status).toBe('open');
   const adopted = await client.accepted(await client.act(late, 'answer-pending', { itemId: conflict.itemId, answer: { choice: 'adopt' } }));
+  expect(adopted.pendingItems.find(item => item.itemId === pending.pendingItems[0]!.itemId)).toMatchObject({ status: 'resolved', expenseDetails: [], rideTrips: { total: '69.19' } });
   expect(adopted.lines).toHaveLength(3);
   expect(adopted.lines[0]!.date).toBe('2026-08-10');
 });

@@ -52,8 +52,7 @@
       "checkText": "二维码无法识读，仅作提示：以 PDF 文本层为准",
       "linkedMaterialIds": [],
       "pendingItemIds": [
-        "stay_folio_missing.00000000-0000-4000-8000-000000000003",
-        "stay_screenshot_missing.00000000-0000-4000-8000-000000000003"
+        "stay_folio_missing.00000000-0000-4000-8000-000000000003"
       ],
       "originalUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
       "previewUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
@@ -247,33 +246,6 @@
         }
       ],
       "referenceSupplement": true
-    },
-    {
-      "itemId": "stay_screenshot_missing.00000000-0000-4000-8000-000000000003",
-      "materialId": "00000000-0000-4000-8000-000000000003",
-      "title": "住宿发票「全季酒店_发票.pdf」缺少支付截图",
-      "why": "住宿报销要发票、结账单、支付截图三样。这张住宿发票（价税合计 3640.00 元）需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张），上传后会重新盘点，截图金额合计不少于发票价税合计就算齐了；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。",
-      "kind": "choice",
-      "resolver": "要你处理",
-      "fields": [],
-      "choices": [
-        {
-          "key": "confirm_none",
-          "label": "确认没有支付截图"
-        },
-        {
-          "key": "exclude",
-          "label": "排除这份材料"
-        }
-      ],
-      "allocation": null,
-      "screenshotGroup": {
-        "screenshotIds": [],
-        "locked": false
-      },
-      "manualKinds": [],
-      "status": "resolved",
-      "answer": null
     }
   ],
   "blockers": [],

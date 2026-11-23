@@ -397,3 +397,19 @@ describe('dining invoice evidence', () => {
     expect(done.lines.map((line) => line.category.code)).toEqual(['long_distance', 'accommodation']);
   });
 });
+
+for (const resolution of ['adopt', 'exclude']) {
+  it(`resolves a late receipt date conflict with ${resolution}`, async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11'] });
+    const item = scene.reached.pendingItems[0]!;
+    await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', date: '2026-08-01' } });
+    await scene.accept('reopen-upload');
+    await api(() => scene.client).upload(scene.task.taskId, [sample('m13')]);
+    const late = await scene.run('start-inventory');
+    const conflict = late.pendingItems.find(entry => entry.itemId.startsWith('dining_date_conflict.'))!;
+    expect(conflict.why).toContain('2026-08-01');
+    const done = await scene.accept('answer-pending', { itemId: conflict.itemId, answer: { choice: resolution } });
+    expect(done.stage).toBe('project');
+    expect(done.lines[0]!.date).toBe(resolution === 'exclude' ? '2026-08-01' : '2026-08-18');
+  });
+}

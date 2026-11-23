@@ -218,7 +218,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   // 手工补填 opens its form here instead of answering (#342).
-  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE || (chosen === 'confirm_none' && (!!item.rideTrips || (!!item.expenseDetails && item.status === 'open'))));
+  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE || (chosen === 'confirm_none' && (!!item.rideTrips || !!item.expenseDetails)));
   const [details, setDetails] = useState<FieldAnswer>(fieldAnswer(item.answer));
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const fills = (key: string) => key === MANUAL_FILL_CHOICE && (item.manualKinds.length > 0 || !!item.expenseDetails);
@@ -275,7 +275,14 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
             className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
             aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
             disabled={(resolved && !item.expenseDetails) || state.busy || (!!item.expenseDetails && !diningAllowed)}
-            onClick={() => { if (item.rideTrips && ['manual_fill', 'confirm_none'].includes(choice.key)) { setAbsence(choice.key === 'confirm_none'); setFilling(true); } else if (fills(choice.key)) setFilling(true); else { if (choice.key === 'confirm_none' && item.expenseDetails) setFilling(true); void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }); } }}
+            onClick={() => {
+              if (item.expenseDetails && ['manual_fill', 'confirm_none'].includes(choice.key)) {
+                setAbsence(choice.key === 'confirm_none');
+                setFilling(true);
+                if (choice.key === 'confirm_none' && !item.rideTrips && details.choice !== MANUAL_FILL_CHOICE) void onSubmit({ choice: choice.key });
+              } else if (fills(choice.key)) setFilling(true);
+              else void onSubmit({ [PENDING_CHOICE_KEY]: choice.key });
+            }}
           >
             {choice.label}
           </Button>
@@ -293,7 +300,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
       </ActionGroup>
       {filling && item.expenseDetails ? <form className="app-form" aria-label="填写费用详情" onSubmit={(event) => {
         event.preventDefault();
-        const answer = { ...details, ...(item.rideTrips ? { tripCount: String(tripCount) } : {}), choice: absence ? 'confirm_none' : MANUAL_FILL_CHOICE };
+        const answer = { ...details, ...(item.rideTrips ? { tripCount: String(tripCount) } : {}), choice: absence && item.rideTrips ? 'confirm_none' : MANUAL_FILL_CHOICE };
         const errors = validatePendingAnswer(item, answer);
         setDetailErrors(errors);
         if (!Object.keys(errors).length) void onSubmit(answer);

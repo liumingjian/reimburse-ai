@@ -113,7 +113,7 @@ describe('an e-invoice whose text runs are split', () => {
     const splitNumber = byFileName(snapshot, sample('r01').name);
     // Its only open item is the 住宿 trio's missing 结账单 (#213): no folio is printed for these fixtures, and a 住宿
     // invoice cannot go without one.
-    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${splitNumber.materialId}`, `stay_screenshot_missing.${splitNumber.materialId}`] });
+    expect(splitNumber).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（专票）', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${splitNumber.materialId}`] });
     expect(fieldValues(splitNumber, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127801',
       issueDate: '2026-08-20',
@@ -129,7 +129,7 @@ describe('an e-invoice whose text runs are split', () => {
     });
 
     const spacedTitle = byFileName(snapshot, sample('r02').name);
-    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${spacedTitle.materialId}`, `stay_screenshot_missing.${spacedTitle.materialId}`] });
+    expect(spacedTitle).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', kindLabel: '全电发票（普票）', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${spacedTitle.materialId}`] });
     expect(fieldValues(spacedTitle, EINVOICE)).toEqual({
       invoiceNumber: '26312000000098127802',
       issueDate: '2026-08-21',
@@ -247,7 +247,7 @@ describe('a whole trip uploaded in one go', () => {
     const rail = byFileName(snapshot, sample('r204').name);
 
     for (const invoice of [splitNumber, spacedTitle]) {
-      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${invoice.materialId}`, `stay_screenshot_missing.${invoice.materialId}`] });
+      expect(invoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '住宿', role: 'primary_voucher', status: 'pending', pendingItemIds: [`stay_folio_missing.${invoice.materialId}`] });
     }
     expect(rideInvoice).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', categoryLabel: '市内交通', role: 'primary_voucher', status: 'ok', pendingItemIds: [], linkedMaterialIds: [itinerary.materialId] });
     expect(itinerary).toMatchObject({ kind: 'ride_itinerary', layout: 'amap', role: 'reference', status: 'ok', pendingItemIds: [], linkedMaterialIds: [rideInvoice.materialId] });

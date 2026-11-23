@@ -52,10 +52,10 @@ export function manualStayDates(invoiceId: string, answers: StoredAnswers): { ch
   return values['choice'] === 'manual_fill' && values['checkIn'] && values['checkOut'] && values['checkOut'] >= values['checkIn']
     ? { checkIn: values['checkIn'], checkOut: values['checkOut'] } : null;
 }
-export const folioAdoptionId = (stay: Stay): string => `stay_dates_conflict.${stay.folioId}.${stay.checkIn}.${stay.checkOut}`;
+export const folioAdoptionId = (stay: Stay, manual: { checkIn: string; checkOut: string } | null): string => `stay_dates_conflict.${stay.folioId}.${stay.checkIn}.${stay.checkOut}.${manual?.checkIn ?? ''}.${manual?.checkOut ?? ''}`;
 export function adoptedStayDates(invoiceId: string, stay: Stay | undefined, answers: StoredAnswers): { checkIn: string; checkOut: string } | null {
   const manual = manualStayDates(invoiceId, answers);
-  return stay && (!manual || (stay.checkIn === manual.checkIn && stay.checkOut === manual.checkOut) || fieldAnswer(answers.get(folioAdoptionId(stay)) ?? null)['choice'] === 'adopt_folio') ? stay : manual;
+  return stay && (!manual || (stay.checkIn === manual.checkIn && stay.checkOut === manual.checkOut) || fieldAnswer(answers.get(folioAdoptionId(stay, manual)) ?? null)['choice'] === 'adopt_folio') ? stay : manual;
 }
 
 function missingItem(element: StayTrioElement, material: TrioVoucher): PendingItem {
@@ -107,14 +107,18 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
     };
     const settled = settle(proposed, answers, check);
     if (element === 'folio') {
-      if (manualStayDates(material.materialId, answers)) settled.choices = settled.choices.filter((choice) => choice.key !== 'confirm_none');
       checks.set(settled.itemId, check);
       if (confirmsNone(settled.answer)) settled.status = 'open';
     }
-    if (!present) raise(material, settled);
+    if (present && element === 'folio' && manualStayDates(material.materialId, answers)) {
+      settled.title = `住宿发票「${material.fileName}」的住宿日期`;
+      settled.why = '';
+      delete settled.referenceSupplement;
+      raise(material, settled);
+    } else if (!present) raise(material, settled);
     return { present, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
   };
-  // The screenshot item is always raised; a stored answer settles it, and so does a complete group. A screenshot
+  // Supplied screenshots raise an item; a stored answer or a complete group settles it. A screenshot
   // supersedes 确认没有 (#332): while the group is not empty that choice does not fit, so a stored one leaves the item
   // open until 「已传齐」 and a new one is refused.
   const screenshotPart = (invoice: TrioVoucher): TrioPart => {
@@ -132,7 +136,7 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
     const check: AnswerCheck = (answer) => (count > 0 && confirmsNone(answer) ? PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots : null);
     const settled = settle(asked, answers, check);
     const done = count === 0 || group.complete || (byAmount && owed === null);
-    raise(invoice, settled.status === 'open' && done ? { ...settled, status: 'resolved' } : settled);
+    if (count > 0) raise(invoice, settled.status === 'open' && done ? { ...settled, status: 'resolved' } : settled);
     checks.set(settled.itemId, check);
     return { present: count > 0, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
   };
@@ -145,7 +149,7 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
     const manual = manualStayDates(invoice.materialId, answers);
     if (stay && manual && (stay.checkIn !== manual.checkIn || stay.checkOut !== manual.checkOut)) {
       const folio = folios.find((folio) => folio.materialId === stay.folioId)!;
-      raise(folio, settle({ ...missingItem('folio', folio), itemId: folioAdoptionId(stay),
+      raise(folio, settle({ ...missingItem('folio', folio), itemId: folioAdoptionId(stay, manual),
         title: '结账单日期与手工填写的住宿日期不同',
         why: `手工填写：${manual.checkIn} 至 ${manual.checkOut}；结账单：${stay.checkIn} 至 ${stay.checkOut}`,
         choices: [{ key: 'adopt_folio', label: '采用结账单日期' }, { ...EXCLUDE, label: '忽略结账单，保留手工日期' }],

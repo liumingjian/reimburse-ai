@@ -14,16 +14,7 @@ test('associated hotel bill leads pending review and project previews preserve s
     expect((await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: sample.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, sample.file)) } } })).ok()).toBe(true);
   }
   expect((await page.request.post(`/api/tasks/${taskId}/actions/start-inventory`, { data: { stepToken: (await snapshot()).step.stepToken } })).ok()).toBe(true);
-  await expect.poll(async () => (await snapshot()).pendingItems.some((item) => item.itemId.startsWith('stay_screenshot_missing.'))).toBe(true);
-  await page.goto(`/#/task/${taskId}/pending`);
-  await page.getByRole('button', { name: '修改支付截图', exact: true }).click();
-  const preview = page.getByRole('region', { name: '住宿材料预览' });
-  await expect(preview.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
-  // The folio PDF is rendered to an image in the original viewer; the invoice is never offered (QA 2026-09-30).
-  await expect(preview.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toHaveAttribute('src', /^blob:/);
-  await expect(preview.getByRole('button', { name: '全屏查看', exact: true })).toBeVisible();
-  await expect(preview.getByRole('tab')).toHaveCount(1);
-
+  await expect.poll(async () => (await snapshot()).stage).toBe('project');
   await answerStayGaps(page, taskId);
   await page.request.post('/api/project-book/intake', { data: { number: 'HOTEL-101', name: '住宿项目' } });
   await page.goto(`/#/task/${taskId}/project`);

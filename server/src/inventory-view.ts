@@ -746,12 +746,24 @@ export function inventoryView(
       const base = choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]);
       const proposed = mismatch ? base : missingReference(base, [{ key: 'date', label: '实际用餐日期', required: true, format: 'date', placeholder: 'YYYY-MM-DD' }]);
       const item = settle(proposed, answers);
+      if (!fieldAnswer(item.answer).date && !mismatch) item.answer = { ...fieldAnswer(item.answer), date: draft.date };
       if (receiptByInvoice.has(material.materialId)) {
         delete item.referenceSupplement;
         item.title = `餐饮发票「${material.fileName}」的用餐日期`;
         item.why = '';
       } else {
         item.dining = { kind: 'invoice', supplement: 'receipt' };
+      }
+      const receiptId = receiptByInvoice.get(material.materialId);
+      const receipt = diningReceipts.find(receipt => receipt.m.materialId === receiptId);
+      const manualDate = fieldAnswer(item.answer).choice === MANUAL_FILL_CHOICE ? fieldAnswer(item.answer).date : undefined;
+      const receiptDate = receipt?.values.receiptDate;
+      if (receipt && manualDate && receiptDate && receiptDate !== manualDate) {
+        const conflictId = `dining_date_conflict.${material.materialId}.${receiptId}.${manualDate}.${receiptDate}`;
+        const conflict = settle(choice(conflictId, receipt.m.materialId, '餐饮小票日期与手工填写的用餐日期不同', `手工填写：${manualDate}；餐饮小票：${receiptDate}`, [{ key: 'adopt', label: '采用餐饮小票日期' }, { ...EXCLUDE, label: '排除餐饮小票，保留手工日期' }]), answers);
+        diningItems.set(receipt.m.materialId, [conflict]);
+        answerables.set(conflict.itemId, { item: conflict });
+        pendingItems.push(conflict);
       }
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
@@ -775,7 +787,7 @@ export function inventoryView(
       item.dining = { kind: 'receipt', supplement: null, assignment: assignmentOf(decision.receiptId) };
       item.status = decision.kind === 'selected_paired' ? 'resolved' : 'open';
       item.answer = { value: decision.invoiceId };
-      diningItems.set(decision.receiptId, [item]);
+      diningItems.set(decision.receiptId, [...(diningItems.get(decision.receiptId) ?? []), item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
     }
@@ -812,7 +824,9 @@ export function inventoryView(
     const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
     const detail = diningItems.get(material.materialId)?.find((item) => item.expenseDetails && item.status === 'resolved');
-    const actualDate = detail && fieldAnswer(detail.answer)[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? fieldAnswer(detail.answer)['date'] : undefined;
+    const adoptedReceipt = diningReceipts.find(receipt => receipt.m.materialId === receiptByInvoice.get(material.materialId));
+    const adoptedDate = diningItems.get(adoptedReceipt?.m.materialId ?? '')?.find(item => item.itemId.startsWith('dining_date_conflict.') && fieldAnswer(item.answer).choice === 'adopt') ? adoptedReceipt?.values.receiptDate : undefined;
+    const actualDate = adoptedDate ?? (detail && fieldAnswer(detail.answer)[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? fieldAnswer(detail.answer)['date'] : undefined);
     const dates = adoptedDates.get(material.materialId);
     const draft = dates ? { ...own, date: dates.checkIn, endDate: dates.checkOut } : actualDate ? { ...own, date: actualDate } : own;
     const receiptId = receiptByInvoice.get(material.materialId);

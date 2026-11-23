@@ -19,6 +19,7 @@ it('requires actual stay dates after confirming no folio and accepts same-day st
   const done = await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', checkIn: '2026-08-12', checkOut: '2026-08-12' } });
   expect(done.stage).toBe('project');
   expect(done.lines[0]).toMatchObject({ date: '2026-08-12', endDate: '2026-08-12', grossAmount: '3640.00', referenceMaterialIds: [] });
+  expect(done.pendingItems.some(entry => entry.itemId.startsWith('stay_screenshot_missing.'))).toBe(false);
   expect(done.materials[0]!.fields).toEqual(scene.reached.materials[0]!.fields);
 });
 
@@ -36,6 +37,7 @@ for (const resolution of ['adopt_folio', 'exclude']) {
     expect(late.lines[0]).toMatchObject({ date: '2026-08-10', endDate: '2026-08-20' });
     const done = await scene.accept('answer-pending', { itemId: conflict.itemId, answer: { choice: resolution } });
     expect(done.stage).toBe('project');
+    expect(done.pendingItems.find(entry => entry.itemId === item.itemId)).toMatchObject({ status: 'resolved', expenseDetails: expect.any(Array) });
     expect(done.lines[0]).toMatchObject(resolution === 'adopt_folio' ? { date: '2026-08-09', endDate: '2026-08-22' } : { date: '2026-08-10', endDate: '2026-08-20', referenceMaterialIds: [] });
   });
 }
@@ -71,4 +73,18 @@ it('assigns supplied screenshots against the adopted manual stay interval', asyn
   const done = await scene.run('start-inventory');
   expect(done.stage).toBe('project');
   expect(done.materials.find((material) => material.fileName === payment.name)?.payment).toMatchObject({ invoiceId: item.materialId, chosen: false });
+});
+
+it('editing manual dates after folio adoption requires a fresh source decision', async () => {
+  const scene = await scenario(server).at('pending', { materials: ['m01'] });
+  const item = scene.reached.pendingItems[0]!;
+  await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', checkIn: '2026-08-10', checkOut: '2026-08-20' } });
+  await scene.accept('reopen-upload');
+  await api(() => scene.client).upload(scene.task.taskId, [sample('m02')]);
+  const late = await scene.run('start-inventory');
+  const conflict = late.pendingItems.find(entry => entry.itemId.startsWith('stay_dates_conflict.'))!;
+  await scene.accept('answer-pending', { itemId: conflict.itemId, answer: { choice: 'adopt_folio' } });
+  const edited = await scene.accept('answer-pending', { itemId: item.itemId, answer: { choice: 'manual_fill', checkIn: '2026-08-11', checkOut: '2026-08-21' } });
+  expect(edited.lines[0]).toMatchObject({ date: '2026-08-11', endDate: '2026-08-21' });
+  expect(edited.pendingItems.find(entry => entry.itemId.startsWith('stay_dates_conflict.'))).toMatchObject({ status: 'open', answer: null });
 });

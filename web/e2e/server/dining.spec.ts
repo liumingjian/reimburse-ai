@@ -146,11 +146,17 @@ test('餐饮发票确认无账单后仍可填写实际用餐日期', async ({ pa
   await expect.poll(async () => (await read()).stage).toBe('project');
   await page.goto(`/#/task/${taskId}/pending`);
   await page.getByRole('button', { name: '查看或修改费用详情' }).click();
-  await page.getByRole('button', { name: '手工填写', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '查看或修改费用详情' }).click();
+  await expect(page.getByLabel('实际用餐日期')).toHaveValue((await read()).lines[0]!.date);
   await page.getByLabel('实际用餐日期').fill('2026-08-12');
   await page.getByRole('button', { name: '保存费用详情' }).click();
   await expect.poll(async () => (await read()).lines[0]?.date).toBe('2026-08-12');
-  expect((await read()).lines[0]).toMatchObject({ grossAmount: '240.00', referenceMaterialIds: [] });
+  await page.reload();
+  await page.getByRole('button', { name: '查看或修改费用详情' }).click();
+  await page.getByRole('button', { name: '确认没有账单' }).click();
+  await expect(page.getByLabel('实际用餐日期')).toHaveValue('2026-08-12');
+  expect((await read()).lines[0]).toMatchObject({ date: '2026-08-12', grossAmount: '240.00', referenceMaterialIds: [] });
   expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '客户招待' } })).ok()).toBe(true);
   const act = async (name: string, body: Record<string, unknown>) => {
     const before = await read();

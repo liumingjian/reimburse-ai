@@ -172,7 +172,7 @@ describe('migrations on an existing database', () => {
       expect(snapshot.inventory.status).toBe('done');
       // Pending only on the 住宿 trio check (#213): a hotel invoice alone has no folio and no payment screenshot.
       expect(snapshot.materials).toEqual([expect.objectContaining({ materialId: 'old-material', kind: 'vat_invoice', layout: 'einvoice', status: 'pending' })]);
-      expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual(['stay_folio_missing.old-material', 'stay_screenshot_missing.old-material']);
+      expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual(['stay_folio_missing.old-material']);
     } finally {
       await migrated.destroy();
     }
