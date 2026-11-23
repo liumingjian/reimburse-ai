@@ -360,10 +360,20 @@ export const PendingItemSchema = z.object({
   // The unrecognised item's 手工补填 forms, one per kind; empty on every other item.
   manualKinds: z.array(PendingManualKindSchema),
   dining: PendingDiningSchema.nullable().optional(),
+  expenseDetails: z.array(PendingFieldSchema).optional(),
+  referenceSupplement: z.literal(true).optional(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });
 export type PendingItem = z.infer<typeof PendingItemSchema>;
+
+export function pendingSupplementLabel(item: PendingItem): string | null {
+  if (item.referenceSupplement) return '补充账单';
+  if (item.status !== 'open') return null;
+  if (item.dining?.supplement === 'receipt') return '补充账单';
+  if (item.dining?.supplement === 'invoice') return '补传餐饮发票';
+  return null;
+}
 
 // ---- 整批停的阻塞项 ----
 
@@ -525,7 +535,7 @@ export const DINING_COPY = {
   receiptMissing: {
     title: (fileName: string) => `餐饮发票「${fileName}」缺少餐饮小票`,
     why: (totalAmount: string | undefined) =>
-      `餐饮报销要发票和餐饮小票两样。这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票，不能仅凭发票报销。餐饮小票的实付金额要与发票价税合计一分不差。请追加上传餐饮小票后重新盘点，或排除这份材料。`,
+      `这张餐饮发票${totalAmount ? `（价税合计 ${totalAmount} 元）` : ''}没有配对到餐饮小票。可补充账单、填写实际用餐日期，或确认没有账单并使用开票日期。`,
   },
 } as const;
 

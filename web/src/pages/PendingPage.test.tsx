@@ -501,7 +501,7 @@ describe('逐段分摊与阻塞项', () => {
     const wrapper = (value: typeof snapshot) => <AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...value, pendingItems: [item] }} /></AppProvider>;
     const rendered = render(wrapper(snapshot));
     const files = [new File(['bad'], 'notes.txt')];
-    fireEvent.change(within(detail()).getByLabelText('补传餐饮小票'), { target: { files } });
+    fireEvent.change(within(detail()).getByLabelText('补充账单'), { target: { files } });
     await waitFor(() => expect(upload).toHaveBeenCalledWith('T1', { pendingItemId: item.itemId, files }, snapshot.step.stepToken));
     expect(window.location.hash).toBe('#/task/T1/pending');
     rendered.rerender(wrapper(rejected));

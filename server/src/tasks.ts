@@ -21,6 +21,7 @@ import {
   STAY_TRIO_COPY,
   PROJECT_ASSIGNMENT_ERRORS,
   fieldAnswer,
+  pendingSupplementLabel,
   type ActionError,
   type AssignProjectLinesInput,
   type Corners,
@@ -501,7 +502,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       const judged = judgeFiles(files);
       return mutate(taskId, token, 'change_dining_evidence', async ({ tx, facts, view, at, revision }) => {
         const item = view.answerables.get(pendingItemId)?.item;
-        if (!item || item.status !== 'open' || !item.dining?.supplement) return { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' };
+        if (!item || !pendingSupplementLabel(item)) return { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传材料。' };
         const accepted = await writeBatch(tx, taskId, judged, at);
         if (accepted.length > 0) await tx.insertInto('inventory_run').values({ run_id: randomUUID(), task_id: taskId, account_id: accountId, version_no: facts.versionNo + 1, revision, started_at: at }).execute();
       });
@@ -620,13 +621,13 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         } else {
           const found = view.answerables.get(itemId);
           if (!found) return { code: 'item_not_found', message: ACTION_COPY.itemNotFound };
-          if (found.item.status !== 'open') return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
+          if (found.item.status !== 'open' && !found.item.expenseDetails) return { code: 'item_not_open', message: PENDING_ANSWER_ERRORS.notOpen };
           verdict = judgeAnswer(found.item, answer, found.check);
           materialId = found.item.materialId;
         }
         if (!verdict.ok) return { code: verdict.code, message: verdict.message };
         const selectedInvoiceId = fieldAnswer(verdict.answer)[DINING_INVOICE_KEY];
-        if (selectedInvoiceId || itemId === editAddress(materialId, DINING_INVOICE_FIELD)) {
+        if (view.answerables.get(itemId)?.item.expenseDetails || selectedInvoiceId || itemId === editAddress(materialId, DINING_INVOICE_FIELD)) {
           const admission = taskPolicy(facts, loaded.erp).admit('change_dining_evidence', token);
           if (admission === 'stale') throw new StaleStepError(await snapshot(taskId));
           if (admission !== 'ok') return admission;
