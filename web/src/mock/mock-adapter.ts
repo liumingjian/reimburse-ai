@@ -1,3 +1,4 @@
+import { pendingSupplementLabel } from '@baox/contract';
 import {
   ADMIN_ERRORS,
   AUTH_ERRORS,
@@ -226,7 +227,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       const admitted = bus.withStep(taskId, stepToken, (snapshot) => {
         if (!snapshot.allowedActions.includes('change_dining_evidence')) return { error: { code: 'dining_evidence_locked', message: '当前不能修改餐饮材料。' } };
         const item = snapshot.pendingItems.find((candidate) => candidate.itemId === pendingItemId);
-        if (!item?.dining?.supplement || item.status !== 'open') return { error: { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传餐饮材料。' } };
+        if (!item || !pendingSupplementLabel(item)) return { error: { code: 'dining_evidence_not_applicable', message: '这个待确认项当前不需要补传材料。' } };
         return snapshot;
       });
       if (!admitted.ok) return admitted;

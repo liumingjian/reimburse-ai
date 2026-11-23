@@ -129,6 +129,22 @@ describe('dining invoice evidence', () => {
     expect((await scene.client.request(`/api/tasks/${scene.task.taskId}/dining-evidence`, { method: 'POST', body: form })).status).toBe(409);
   });
 
+  it('supplements a dining invoice after the employee recorded the receipt as absent', async () => {
+    const scene = await scenario(server).at('pending', { materials: ['m11'] });
+    const itemId = scene.reached.pendingItems[0]!.itemId;
+    const resolved = await scene.accept('answer-pending', { itemId, answer: { choice: 'confirm_none' } });
+    const receipt = sample('m13');
+    const form = new FormData();
+    form.append('pendingItemId', itemId);
+    form.append('stepToken', resolved.step.stepToken);
+    form.append('files', new File([receipt.bytes], receipt.name, { type: 'application/pdf' }));
+    const response = await scene.client.request(`/api/tasks/${scene.task.taskId}/dining-evidence`, { method: 'POST', body: form });
+    expect(response.status).toBe(200);
+    const paired = await scene.settled();
+    expect(paired.lines[0]?.referenceMaterialIds).toEqual([byFileName(paired, receipt.name).materialId]);
+    expect(paired.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
+  });
+
   it('records all-rejected supplements without starting a run, and refuses stale items before writes', async () => {
     const scene = await scenario(server).at('pending', { materials: ['m11'] });
     const post = async (itemId: string) => {

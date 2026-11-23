@@ -743,7 +743,13 @@ export function inventoryView(
       const base = choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]);
       const proposed = mismatch ? base : missingReference(base, [{ key: 'date', label: '实际用餐日期', required: true, format: 'date', placeholder: 'YYYY-MM-DD' }]);
       const item = settle(proposed, answers);
-      item.dining = { kind: 'invoice', supplement: 'receipt' };
+      if (receiptByInvoice.has(material.materialId)) {
+        delete item.referenceSupplement;
+        item.title = `餐饮发票「${material.fileName}」的用餐日期`;
+        item.why = '';
+      } else {
+        item.dining = { kind: 'invoice', supplement: 'receipt' };
+      }
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
