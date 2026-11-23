@@ -100,6 +100,7 @@ export const HTTP_ENDPOINTS = {
   assignProjectLines: action('assign-project-lines', 'lineIds', 'projectNumber', 'onlyUnassigned', 'stepToken'),
   submitProjectAssignment: action('submit-project-assignment', 'purpose', 'projects', 'acceptDeadlineWarnings', 'stepToken'),
   excludeMaterial: action('exclude-material', 'materialId', 'stepToken'),
+  restoreMaterial: action('restore-material', 'materialId', 'stepToken'),
   setTaskHomeCity: action('set-home-city', 'homeCity', 'stepToken'),
   startErpWrite: action('start-erp-write', 'stepToken'),
   reconcile: action('reconcile', 'stepToken'),

@@ -344,6 +344,7 @@ export const ACTION_NAMES = [
   'assign-project-lines',
   'submit-project-assignment',
   'exclude-material',
+  'restore-material',
   'set-home-city',
   'start-erp-write',
   'reconcile',

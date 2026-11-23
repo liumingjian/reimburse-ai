@@ -120,6 +120,7 @@ describe('taskPolicy: admit', () => {
     ['a fill job running refuses another 去报销', { ...confirmed, erp: job('running') }, false, 'start_erp_write', TOKEN, 'stale'],
     // write result unknown and the ADR-0014 freeze
     ['a write result unknown refuses facts changes', { ...confirmed, erp: job('unknown') }, true, 'exclude_material', TOKEN, erpStarted],
+    ['a write result unknown refuses restoration', { ...confirmed, erp: job('unknown') }, true, 'restore_material', TOKEN, erpStarted],
     ['a write result unknown refuses even the actions that own the freeze', { ...confirmed, erp: job('unknown') }, true, 'set_home_city', TOKEN, erpStarted],
     ['a write result unknown admits 对账', { ...confirmed, erp: job('unknown') }, true, 'reconcile', TOKEN, 'ok'],
     ['a write result unknown admits 转人工', { ...confirmed, erp: job('unknown') }, true, 'hand_off', TOKEN, 'ok'],
@@ -163,7 +164,7 @@ const judged = (bucket: ReconcileBucket, action: '原地等待' | '转人工', e
 // Every task action the policy admits, per ERP phase and 对账 verdict. These are the snapshot's `allowedActions`: the
 // buttons the pages show and the page gate, the 重新去报销 path and 任务作废 all read this one answer.
 describe('taskPolicy: allowed actions by ERP phase', () => {
-  const beforeErp: TaskAction[] = ['upload', 'reopen_upload', 'exclude_material', 'answer_pending', 'set_home_city', 'assign_project_lines', 'submit_project_assignment', 'start_erp_write', 'print', 'summary', 'void_task'];
+  const beforeErp: TaskAction[] = ['upload', 'reopen_upload', 'answer_pending', 'set_home_city', 'assign_project_lines', 'submit_project_assignment', 'start_erp_write', 'print', 'summary', 'void_task'];
   const unknown = { ...confirmed, erp: job('unknown') };
   it.each<[string, Partial<TaskFacts>, Partial<ErpRecord>, TaskAction[]]>([
     ['confirmed, no job yet: 去报销 and every change before it', confirmed, {}, beforeErp],

@@ -236,6 +236,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     },
     startInventory: inventory.startInventory,
     reopenUpload: inventory.reopenUpload,
+    restoreMaterial: inventory.restoreMaterial,
     answerPendingItem: pending.answerPendingItem,
     confirmReview: pending.confirmReview,
     assignProjectLines: project.assignProjectLines,

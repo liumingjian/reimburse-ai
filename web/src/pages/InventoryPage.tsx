@@ -23,6 +23,8 @@ import { StatusTag } from '../shell/StatusTag';
 import { DuplicateBlockers } from './DuplicateBlockers';
 import { PaymentStay } from './PaymentStay';
 import { LatestUploadRejections } from './LatestUploadRejections';
+import { useAction } from '../shell/useAction';
+import { ActionError } from '../shell/ActionError';
 import { PAGE_COPY } from './page-copy';
 
 // Material inventory (材料盘点) page: inventory progress and the material list only. While inventory runs it shows
@@ -110,6 +112,12 @@ function groupParts(group: Group) {
 // When the evidence conclusion already contains a material's check text verbatim (for example the reference's
 // "26.69 + 20.85 + 21.65 = 69.19，按分守恒"), the cell points to the conclusion instead of repeating it.
 // This only compares two server strings; it rewrites and judges nothing.
+function RestoreMaterial({ material, snapshot }: { material: Material; snapshot: TaskSnapshot }) {
+  const { busy, error, run } = useAction(snapshot.task.taskId);
+  if (material.status !== 'excluded' || !snapshot.allowedActions.includes('restore_material')) return null;
+  return <><Button kind="ghost" size="sm" disabled={busy} onClick={() => void run(adapter => adapter.restoreMaterial(snapshot.task.taskId, material.materialId, snapshot.step.stepToken))}>恢复材料</Button><ActionError message={error} /></>;
+}
+
 function MaterialTable({ label, materials, note, snapshot }: { label: string; materials: readonly Material[]; note: string | null; snapshot: TaskSnapshot }) {
   return (
     <Table size="sm" aria-label={label} className="app-material-table">
@@ -168,6 +176,7 @@ function MaterialTable({ label, materials, note, snapshot }: { label: string; ma
             </TableCell>
             <TableCell>
               <StatusMark status={material.status} />
+              <RestoreMaterial material={material} snapshot={snapshot} />
             </TableCell>
           </TableRow>
         ))}

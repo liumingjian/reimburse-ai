@@ -595,7 +595,6 @@
   "allowedActions": [
     "upload",
     "reopen_upload",
-    "exclude_material",
     "answer_pending",
     "set_home_city",
     "assign_project_lines",

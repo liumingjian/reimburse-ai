@@ -150,6 +150,7 @@ export interface AppAdapter {
   assignProjectLines(taskId: string, input: AssignProjectLinesInput, stepToken: string): Promise<ActionOutcome>;
   submitProjectAssignment(taskId: string, input: ProjectAssignmentInput, stepToken: string): Promise<ActionOutcome>;
   // 材料包有缺项（step resolve_preparation）时排除相关材料；服务端随后重新准备材料包。
+  restoreMaterial(taskId: string, materialId: string, stepToken: string): Promise<ActionOutcome>;
   excludeMaterial(taskId: string, materialId: string, stepToken: string): Promise<ActionOutcome>;
   // 修改当前任务的常驻城市：第一次写入报销系统之前可改；服务端重新推导费用类别，并记为这个账号的常驻城市。
   setTaskHomeCity(taskId: string, homeCity: string, stepToken: string): Promise<ActionOutcome>;

@@ -196,7 +196,8 @@ const ACTIONS: Record<ActionName, Traits> = {
     },
   },
   confirm_review: { ready: atStep(['confirm_review'], { code: 'not_ready', message: CONFIRM_REVIEW_ERRORS.notReady }) },
-  exclude_material: {},
+  exclude_material: { ready: facts => facts.confirmation === 'confirmed' ? { code: 'inclusion_locked', message: '请先重新打开上传再修改材料。' } : null },
+  restore_material: { ready: facts => facts.confirmation === 'confirmed' ? { code: 'inclusion_locked', message: '请先重新打开上传再修改材料。' } : null },
   // A batch stopped by 发票占用 has no pending items to answer; excluding the held material is the way out.
   answer_pending: { ready: (facts) => (facts.parse && facts.parse.blockers.length === 0 ? null : { code: 'not_ready', message: ACTION_COPY.notAnswering }) },
   change_dining_evidence: {

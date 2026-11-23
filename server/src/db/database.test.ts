@@ -106,6 +106,19 @@ describe('migrations on an existing database', () => {
     }
   });
 
+  it('preserves existing exclusions when migrating to reversible inclusion history', async () => {
+    const accountId = await priorVersionFixture('0029_summary_resolution');
+    const old = new Database(databasePath(dataDir));
+    old.prepare('INSERT INTO material_exclusion VALUES (?, ?, ?, ?, ?, ?)').run('old-exclusion', 'old-task', accountId, 'old-material', 3, '2026-09-01T10:00:00Z');
+    old.close();
+    const db = await openDatabase(databasePath(dataDir));
+    try {
+      expect((await createTaskService(db, dataDir, accountId).snapshot('old-task')).materials[0]?.status).toBe('excluded');
+      expect(await db.selectFrom('material_exclusion').select('exclusion_id').execute()).toEqual([{ exclusion_id: 'old-exclusion' }]);
+      await expect(db.deleteFrom('material_exclusion').execute()).rejects.toThrow('append-only');
+    } finally { await db.destroy(); }
+  });
+
   it('backs up with VACUUM INTO before migrating 0001 → latest, and keeps the old facts readable', async () => {
     await priorVersionFixture('0001_initial');
 

@@ -153,7 +153,7 @@ const EXECUTOR_MAY_STILL_RUN = new Set([JOB_DEADLINE_CODE, NO_RESULT_CODE, RECON
 export type TaskServiceOptions = { ensureProfile?: (accountId: string) => Promise<EmployeeProfileView>; onChange?: (snapshot: TaskSnapshot) => void; erp?: ErpServiceOptions };
 
 async function excludeOnce(tx: Tx, taskId: string, accountId: string, materialId: string, revision: number, at: string): Promise<void> {
-  const existing = await tx.selectFrom('material_exclusion').select('exclusion_id').where('material_id', '=', materialId).executeTakeFirst();
+  const existing = await tx.selectFrom('material_exclusion').select('exclusion_id').where('material_id', '=', materialId).where('revision', '>', sql<number>`COALESCE((SELECT MAX(revision) FROM material_restoration WHERE material_id = ${materialId}), -1)`).executeTakeFirst();
   if (!existing) await tx.insertInto('material_exclusion').values({ exclusion_id: randomUUID(), task_id: taskId, account_id: accountId, material_id: materialId, revision, created_at: at }).execute();
 }
 
@@ -578,7 +578,7 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
       return mutate(taskId, token, 'exclude_material', async ({ tx, view, at, revision }) => {
         const material = await tx
           .selectFrom('material')
-          .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
+          .leftJoin('material_exclusion', join => join.onRef('material_exclusion.material_id', '=', 'material.material_id').on('material_exclusion.revision', '>', sql<number>`COALESCE((SELECT MAX(revision) FROM material_restoration WHERE material_id = ${materialId}), -1)`))
           .select(['material.material_id', 'material_exclusion.exclusion_id'])
           .where('material.task_id', '=', taskId)
           .where('material.material_id', '=', materialId)
@@ -590,6 +590,17 @@ export function createTaskService(db: Db, dataDir: string, accountId: string, { 
         if (view.pendingItems.some((item) => item.kind === 'given_up' && item.status === 'open' && item.materialId === materialId)) {
           for (const linked of view.materials.find((m) => m.materialId === materialId)?.linkedMaterialIds ?? []) await excludeOnce(tx, taskId, accountId, linked, revision, at);
         }
+      });
+    },
+
+    async restoreMaterial(taskId: string, materialId: string, token: string): Promise<TaskSnapshot> {
+      return mutate(taskId, token, 'restore_material', async ({ tx, revision }) => {
+        const excluded = await tx.selectFrom('material_exclusion').selectAll().where('task_id', '=', taskId).where('material_id', '=', materialId).orderBy('revision', 'desc').executeTakeFirst();
+        const restored = await tx.selectFrom('material_restoration').selectAll().where('material_id', '=', materialId).orderBy('revision', 'desc').executeTakeFirst();
+        if (!excluded || restored && restored.revision > excluded.revision) return { code: 'not_excluded', message: '这份材料未被排除。' };
+        // Materials excluded together by give-up are restored together; earlier independent exclusions stay excluded.
+        const group = await tx.selectFrom('material_exclusion').select('material_id').where('task_id', '=', taskId).where('revision', '=', excluded.revision).where('revision', '=', sql<number>`(SELECT MAX(e.revision) FROM material_exclusion e WHERE e.material_id = material_exclusion.material_id)`).execute();
+        for (const row of group) await tx.insertInto('material_restoration').values({ task_id: taskId, material_id: row.material_id, revision }).execute();
       });
     },
 
