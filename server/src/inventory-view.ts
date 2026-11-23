@@ -8,6 +8,7 @@ import { deriveDiningEvidence, diningProblem } from './dining-evidence';
 import { KINDS, type EventDraft } from './kind-policy';
 import { CATEGORIES, fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
+import { missingReference } from './pending/missing-reference';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
 import { proposeFolio, type FolioProposal, type ProposalStay } from './folio-proposal';
@@ -734,12 +735,14 @@ export function inventoryView(
   if (results && waiting === 0) {
     const unpairedPaidAmounts = [...new Set(diningReceipts.filter((receipt) => !linked.has(receipt.m.materialId)).flatMap((receipt) => receipt.values['paidAmount'] ? [receipt.values['paidAmount']] : []))];
     for (const { material, draft } of ordered) {
-      if (draft.category.code !== 'hospitality' || receiptByInvoice.has(material.materialId)) continue;
-      const mismatch = unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes(draft.grossAmount);
+      if (draft.category.code !== 'hospitality' || (receiptByInvoice.has(material.materialId) && !answers.has(`${DINING_ITEM_CODES.receiptMissing}.${material.materialId}`))) continue;
+      const mismatch = !receiptByInvoice.has(material.materialId) && unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes(draft.grossAmount);
       const code = mismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing;
       const copy = mismatch ? DINING_COPY.amountMismatch : DINING_COPY.receiptMissing;
       const why = mismatch ? DINING_COPY.amountMismatch.why(draft.grossAmount, unpairedPaidAmounts) : DINING_COPY.receiptMissing.why(draft.grossAmount);
-      const item = settle(choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]), answers);
+      const base = choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]);
+      const proposed = mismatch ? base : missingReference(base, [{ key: 'date', label: '实际用餐日期', required: true, format: 'date', placeholder: 'YYYY-MM-DD' }]);
+      const item = settle(proposed, answers);
       item.dining = { kind: 'invoice', supplement: 'receipt' };
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
@@ -799,11 +802,13 @@ export function inventoryView(
     const key = leg === null ? material.materialId : `${material.materialId}.${leg}`;
     const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
-    const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
+    const detail = diningItems.get(material.materialId)?.find((item) => item.expenseDetails && item.status === 'resolved');
+    const actualDate = detail && fieldAnswer(detail.answer)[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? fieldAnswer(detail.answer)['date'] : undefined;
+    const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : actualDate ? { ...own, date: actualDate } : own;
     const receiptId = receiptByInvoice.get(material.materialId);
     const referenceMaterialIds = stay ? [stay.folioId] : receiptId ? [receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: detail && !receiptId ? (actualDate ? `无餐饮小票；实际用餐日期由员工填写：${actualDate}` : '员工确认没有餐饮小票，按发票金额与开票日期报销') : stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
       lineId: `line.${key}`,
       no: index + 1,
