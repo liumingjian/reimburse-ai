@@ -578,3 +578,23 @@ describe('逐段分摊与阻塞项', () => {
     expect(screen.queryByRole('button', { name: STAY_TRIO_COPY.screenshot.reopen })).toBeNull();
   });
 });
+
+test('missing ride itinerary opens repeated actual trip fields and clears removed row amounts', async () => {
+  const snapshot = t1Snapshot('pending');
+  const item = { ...snapshot.pendingItems[0]!, itemId: 'ride_itinerary_missing.m09', title: '缺少行程单', kind: 'choice' as const, fields: [], choices: [{ key: 'manual_fill', label: '手工填写' }, { key: 'confirm_none', label: '确认没有账单' }], expenseDetails: [], rideTrips: { total: '69.19' }, status: 'open' as const, answer: null };
+  const adapter = createMockAdapter({ seed: 'pending', fault: null });
+  const answer = vi.spyOn(adapter, 'answerPendingItem').mockResolvedValue({ ok: false, error: { code: 'test', message: 'test' }, snapshot: null });
+  render(<AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...snapshot, allowedActions: [...snapshot.allowedActions, 'change_dining_evidence'], pendingItems: [item] }} /></AppProvider>);
+  fireEvent.click(screen.getByRole('button', { name: '确认没有账单' }));
+  fill('行程段数', '2');
+  expect(screen.getByLabelText('第 2 段 · 价税合计 *')).toBeTruthy();
+  fill('第 2 段 · 价税合计 *', '39.19');
+  fill('行程段数', '1');
+  expect(screen.queryByLabelText('第 2 段 · 价税合计 *')).toBeNull();
+  fill('第 1 段 · 行程日期 *', '2026-08-03');
+  fill('第 1 段 · 费用城市 *', '杭州');
+  fill('第 1 段 · 起点 *', '机场');
+  fill('第 1 段 · 终点 *', '酒店');
+  fireEvent.click(screen.getByRole('button', { name: '保存费用详情' }));
+  await waitFor(() => expect(answer).toHaveBeenCalledWith('T1', item.itemId, { choice: 'confirm_none', tripCount: '1', 'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' }, snapshot.step.stepToken));
+});

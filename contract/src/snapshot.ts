@@ -361,6 +361,7 @@ export const PendingItemSchema = z.object({
   manualKinds: z.array(PendingManualKindSchema),
   dining: PendingDiningSchema.nullable().optional(),
   expenseDetails: z.array(PendingFieldSchema).optional(),
+  rideTrips: z.object({ total: z.string() }).optional(),
   referenceSupplement: z.literal(true).optional(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),

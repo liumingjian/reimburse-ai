@@ -269,7 +269,7 @@ describe('home city', () => {
   it('re-derives city transport categories: an invoice with no expense city blocks instead of borrowing the home city', async () => {
     const snapshot = await taskAt('pending', ['m03']);
     expect(snapshot.lines).toEqual([]);
-    expect(snapshot.pendingItems).toEqual([expect.objectContaining({ itemId: `category_city_missing.${snapshot.materials[0]?.materialId}`, kind: 'choice' })]);
+    expect(snapshot.pendingItems).toEqual([expect.objectContaining({ itemId: `ride_itinerary_missing.${snapshot.materials[0]?.materialId}`, kind: 'choice' })]);
     expect(snapshot.stage).toBe('pending');
   });
 });
