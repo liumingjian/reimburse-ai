@@ -217,7 +217,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   // 手工补填 opens its form here instead of answering (#342).
-  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE);
+  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE || (chosen === 'confirm_none' && !!item.expenseDetails && item.status === 'open'));
   const [details, setDetails] = useState<FieldAnswer>(fieldAnswer(item.answer));
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const fills = (key: string) => key === MANUAL_FILL_CHOICE && (item.manualKinds.length > 0 || !!item.expenseDetails);
@@ -272,7 +272,7 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
             className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
             aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
             disabled={(resolved && !item.expenseDetails) || state.busy || (!!item.expenseDetails && !diningAllowed)}
-            onClick={() => (fills(choice.key) ? setFilling(true) : void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }))}
+            onClick={() => { if (fills(choice.key)) setFilling(true); else { if (choice.key === 'confirm_none' && item.expenseDetails) setFilling(true); void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }); } }}
           >
             {choice.label}
           </Button>

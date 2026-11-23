@@ -25,7 +25,7 @@ async function afterErpWrite(server: ScenarioServer, script: Script): Promise<Sc
 
 const SCENES: Record<GoldenScenario, (server: ScenarioServer) => Promise<Scene>> = {
   upload: (server) => scenario(server).at('upload'),
-  pending: (server) => scenario(server).at('pending'),
+  pending: (server) => scenario(server).at('pending', { materials: ['m01'] }),
   project: (server) => scenario(server).at('project'),
   review: (server) => scenario(server).at('review'),
   'choose-action': (server) => scenario(server).at('actions'),

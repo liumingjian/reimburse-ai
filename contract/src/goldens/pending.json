@@ -1,10 +1,10 @@
 {
-  "revision": 5,
+  "revision": 4,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
     "name": "2000-01-01 新建报销",
     "period": {
-      "start": "2026-08-09",
+      "start": "2026-08-22",
       "end": "2026-08-22"
     },
     "homeCity": "杭州",
@@ -29,17 +29,6 @@
           "reasonCode": null,
           "reason": null,
           "materialId": "00000000-0000-4000-8000-000000000003"
-        },
-        {
-          "fileId": "00000000-0000-4000-8000-000000000004",
-          "fileName": "全季酒店_结账单.pdf",
-          "relativePath": "全季酒店_结账单.pdf",
-          "size": 55422,
-          "status": "accepted",
-          "contentHash": "6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
-          "reasonCode": null,
-          "reason": null,
-          "materialId": "00000000-0000-4000-8000-000000000004"
         }
       ]
     }
@@ -61,10 +50,9 @@
       "mediaType": "pdf",
       "status": "pending",
       "checkText": "二维码无法识读，仅作提示：以 PDF 文本层为准",
-      "linkedMaterialIds": [
-        "00000000-0000-4000-8000-000000000004"
-      ],
+      "linkedMaterialIds": [],
       "pendingItemIds": [
+        "stay_folio_missing.00000000-0000-4000-8000-000000000003",
         "stay_screenshot_missing.00000000-0000-4000-8000-000000000003"
       ],
       "originalUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
@@ -171,113 +159,6 @@
           "editClass": "fact_locked"
         }
       ]
-    },
-    {
-      "materialId": "00000000-0000-4000-8000-000000000004",
-      "batchId": "00000000-0000-4000-8000-000000000002",
-      "fileName": "全季酒店_结账单.pdf",
-      "relativePath": "全季酒店_结账单.pdf",
-      "contentHash": "6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
-      "size": 55422,
-      "kind": "hotel_folio",
-      "layout": "labelled",
-      "kindLabel": "酒店结账单",
-      "categoryLabel": "住宿",
-      "role": "reference",
-      "shape": "portrait",
-      "mediaType": "pdf",
-      "status": "ok",
-      "checkText": "",
-      "linkedMaterialIds": [
-        "00000000-0000-4000-8000-000000000003"
-      ],
-      "pendingItemIds": [],
-      "originalUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
-      "previewUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/6b6637a217bb9eac26e911a2b458caf67d10499b1b19fedd02848d204bbf64d3",
-      "variants": [],
-      "fields": [
-        {
-          "key": "hotelName",
-          "label": "酒店名称",
-          "value": "全季酒店（上海某某店）",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "guestName",
-          "label": "入住人",
-          "value": "林颂宜",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "roomNumber",
-          "label": "房号",
-          "value": "1208",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "checkIn",
-          "label": "入住日期",
-          "value": "2026-08-09",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "checkOut",
-          "label": "离店日期",
-          "value": "2026-08-22",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "nights",
-          "label": "天数",
-          "value": "13",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "roomRate",
-          "label": "房价",
-          "value": "280.00",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "folioTotal",
-          "label": "消费合计",
-          "value": "3640.00",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        },
-        {
-          "key": "paidAmount",
-          "label": "已付款",
-          "value": "3640.00",
-          "source": "rule:hotel_folio/labelled",
-          "parserVersion": "4",
-          "evidence": "explicit",
-          "editClass": "fact_locked"
-        }
-      ]
     }
   ],
   "inventory": {
@@ -292,11 +173,11 @@
     ],
     "finishedAt": "2000-01-01T00:00:00Z",
     "summary": {
-      "materialCount": 2,
-      "okCount": 1,
+      "materialCount": 1,
+      "okCount": 0,
       "pendingMaterialCount": 1,
       "voucherCount": 1,
-      "referenceCount": 1,
+      "referenceCount": 0,
       "openPendingItemCount": 1
     },
     "ungroupedMaterialIds": []
@@ -306,17 +187,15 @@
       "eventId": "event.00000000-0000-4000-8000-000000000003",
       "no": 1,
       "voucherMaterialId": "00000000-0000-4000-8000-000000000003",
-      "referenceMaterialIds": [
-        "00000000-0000-4000-8000-000000000004"
-      ],
+      "referenceMaterialIds": [],
       "category": {
         "code": "accommodation",
         "label": "住宿"
       },
       "summary": "住宿费 · 上海某某酒店管理有限公司",
-      "evidenceNote": "住宿发票与酒店结账单配对：金额 3640.00 一致；入住 2026-08-09，离店 2026-08-22，共 13 晚",
-      "date": "2026-08-09",
-      "endDate": "2026-08-22",
+      "evidenceNote": null,
+      "date": "2026-08-22",
+      "endDate": null,
       "city": null,
       "origin": null,
       "destination": null,
@@ -324,6 +203,51 @@
     }
   ],
   "pendingItems": [
+    {
+      "itemId": "stay_folio_missing.00000000-0000-4000-8000-000000000003",
+      "materialId": "00000000-0000-4000-8000-000000000003",
+      "title": "住宿发票「全季酒店_发票.pdf」缺少结账单",
+      "why": "住宿报销要发票、结账单、支付截图三样。这张住宿发票（价税合计 3640.00 元）没有配对到结账单。入住、离店日期只能从结账单上取，没有结账单这张发票就报不了：请在上传页追加结账单后重新盘点（结账单的消费合计要和发票价税合计一分不差；认不出的结账单可以手工补填）。拿不到结账单，就排除这张发票。",
+      "kind": "choice",
+      "resolver": "要你处理",
+      "fields": [],
+      "choices": [
+        {
+          "key": "manual_fill",
+          "label": "手工填写"
+        },
+        {
+          "key": "confirm_none",
+          "label": "确认没有账单"
+        },
+        {
+          "key": "exclude",
+          "label": "忽略发票"
+        }
+      ],
+      "allocation": null,
+      "screenshotGroup": null,
+      "manualKinds": [],
+      "status": "open",
+      "answer": null,
+      "expenseDetails": [
+        {
+          "key": "checkIn",
+          "label": "实际入住日期",
+          "required": true,
+          "format": "date",
+          "placeholder": "YYYY-MM-DD"
+        },
+        {
+          "key": "checkOut",
+          "label": "实际离店日期",
+          "required": true,
+          "format": "date",
+          "placeholder": "YYYY-MM-DD"
+        }
+      ],
+      "referenceSupplement": true
+    },
     {
       "itemId": "stay_screenshot_missing.00000000-0000-4000-8000-000000000003",
       "materialId": "00000000-0000-4000-8000-000000000003",
@@ -348,7 +272,7 @@
         "locked": false
       },
       "manualKinds": [],
-      "status": "open",
+      "status": "resolved",
       "answer": null
     }
   ],
@@ -360,8 +284,8 @@
       "voucherMaterialId": "00000000-0000-4000-8000-000000000003",
       "invoiceLabel": "发票1",
       "eventId": "event.00000000-0000-4000-8000-000000000003",
-      "date": "2026-08-09",
-      "endDate": "2026-08-22",
+      "date": "2026-08-22",
+      "endDate": null,
       "category": {
         "code": "accommodation",
         "label": "住宿"
@@ -378,91 +302,35 @@
       "expenseItemName": "住宿",
       "invoiceType": "增值税发票",
       "invoiceTypeSource": "face_type_to_erp_enum",
-      "referenceMaterialIds": [
-        "00000000-0000-4000-8000-000000000004"
-      ],
+      "referenceMaterialIds": [],
       "grossAmount": "3640.00",
       "netAmount": "3433.96",
       "taxAmount": "206.04"
     }
   ],
+  "reimbursementSummary": {
+    "status": "unavailable",
+    "cause": "not-confirmed",
+    "reasons": [
+      "请先完成整单明细确认。"
+    ]
+  },
   "lodgingEvidence": [
     {
       "materialId": "00000000-0000-4000-8000-000000000003",
-      "defaultMaterialId": "00000000-0000-4000-8000-000000000004",
+      "defaultMaterialId": "00000000-0000-4000-8000-000000000003",
       "previews": [
-        {
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "available": true
-        },
         {
           "materialId": "00000000-0000-4000-8000-000000000003",
           "available": true
         }
       ],
-      "state": "associated",
+      "state": "missing",
       "fields": {
         "location": null,
-        "hotelName": {
-          "value": "全季酒店（上海某某店）",
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "source": "rule:hotel_folio/labelled",
-          "evidence": "explicit"
-        },
-        "checkIn": {
-          "value": "2026-08-09",
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "source": "rule:hotel_folio/labelled",
-          "evidence": "explicit"
-        },
-        "checkOut": {
-          "value": "2026-08-22",
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "source": "rule:hotel_folio/labelled",
-          "evidence": "explicit"
-        },
-        "amount": {
-          "value": "3640.00",
-          "materialId": "00000000-0000-4000-8000-000000000003",
-          "source": "rule:vat_invoice/einvoice",
-          "evidence": "explicit"
-        }
-      }
-    },
-    {
-      "materialId": "00000000-0000-4000-8000-000000000004",
-      "defaultMaterialId": "00000000-0000-4000-8000-000000000004",
-      "previews": [
-        {
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "available": true
-        },
-        {
-          "materialId": "00000000-0000-4000-8000-000000000003",
-          "available": true
-        }
-      ],
-      "state": "associated",
-      "fields": {
-        "location": null,
-        "hotelName": {
-          "value": "全季酒店（上海某某店）",
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "source": "rule:hotel_folio/labelled",
-          "evidence": "explicit"
-        },
-        "checkIn": {
-          "value": "2026-08-09",
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "source": "rule:hotel_folio/labelled",
-          "evidence": "explicit"
-        },
-        "checkOut": {
-          "value": "2026-08-22",
-          "materialId": "00000000-0000-4000-8000-000000000004",
-          "source": "rule:hotel_folio/labelled",
-          "evidence": "explicit"
-        },
+        "hotelName": null,
+        "checkIn": null,
+        "checkOut": null,
         "amount": {
           "value": "3640.00",
           "materialId": "00000000-0000-4000-8000-000000000003",
@@ -548,7 +416,7 @@
   },
   "step": {
     "kind": "answer_pending",
-    "stepToken": "00000000-0000-4000-8000-000000000001.5"
+    "stepToken": "00000000-0000-4000-8000-000000000001.4"
   },
   "allowedActions": [
     "upload",
@@ -560,12 +428,5 @@
     "set_home_city",
     "print",
     "void_task"
-  ],
-  "reimbursementSummary": {
-    "status": "unavailable",
-    "cause": "not-confirmed",
-    "reasons": [
-      "请先完成整单明细确认。"
-    ]
-  }
+  ]
 }

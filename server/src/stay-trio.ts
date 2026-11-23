@@ -1,36 +1,14 @@
-import { confirmsNone, PAYMENT_COPY, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID, STAY_TRIO_COPY, stayTrioElementOf, stayTrioItemId, stayTrioMaterialOf, type PendingAnswer, type PendingItem, type StayTrioElement } from '@baox/contract';
+import { fieldAnswer, confirmsNone, PAYMENT_COPY, PAYMENT_SCREENSHOT_ERRORS, STAY_TRIO_CONFIRM_NONE, STAY_TRIO_CONFIRM_PAID, STAY_TRIO_COPY, stayTrioElementOf, stayTrioItemId, stayTrioMaterialOf, type PendingAnswer, type PendingItem, type StayTrioElement } from '@baox/contract';
 import type { Stay, StayVoucher } from './hotel-stay';
+import { missingReference } from './pending/missing-reference';
 import { money, slotCents } from './money-date';
 import { CATEGORIES } from './parse/slots';
 import { chosen, EXCLUDE, settle, type AnswerCheck, type StoredAnswers } from './pending/answers';
 
-// The 住宿 (accommodation) trio check at 盘点 (inventory), #213. 住宿 reimbursement takes a 发票 (invoice), a 结账单
-// (hotel folio) and a 支付截图 (payment screenshot); this module says, per stay, which of them are there and raises
-// one 待确认项 per missing element while the filer can still fetch it.
-//
-// Nothing about the trio is inferred (#213). An invoice is a clean 住宿 invoice that formed its own event; a folio is present
-// only when a material resolved to `hotel_folio` is paired with that invoice (`pairHotelStays`, amounts to the
-// cent); a screenshot is present only when one is stored for that invoice. A folio no invoice pairs with is a stay
-// missing its invoice; it has no voucher, so no screenshot is asked of it.
-//
-// A missing folio blocks: it alone gives the stay's check-in and check-out, so the invoice is answered only by
-// supplying its folio (the item is then not derived at all) or by excluding the invoice. A 确认没有 stored before that
-// rule no longer fits and leaves the item open. A missing invoice is answered by supplying it or by the choice
-// `STAY_TRIO_CONFIRM_NONE`, which records the absence.
-//
-// The 支付截图 is a group per invoice (#331), so its item is derived for every invoice, supplied or not: the filer may
-// add several over several visits, and the item stays open until the group is declared complete (「已传齐」) or the
-// absence is confirmed. A 确认没有 given before a screenshot was uploaded is superseded for good (#332): emptying the group
-// again leaves the item open, and the filer may choose 确认没有 again.
-//
-// 支付截图 materials (ADR-0032) carry their amounts, so an invoice whose screenshots are all materials is checked by
-// sum instead: at least its 价税合计 settles the item by itself; less keeps it open with 「已传齐」 to confirm that is
-// all. Screenshots stored the #331 way have no amount; an invoice with any of them keeps the group rule above.
-
+// Lodging references enrich an invoice; actual stay dates remain mandatory without a folio.
 export type TrioPart = {
   present: boolean;
-  // A stored 确认没有 answer stands for this element: for an invoice whether or not it is present right now (it keeps the
-  // item settled if the invoice goes away); for a screenshot only while the group is empty (#332). Never for a folio.
+  // Absence is independent of the required expense details. Screenshots retain legacy absence answers.
   noneConfirmed: boolean;
 };
 
@@ -69,6 +47,17 @@ export function stayVoucherIds(lines: readonly { voucherMaterialId: string; cate
   return new Set([...first].flatMap(([id, code]) => (code === CATEGORIES.accommodation.code ? [id] : [])));
 }
 
+export function manualStayDates(invoiceId: string, answers: StoredAnswers): { checkIn: string; checkOut: string } | null {
+  const values = fieldAnswer(answers.get(stayTrioItemId('folio', invoiceId)) ?? null);
+  return values['choice'] === 'manual_fill' && values['checkIn'] && values['checkOut'] && values['checkOut'] >= values['checkIn']
+    ? { checkIn: values['checkIn'], checkOut: values['checkOut'] } : null;
+}
+export const folioAdoptionId = (stay: Stay): string => `stay_dates_conflict.${stay.folioId}.${stay.checkIn}.${stay.checkOut}`;
+export function adoptedStayDates(invoiceId: string, stay: Stay | undefined, answers: StoredAnswers): { checkIn: string; checkOut: string } | null {
+  const manual = manualStayDates(invoiceId, answers);
+  return stay && (!manual || (stay.checkIn === manual.checkIn && stay.checkOut === manual.checkOut) || fieldAnswer(answers.get(folioAdoptionId(stay)) ?? null)['choice'] === 'adopt_folio') ? stay : manual;
+}
+
 function missingItem(element: StayTrioElement, material: TrioVoucher): PendingItem {
   const copy = STAY_TRIO_COPY[element];
   const amount = element === 'invoice' ? material.values['folioTotal'] : material.values['totalAmount'];
@@ -80,7 +69,6 @@ function missingItem(element: StayTrioElement, material: TrioVoucher): PendingIt
     kind: 'choice',
     resolver: '要你处理',
     fields: [],
-    // A 住宿 invoice cannot go without its folio: only the folio dates the stay. Its item's only way out is excluding.
     choices: 'confirmNone' in copy ? [{ key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone }, EXCLUDE] : [EXCLUDE],
     allocation: null,
     screenshotGroup: null,
@@ -108,7 +96,21 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
   const raise = (material: TrioVoucher, item: PendingItem) => items.set(material.materialId, [...(items.get(material.materialId) ?? []), item]);
   // Settles the element's item against the stored answers; the item is raised only when the element is missing.
   const part = (element: StayTrioElement, material: TrioVoucher, present: boolean): TrioPart => {
-    const settled = settle(missingItem(element, material), answers);
+    const base = missingItem(element, material);
+    const proposed = element === 'folio' ? missingReference(base, [
+      { key: 'checkIn', label: '实际入住日期', required: true, format: 'date', placeholder: 'YYYY-MM-DD' },
+      { key: 'checkOut', label: '实际离店日期', required: true, format: 'date', placeholder: 'YYYY-MM-DD' },
+    ]) : base;
+    const check: AnswerCheck = (answer) => {
+      const values = fieldAnswer(answer);
+      return values['choice'] === 'manual_fill' && values['checkOut']! < values['checkIn']! ? '离店日期不能早于入住日期' : null;
+    };
+    const settled = settle(proposed, answers, check);
+    if (element === 'folio') {
+      if (manualStayDates(material.materialId, answers)) settled.choices = settled.choices.filter((choice) => choice.key !== 'confirm_none');
+      checks.set(settled.itemId, check);
+      if (confirmsNone(settled.answer)) settled.status = 'open';
+    }
     if (!present) raise(material, settled);
     return { present, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
   };
@@ -129,7 +131,7 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
       : item;
     const check: AnswerCheck = (answer) => (count > 0 && confirmsNone(answer) ? PAYMENT_SCREENSHOT_ERRORS.noneWithScreenshots : null);
     const settled = settle(asked, answers, check);
-    const done = group.complete || (byAmount && owed === null);
+    const done = count === 0 || group.complete || (byAmount && owed === null);
     raise(invoice, settled.status === 'open' && done ? { ...settled, status: 'resolved' } : settled);
     checks.set(settled.itemId, check);
     return { present: count > 0, noneConfirmed: chosen(settled) === STAY_TRIO_CONFIRM_NONE };
@@ -139,6 +141,16 @@ export function checkStayTrios(invoices: readonly TrioVoucher[], folios: readonl
 
   for (const invoice of invoices) {
     const folioId = pairedFolio.get(invoice.materialId) ?? null;
+    const stay = stays.find((stay) => stay.invoiceId === invoice.materialId);
+    const manual = manualStayDates(invoice.materialId, answers);
+    if (stay && manual && (stay.checkIn !== manual.checkIn || stay.checkOut !== manual.checkOut)) {
+      const folio = folios.find((folio) => folio.materialId === stay.folioId)!;
+      raise(folio, settle({ ...missingItem('folio', folio), itemId: folioAdoptionId(stay),
+        title: '结账单日期与手工填写的住宿日期不同',
+        why: `手工填写：${manual.checkIn} 至 ${manual.checkOut}；结账单：${stay.checkIn} 至 ${stay.checkOut}`,
+        choices: [{ key: 'adopt_folio', label: '采用结账单日期' }, { ...EXCLUDE, label: '忽略结账单，保留手工日期' }],
+      }, answers));
+    }
     trios.push({
       invoiceId: invoice.materialId,
       folioId,

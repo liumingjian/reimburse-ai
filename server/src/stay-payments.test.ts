@@ -165,7 +165,7 @@ describe('支付截图 from the 待确认项', () => {
     ].map((upload) => new File([upload.bytes], upload.name, { type: 'image/png' }));
     server = await scenarioServer({ parser: presetParser(shots.outcomes) });
     alice = await server.signIn('alice');
-    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const scene = await scenario(server, alice).at('project', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
 
     const started = await client.accepted(await postStayScreenshots(alice, scene.reached, invoice.materialId, files));
@@ -186,7 +186,7 @@ describe('支付截图 from the 待确认项', () => {
   it('takes images only, and only for a 住宿 invoice', async () => {
     server = await scenarioServer();
     alice = await server.signIn('alice');
-    const start = (await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] })).reached;
+    const start = (await scenario(server, alice).at('project', { materials: ['m01', 'm02'] })).reached;
     const [invoice, folio] = [byFileName(start, sample('m01').name), byFileName(start, sample('m02').name)];
     const code = async (response: Response) => ((await response.json()) as { error: { code: string } }).error.code;
     expect(await code(await postStayScreenshots(alice, start, invoice.materialId, [new File([Buffer.from('%PDF-1.4')], '支付记录.pdf', { type: 'application/pdf' })]))).toBe('not_image');
