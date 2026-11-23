@@ -604,6 +604,7 @@ const TASK_ACTIONS: Readonly<Record<string, TaskAction>> = {
   'answer-pending': taskAction(withToken({ itemId: z.string().min(1), answer: PendingAnswerSchema }), (tasks, id, { itemId, answer, stepToken }) => tasks.answerPending(id, itemId, answer, stepToken)),
   'confirm-review': taskAction(withToken(ConfirmReviewInputSchema.shape), (tasks, id, { digest, acceptDeadlineWarnings, stepToken }) => tasks.confirmReview(id, digest, stepToken, acceptDeadlineWarnings)),
   'exclude-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.excludeMaterial(id, materialId, stepToken)),
+  'restore-material': taskAction(withToken({ materialId: z.string().min(1) }), (tasks, id, { materialId, stepToken }) => tasks.restoreMaterial(id, materialId, stepToken)),
   // 去报销. While another task of the same 应用账号 holds the ERP lease: 409 `erp_in_use`, naming no task. Another
   // account's job never refuses this one (ADR-0019).
   'start-erp-write': taskAction(withToken({}), (tasks, id, { stepToken }) => tasks.startErpWrite(id, stepToken)),

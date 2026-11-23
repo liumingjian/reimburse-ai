@@ -879,4 +879,23 @@ export const MIGRATIONS: Record<string, Migration> = {
       .addColumn('data', 'text', c => c.notNull()).execute();
     await appendOnly(db, 'summary_resolution');
   } },
+  '0030_material_restoration': { async up(db) {
+    // Keep every exclusion while allowing a later exclusion after restoration.
+    await db.schema.createTable('material_exclusion_history')
+      .addColumn('exclusion_id', 'text', c => c.primaryKey())
+      .addColumn('task_id', 'text', c => c.notNull().references('task.task_id'))
+      .addColumn('account_id', 'text', c => c.notNull().references('account.account_id'))
+      .addColumn('material_id', 'text', c => c.notNull().references('material.material_id'))
+      .addColumn('revision', 'integer', c => c.notNull())
+      .addColumn('created_at', 'text', c => c.notNull()).execute();
+    await sql`INSERT INTO material_exclusion_history SELECT * FROM material_exclusion`.execute(db);
+    await db.schema.dropTable('material_exclusion').execute();
+    await db.schema.alterTable('material_exclusion_history').renameTo('material_exclusion').execute();
+    await appendOnly(db, 'material_exclusion');
+    await db.schema.createTable('material_restoration')
+      .addColumn('material_id', 'text', c => c.notNull().references('material.material_id'))
+      .addColumn('task_id', 'text', c => c.notNull().references('task.task_id'))
+      .addColumn('revision', 'integer', c => c.notNull()).execute();
+    await appendOnly(db, 'material_restoration');
+  } },
 };

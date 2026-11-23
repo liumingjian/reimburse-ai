@@ -8,13 +8,13 @@ import { TASK_ACTIONS, type StepKind, type TaskAction, type TaskSnapshot } from 
 // the rest of the snapshot.
 
 // Changes accepted after the inventory and before anything is written to the ERP.
-const CHANGES: readonly TaskAction[] = ['upload', 'reopen_upload', 'exclude_material', 'answer_pending', 'set_home_city'];
+const CHANGES: readonly TaskAction[] = ['upload', 'reopen_upload', 'exclude_material', 'restore_material', 'answer_pending', 'set_home_city'];
 const ASSIGNING: readonly TaskAction[] = [...CHANGES, 'assign_project_lines', 'submit_project_assignment'];
 
 const STEP_ACTIONS: Readonly<Record<StepKind, readonly TaskAction[]>> = {
   none: [],
-  upload_materials: ['upload', 'exclude_material', 'set_home_city'],
-  start_inventory: ['upload', 'start_inventory', 'exclude_material', 'set_home_city'],
+  upload_materials: ['upload', 'exclude_material', 'restore_material', 'set_home_city'],
+  start_inventory: ['upload', 'start_inventory', 'exclude_material', 'restore_material', 'set_home_city'],
   answer_pending: CHANGES,
   maintain_project_book: CHANGES,
   assign_projects: ASSIGNING,
@@ -43,6 +43,7 @@ export function allowedActionsOf(snapshot: TaskSnapshot): TaskAction[] {
     if (snapshot.confirmation.status === 'confirmed') allowed.add('summary');
     allowed.add('void_task');
   }
+  if (snapshot.confirmation.status === 'confirmed') { allowed.delete('exclude_material'); allowed.delete('restore_material'); }
   return TASK_ACTIONS.filter((action) => allowed.has(action));
 }
 

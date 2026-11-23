@@ -184,6 +184,7 @@
     "upload",
     "start_inventory",
     "exclude_material",
+    "restore_material",
     "set_home_city",
     "print",
     "void_task"

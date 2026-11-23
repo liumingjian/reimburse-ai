@@ -128,6 +128,7 @@ export const TASK_ACTIONS = [
   'start_inventory',
   'reopen_upload',
   'exclude_material',
+  'restore_material',
   'answer_pending',
   'change_dining_evidence',
   'set_home_city',

@@ -173,6 +173,11 @@ describe('ride-hailing invoice + 高德 itinerary', () => {
       expect(byFileName(excluded, sample('m04').name).status).toBe('excluded');
       expect(excluded.pendingItems).toEqual([]);
       expect(itinerary.linkedMaterialIds).toEqual([invoice.materialId]);
+      const restored = await client.accepted(await client.act(excluded, 'restore-material', { materialId: invoice.materialId }));
+      expect(byFileName(restored, sample('m03').name).status).toBe('pending');
+      expect(byFileName(restored, sample('m04').name).status).not.toBe('excluded');
+      expect(restored.pendingItems).toContainEqual(expect.objectContaining({ kind: 'given_up', status: 'open' }));
+      expect(restored.lines).toEqual([]);
     });
   });
 
