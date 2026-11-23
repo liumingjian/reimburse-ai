@@ -362,10 +362,19 @@ export const PendingItemSchema = z.object({
   dining: PendingDiningSchema.nullable().optional(),
   expenseDetails: z.array(PendingFieldSchema).optional(),
   rideTrips: z.object({ total: z.string() }).optional(),
+  referenceSupplement: z.literal(true).optional(),
   status: z.enum(['open', 'resolved']),
   answer: PendingAnswerSchema.nullable(),
 });
 export type PendingItem = z.infer<typeof PendingItemSchema>;
+
+export function pendingSupplementLabel(item: PendingItem): string | null {
+  if (item.referenceSupplement) return '补充账单';
+  if (item.status !== 'open') return null;
+  if (item.dining?.supplement === 'receipt') return '补充账单';
+  if (item.dining?.supplement === 'invoice') return '补传餐饮发票';
+  return null;
+}
 
 // ---- 整批停的阻塞项 ----
 

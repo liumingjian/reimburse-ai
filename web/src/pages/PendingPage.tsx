@@ -34,7 +34,7 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { ActionGroup } from '../shell/ActionGroup';
 import { LodgingPreview } from './LodgingPreview';
-import { DiningEvidence, DiningInvoiceSelect } from './DiningEvidence';
+import { PendingEvidence, DiningInvoiceSelect } from './DiningEvidence';
 import { LatestUploadRejections } from './LatestUploadRejections';
 import { DiningPreview } from './DiningPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
@@ -493,7 +493,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
               screenshots={groupOf(item)}
               diningAllowed={diningAllowed}
             />
-            <DiningEvidence key={item.itemId + JSON.stringify(item.dining)} item={item} disabled={busy || !diningAllowed}
+            <PendingEvidence key={item.itemId + JSON.stringify(item.dining)} item={item} disabled={busy || !diningAllowed}
               onAssign={async (address, value) => { settle(await run((adapter) => adapter.answerPendingItem(taskId, address, { value }, snapshot.step.stepToken))); }}
               onUpload={async (files) => {
                 const outcome = await run((adapter) => adapter.supplementDiningEvidence(taskId, { pendingItemId: item.itemId, files }, snapshot.step.stepToken));

@@ -139,6 +139,7 @@ export type TransportPlan = {
 const summaryBrand = (kindLabel: string) => /^(.+)行程单$/.exec(kindLabel)?.[1] ?? '打车';
 export const ALLOCATION_GIVE_UP_NOTE = '放弃后这张发票不形成明细：请把它连同行程单排除，或补充能逐段核对的行程单后重新盘点。';
 
+const describeTrips = (legs: readonly Leg[]) => legs.map(leg => `${leg.date ?? ''} · ${leg.city ?? ''} · ${leg.origin ?? ''} → ${leg.destination ?? ''} · ${leg.amount ?? ''} 元`).join('；');
 const arrow = (from: string | null, to: string | null) => (from && to ? `${from} → ${to}` : null);
 const push = <T>(map: Map<string, T[]>, key: string, value: T) => map.set(key, [...(map.get(key) ?? []), value]);
 
@@ -183,6 +184,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
     const manual = ['manual_fill', 'confirm_none'].includes(values.choice ?? '');
     if (pairs.has(invoice.materialId) && !manual) continue;
     const item = missingReference({ itemId, materialId: invoice.materialId, title: `「${invoice.fileName}」缺少行程单`, why: '填写实际行程的日期、城市和路线；多段行程的金额须与发票一致。', kind: 'choice', resolver: '要你处理', fields: [], choices: [], allocation: null, screenshotGroup: null, manualKinds: [], status: 'open', answer: null }, []);
+    if (pairs.has(invoice.materialId)) item.referenceSupplement = undefined;
     item.rideTrips = { total: invoice.values.totalAmount ?? '' };
     push(plan.items, invoice.materialId, item);
     if (!manual || Object.keys(validatePendingAnswer(item, stored!)).length) continue;
@@ -199,7 +201,7 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
       const conflictId = `ride_itinerary_conflict.${invoice.materialId}.${itineraryId}`;
       const decision = fieldAnswer(details.get(conflictId) ?? null).choice;
       if (validated.status === 'adopted' && decision === 'adopt') continue;
-      push(plan.items, itineraryId, { ...item, itemId: conflictId, materialId: itineraryId, expenseDetails: undefined, rideTrips: undefined, title: '核对后补的行程单', why: `已填行程：${JSON.stringify(legs)}；材料行程：${JSON.stringify(materialLegs)}`, choices: [...(validated.status === 'adopted' ? [{ key: 'adopt', label: '采用行程单' }] : []), { key: 'exclude', label: '排除行程单，保留已填行程' }] });
+      push(plan.items, itineraryId, { ...item, itemId: conflictId, materialId: itineraryId, expenseDetails: undefined, rideTrips: undefined, referenceSupplement: undefined, title: '核对后补的行程单', why: `已填行程：${describeTrips(legs)}；材料行程：${describeTrips(materialLegs)}`, choices: [...(validated.status === 'adopted' ? [{ key: 'adopt', label: '采用行程单' }] : []), { key: 'exclude', label: '排除行程单，保留已填行程' }] });
       pairs.delete(invoice.materialId);
     }
     plan.lines.set(invoice.materialId, result.legs.map((amount, i) => {

@@ -7,5 +7,6 @@ export function missingReference(item: PendingItem, fields: PendingField[]): Pen
     ...item,
     choices: [{ key: 'manual_fill', label: '手工填写' }, { key: 'confirm_none', label: '确认没有账单' }, { ...EXCLUDE, label: '忽略发票' }],
     expenseDetails: fields,
+    referenceSupplement: true,
   };
 }

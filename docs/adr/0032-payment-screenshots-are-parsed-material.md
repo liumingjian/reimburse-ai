@@ -1,5 +1,7 @@
 # 支付截图 are parsed material, assigned to stays by date and checked by sum
 
+**Amended by [ADR-0043](0043-reference-materials-are-optional.md) (2026-11-23).** Missing screenshots need no separate acknowledgement. Assignment uses the actual stay dates adopted on the expense when available, including dates entered by the employee.
+
 ADR-0017 kept payment screenshots out of parsing: they were images for the print sheet, checked only for presence,
 and #329 had them uploaded one 住宿 invoice at a time from that invoice's 待确认项. QA showed the cost: users upload a
 stay's invoice, folio and screenshots together, and the screenshots came back unrecognised. This ADR amends ADR-0017
