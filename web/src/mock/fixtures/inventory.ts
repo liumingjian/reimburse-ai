@@ -587,7 +587,7 @@ const FILE_TO_FIXTURE = new Map(Object.entries(PROFILES).flatMap(([id, profile])
 
 // 把一批已接收的材料按文件名对到识别档案，生成盘点结果。unsupportedFault 让曹操行程单（m06）变成不支持的版式；
 // allocationRequired（`?allocation=1`）让高德合并发票需要逐段分摊；completeScreenshots 是支付截图组已「已传齐」的发票 materialId。
-export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false, completeScreenshots: ReadonlySet<string> = new Set()): InventoryResult {
+export function inventoryResult(uploaded: readonly Material[], unsupportedFault: boolean, allocationRequired = false, completeScreenshots: ReadonlySet<string> = new Set(), screenshotInvoices: ReadonlySet<string> = new Set()): InventoryResult {
   const fixtureOf = new Map<string, string>();
   const actualOf = new Map<string, string>();
   for (const material of uploaded) {
@@ -664,33 +664,45 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       fields: p.fields.map((f) => ({ ...f })),
     };
   });
-  // 住宿三件套（#213，服务端 stay-trio.ts）：每张住宿发票都在它的其余待确认项之后带一项支付截图（#331）。
-  // 在这一项里上传一组支付截图（flows/print.ts）后点「已传齐」，或选「确认没有支付截图」，都能处理这一项。
+  // Missing folios require actual stay dates. Screenshot items exist only for supplied groups.
   for (const template of EVENTS) {
     const voucher = materials.find((material) => material.materialId === actualOf.get(template.voucher));
     if (template.category.code !== 'accommodation' || !voucher) continue;
-    const copy = STAY_TRIO_COPY.screenshot;
-    const itemId = stayTrioItemId('screenshot', voucher.materialId);
-    pendingItems.push({
-      itemId,
-      materialId: voucher.materialId,
-      title: copy.title(voucher.fileName),
-      why: copy.why(template.gross),
-      kind: 'choice',
-      resolver: '要你处理',
-      fields: [],
-      choices: [
-        { key: STAY_TRIO_CONFIRM_NONE, label: copy.confirmNone },
-        { key: 'exclude', label: '排除这份材料' },
-      ],
-      allocation: null,
-      screenshotGroup: null,
-      manualKinds: [],
-      status: completeScreenshots.has(voucher.materialId) ? 'resolved' : 'open',
-      answer: null,
-    });
-    voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
-    if (!completeScreenshots.has(voucher.materialId)) voucher.status = 'pending';
+    const missingFolio = !voucher.linkedMaterialIds.some((id) => materials.find((material) => material.materialId === id)?.kind === 'hotel_folio');
+    const elements = [...(missingFolio ? ['folio'] as const : []), ...(screenshotInvoices.has(voucher.materialId) ? ['screenshot'] as const : [])];
+    for (const element of elements) {
+      const needsDates = element === 'folio';
+      const copy = STAY_TRIO_COPY[element];
+      const itemId = stayTrioItemId(element, voucher.materialId);
+      pendingItems.push({
+        itemId,
+        materialId: voucher.materialId,
+        title: copy.title(voucher.fileName),
+        why: copy.why(template.gross),
+        kind: 'choice',
+        resolver: '要你处理',
+        fields: [],
+        choices: needsDates ? [
+          { key: 'manual_fill', label: '手工填写' },
+          { key: STAY_TRIO_CONFIRM_NONE, label: '确认没有账单' },
+          { key: 'exclude', label: '忽略发票' },
+        ] : [
+          { key: STAY_TRIO_CONFIRM_NONE, label: STAY_TRIO_COPY.screenshot.confirmNone },
+          { key: 'exclude', label: '排除这份材料' },
+        ],
+        allocation: null,
+        screenshotGroup: null,
+        manualKinds: [],
+        status: !needsDates && completeScreenshots.has(voucher.materialId) ? 'resolved' : 'open',
+        answer: null,
+        ...(needsDates ? { referenceSupplement: true as const, expenseDetails: [
+          { key: 'checkIn', label: '实际入住日期', required: true, format: 'date' as const, placeholder: 'YYYY-MM-DD' },
+          { key: 'checkOut', label: '实际离店日期', required: true, format: 'date' as const, placeholder: 'YYYY-MM-DD' },
+        ] } : {}),
+      });
+      voucher.pendingItemIds = [...voucher.pendingItemIds, itemId];
+      if (needsDates || !completeScreenshots.has(voucher.materialId)) voucher.status = 'pending';
+    }
   }
   const events: ExpenseEvent[] = [];
   let amapSegment = 0;
@@ -715,8 +727,8 @@ export function inventoryResult(uploaded: readonly Material[], unsupportedFault:
       category: template.category,
       summary: template.summary,
       evidenceNote,
-      date: template.date,
-      endDate: template.endDate,
+      date: template.category.code === 'accommodation' && refs.length === 0 ? PROFILES[template.voucher]?.fields.find((field) => field.key === 'issueDate')?.value ?? template.date : template.date,
+      endDate: template.category.code === 'accommodation' && refs.length === 0 ? null : template.endDate,
       city: template.city,
       origin: template.origin,
       destination: template.destination,

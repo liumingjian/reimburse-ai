@@ -188,10 +188,13 @@ export function t1Snapshot(stage: SeedStage = 'upload', unsupportedFault = false
     const batch = t1Batch();
     snapshot.batches = [batch];
     snapshot.inventory = inventoryDone('v1', T1_INVENTORY_FINISHED_AT, t1Materials(batch));
-    const result = inventoryResult(t1Materials(batch), unsupportedFault, allocationRequired);
+    // The seeded demo rehearses a legacy, incomplete screenshot group. Fresh tasks have no group.
+    snapshot.paymentScreenshots = stageReached(stage, 'project') ? [] : [{ screenshotId: 'legacy-hotel-shot', voucherMaterialId: 'm01', fileName: 'hotel-payment.png', url: 'fixtures/print-pg7.png' }];
+    const result = inventoryResult(t1Materials(batch), unsupportedFault, allocationRequired, stageReached(stage, 'project') ? new Set(['m01']) : new Set(), new Set(snapshot.paymentScreenshots.map((shot) => shot.voucherMaterialId)));
     if (stageReached(stage, 'project')) {
       // 待确认项都已按原型的既定答复处理，候选明细随之形成（No. 按内核分类排序）。
       for (const item of result.pendingItems) {
+        if (item.itemId === 'stay_screenshot_missing.m01') continue;
         const material = result.materials.find((m) => m.materialId === item.materialId);
         const answer = material ? SEED_ANSWERS[material.materialId] : undefined;
         if (answer) applyPendingAnswer(result, item, answer);

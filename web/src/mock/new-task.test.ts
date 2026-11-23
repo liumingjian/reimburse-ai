@@ -105,11 +105,11 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
     expect(SAMPLES.map((sample) => [sample.file, sample.fileName])).toEqual(Object.values(PROFILES).map((profile) => [profile.file, profile.fileName]));
   });
 
-  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 9 个待确认项', async () => {
+  test('创建时是占位名称；上传全部示例后名称不变，并保留重复金额的小票及 8 个待确认项', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.fileName));
     expect(snapshot.task.name).toMatch(/^\d{4}-\d{2}-\d{2} 新建报销$/);
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(9);
+    expect(snapshot.pendingItems.filter((item) => item.status === 'open')).toHaveLength(8);
     expect(snapshot.materials.filter((material) => material.kindLabel === '未识别版式')).toHaveLength(1);
   });
 
@@ -141,7 +141,7 @@ describe('mock 服务端：新建任务命名与示例材料识别', () => {
   test('按示例原件文件名（m01-hotel-invoice.pdf 等）上传也能识别', async () => {
     const { snapshot } = await inventoryOf(SAMPLES.map((sample) => sample.file));
     expect(snapshot.task.period).toEqual({ start: '2026-08-09', end: '2026-08-22' });
-    expect(snapshot.pendingItems).toHaveLength(9);
+    expect(snapshot.pendingItems).toHaveLength(8);
     expect(snapshot.events).toHaveLength(10);
   });
 
