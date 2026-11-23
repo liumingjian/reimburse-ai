@@ -142,3 +142,26 @@ describe('manual ride expense facts', () => {
     expect(planTransport([invoice], new Map(), new Map([['ride_itinerary_missing.ride', { ...answer, 'segments[1].amount': '39.20' }]])).lines.get('ride')).toBeUndefined();
   });
 });
+
+it('associates equivalent later itinerary facts without another decision', async () => {
+  const { planTransport } = await import('./allocation');
+  const values = { choice: 'manual_fill', tripCount: '1', 'segments[0].date': '2026-07-09', 'segments[0].city': '北京', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' };
+  const invoice = { materialId: 'ride', fileName: 'ride.pdf', kind: 'vat_invoice' as const, layout: '', kindLabel: '发票', values: { ...AA_INVOICE, issueDate: '2026-07-09', itemName: '*运输服务*客运服务' }, ok: true };
+  const itinerary = { materialId: 'trip', fileName: 'trip.pdf', kind: 'ride_itinerary' as const, layout: '', kindLabel: '行程单', values: { ...values, 'segments[0].amount': '69.19', itineraryTotal: '69.19' }, ok: true };
+  const plan = planTransport([invoice, itinerary], new Map(), new Map([['ride_itinerary_missing.ride', values]]));
+  expect(plan.items.get('trip')).toBeUndefined();
+  expect(plan.lines.get('ride')![0]!.referenceMaterialIds).toEqual(['trip']);
+});
+
+it('binds adoption to the recognized itinerary facts', async () => {
+  const { planTransport } = await import('./allocation');
+  const values = { choice: 'manual_fill', tripCount: '1', 'segments[0].date': '2026-07-08', 'segments[0].city': '北京', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' };
+  const invoice = { materialId: 'ride', fileName: 'ride.pdf', kind: 'vat_invoice' as const, layout: '', kindLabel: '发票', values: { ...AA_INVOICE, issueDate: '2026-07-09', itemName: '*运输服务*客运服务' }, ok: true };
+  const itinerary = { materialId: 'trip', fileName: 'trip.pdf', kind: 'ride_itinerary' as const, layout: '', kindLabel: '行程单', values: { ...values, 'segments[0].date': '2026-07-09', 'segments[0].amount': '69.19', itineraryTotal: '69.19' }, ok: true };
+  const answers = new Map([['ride_itinerary_missing.ride', values as Record<string, string>]]);
+  const original = planTransport([invoice, itinerary], new Map(), answers).items.get('trip')![0]!;
+  answers.set(original.itemId, { choice: 'adopt' });
+  expect(planTransport([invoice, itinerary], new Map(), answers).items.get('trip')).toBeUndefined();
+  const corrected = { ...itinerary, values: { ...itinerary.values, 'segments[0].date': '2026-07-10' } };
+  expect(planTransport([invoice, corrected], new Map(), answers).items.get('trip')![0]!.itemId).not.toBe(original.itemId);
+});

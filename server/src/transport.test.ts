@@ -347,6 +347,8 @@ describe('ride-hailing without a companion itinerary', () => {
     expect(itemId).toMatch(/^ride_itinerary_missing\./);
     const answer = { choice: 'confirm_none', tripCount: '2', 'segments[0].date': '2026-08-01', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店', 'segments[0].amount': '30.00', 'segments[1].date': '2026-08-02', 'segments[1].city': '上海', 'segments[1].origin': '酒店', 'segments[1].destination': '车站', 'segments[1].amount': '39.20' };
     expect((await client.act(pending, 'answer-pending', { itemId, answer })).status).toBe(400);
+    expect((await client.act(pending, 'answer-pending', { itemId, answer: { ...answer, 'segments[0].city': '' } })).status).toBe(400);
+    expect((await client.act(pending, 'answer-pending', { itemId, answer: { ...answer, tripCount: '1', 'segments[2].city': '北京' } })).status).toBe(400);
     const ready = await client.accepted(await client.act(pending, 'answer-pending', { itemId, answer: { ...answer, 'segments[1].amount': '39.19' } }));
     expect(ready.stage).toBe('project');
     expect(ready.lines.map(line => [line.date, line.route, line.grossAmount, line.referenceMaterialIds])).toEqual([

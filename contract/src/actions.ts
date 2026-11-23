@@ -115,6 +115,7 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
       if (!Number.isInteger(count) || count < 1 || count > 100) errors.tripCount = '请填写 1 至 100 段行程。';
       else {
         Object.assign(errors, fieldErrors(rideTripFields(count), values));
+        for (let i = 0; count > 1 && i < count; i += 1) if (Number(values[`segments[${i}].amount`]) <= 0) errors[`segments[${i}].amount`] = ALLOCATION_ERRORS.amount;
         const indices = Object.keys(values).filter(key => key.startsWith('segments['));
         if (indices.some(key => !rideTripFields(count).some(field => field.key === key))) errors.tripCount = '行程序号不连续，请重新填写。';
         if (count > 1 && !Object.keys(errors).length) {

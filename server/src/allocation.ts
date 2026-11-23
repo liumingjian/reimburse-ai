@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { fieldAnswer, validatePendingAnswer, rideTripFields, type PendingAnswer, type MaterialKind, type PendingItem } from '@baox/contract';
 import { KINDS, type EventDraft } from './kind-policy';
 import { CATEGORIES, vatItemCategory } from './parse/slots';
@@ -6,7 +7,7 @@ import { cents, money } from './money-date';
 
 // 逐段分摊 (per-leg allocation) and the ride-hailing invoice ↔ itinerary pairing, ported from 50931a3:kernel/src/events.mjs
 // (`linkEvidence`, `conservingSegments`, `splitTax`, `buildEvents`). Two rules:
-//   1. Splitting needs evidence: an invoice becomes several legs only because its paired itinerary lists them.
+//   1. Splitting uses actual trips supplied by the employee or a validated itinerary.
 //   2. The system never makes up an amount: nothing is averaged or apportioned (by count, distance or time). Itinerary
 //      leg amounts are adopted only when they sum to the invoice's 价税合计 exactly, to the cent (AA splits included);
 //      otherwise the user gives each leg's total (an `allocation` 待确认项). Net and tax are then cut by the invoice's
@@ -198,9 +199,14 @@ export function planTransport(materials: readonly TransportMaterial[], answers: 
       const itinerary = byId.get(itineraryId)!;
       const materialLegs = legsOf(itinerary.values);
       const validated = allocate(invoice.values, materialLegs);
-      const conflictId = `ride_itinerary_conflict.${invoice.materialId}.${itineraryId}`;
+      const fingerprint = createHash('sha256').update(JSON.stringify(materialLegs)).digest('hex').slice(0, 16);
+      const conflictId = `ride_itinerary_conflict.${invoice.materialId}.${itineraryId}.${fingerprint}`;
       const decision = fieldAnswer(details.get(conflictId) ?? null).choice;
-      if (validated.status === 'adopted' && decision === 'adopt') continue;
+      const equivalent = legs.length === materialLegs.length && legs.every((leg, index) => {
+        const other = materialLegs[index]!;
+        return ['date', 'city', 'origin', 'destination', 'amount'].every(key => leg[key as keyof Leg] === other[key as keyof Leg]);
+      });
+      if (validated.status === 'adopted' && (decision === 'adopt' || equivalent)) continue;
       push(plan.items, itineraryId, { ...item, itemId: conflictId, materialId: itineraryId, expenseDetails: undefined, rideTrips: undefined, referenceSupplement: undefined, title: '核对后补的行程单', why: `已填行程：${describeTrips(legs)}；材料行程：${describeTrips(materialLegs)}`, choices: [...(validated.status === 'adopted' ? [{ key: 'adopt', label: '采用行程单' }] : []), { key: 'exclude', label: '排除行程单，保留已填行程' }] });
       pairs.delete(invoice.materialId);
     }

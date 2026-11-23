@@ -57,9 +57,9 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
     });
     for (const field of hotel.fields) expect(field).toMatchObject({ source: EINVOICE, parserVersion: einvoice.version, evidence: 'explicit' });
 
-    // Parsed in full; alone (no itinerary, so no expense city) it waits on category_city_missing (#188).
+    // Parsed in full; alone (no itinerary, so no expense city) it waits on ride_itinerary_missing (#188).
     const amap = byFileName(snapshot, sample('m03').name);
-    expect(amap).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', pendingItemIds: [`category_city_missing.${amap.materialId}`] });
+    expect(amap).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', pendingItemIds: [`ride_itinerary_missing.${amap.materialId}`] });
     expect(fieldValues(amap, EINVOICE)).toMatchObject({
       invoiceNumber: '26312000000101557402',
       issueDate: '2026-08-13',
@@ -77,7 +77,7 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
     // A ride-hailing invoice that bundles an unrelated fee row beside its 运输服务 row is still recognised (#201),
     // and its totals come from the 合计 row rather than from the leading item row.
     const bundled = byFileName(snapshot, sample('r201').name);
-    expect(bundled).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', pendingItemIds: [`category_city_missing.${bundled.materialId}`] });
+    expect(bundled).toMatchObject({ kind: 'vat_invoice', layout: 'einvoice', status: 'pending', pendingItemIds: [`ride_itinerary_missing.${bundled.materialId}`] });
     expect(fieldValues(bundled, EINVOICE)).toMatchObject({
       invoiceNumber: '26312000000104412880',
       issueDate: '2026-08-16',
@@ -95,7 +95,7 @@ describe('the vat_invoice/einvoice layout on @baox/fixtures', () => {
       expect(material.pendingItemIds).toHaveLength(1);
       expect(snapshot.inventory.ungroupedMaterialIds).toContain(material.materialId);
     }
-    // m03, m05 and r201 are ride-hailing invoices without itineraries: no expense city, so each waits on category_city_missing (#188).
+    // m03, m05 and r201 are ride-hailing invoices without itineraries: no expense city, so each waits on ride_itinerary_missing (#188).
     expect(snapshot.inventory.summary).toMatchObject({ materialCount: 7, okCount: 2, pendingMaterialCount: 5, voucherCount: 1, openPendingItemCount: 5 });
     // Unrecognised materials leave 待确认项 open: the task moves on to pending items.
     expect(snapshot.stage).toBe('pending');
@@ -299,7 +299,7 @@ describe('the e-invoice QR code, a second evidence source', () => {
     expect(material.checkText).toContain('价税合计 票面 69.19，二维码 96.19');
     // The only item is the missing expense city of a ride-hailing invoice alone (#188) — the same one the agreeing
     // QR leaves behind. Nothing about the QR is answerable, so nothing about it is asked.
-    expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${material.materialId}`]);
+    expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`ride_itinerary_missing.${material.materialId}`]);
   });
 
   it('a QR that agrees is noted in the check text and blocks nothing', async () => {
@@ -309,7 +309,7 @@ describe('the e-invoice QR code, a second evidence source', () => {
     const material = byFileName(snapshot, amap.name);
     expect(material).toMatchObject({ checkText: expect.stringContaining('二维码核对一致') });
     // The QR raises nothing; the only item is the missing expense city of a ride-hailing invoice alone (#188).
-    expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`category_city_missing.${material.materialId}`]);
+    expect(snapshot.pendingItems.map((item) => item.itemId)).toEqual([`ride_itinerary_missing.${material.materialId}`]);
   });
 
   it('an undecodable QR is advisory: the invoice is ok, raises no 待确认项 and forms its candidate line', async () => {
@@ -398,7 +398,7 @@ describe('the background parser job', () => {
 
     gate.release();
     const done = await client.settled(task.taskId);
-    // m03 alone has no expense city, so it waits on category_city_missing (#188); the hotel invoice m01 alone waits on
+    // m03 alone has no expense city, so it waits on ride_itinerary_missing (#188); the hotel invoice m01 alone waits on
     // the 住宿 trio check (#213).
     expect(done.materials.map((material) => material.status)).toEqual(['pending', 'pending']);
     expect((await client.act(done, 'exclude-material', { materialId: done.materials[1]?.materialId })).status).toBe(200);
