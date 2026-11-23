@@ -75,8 +75,7 @@ describe('generate-print-sheet', () => {
     // Photos are croppable with detected corners; PDFs are not.
     expect(sheet.pages[1]?.top).toMatchObject({ croppable: true, cropAdjusted: false, corners: expect.any(Array) });
     expect(sheet.pages[0]?.top).toMatchObject({ croppable: false, corners: null });
-    // Only the hotel page, whose screenshot absence was confirmed at inventory (#213), says so.
-    expect(sheet.notices).toEqual(['No.8 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
+    expect(sheet.notices).toEqual([]);
     // Generating is print-only: the confirmation stands.
     expect(generated.confirmation).toEqual(task.confirmation);
 
@@ -171,7 +170,7 @@ describe('print settings', () => {
     // The hotel invoice's screenshots are locked with the confirmed list (#331).
     await refused(await upload(hotel.top.materialId), 'screenshot_locked');
     const removed = await client.current(task.task.taskId);
-    expect(removed.printSheet.notices).toEqual(['No.2 住宿发票在盘点时已确认没有支付截图，这一页不放支付截图。']);
+    expect(removed.printSheet.notices).toEqual([]);
     expect((await download(removed.printSheet.url ?? '')).getPageCount()).toBe(2);
     await refused(await print(removed, 'remove-payment-screenshot', { screenshotId: 'gone' }), 'screenshot_not_found');
     // The settings survive: the folio keeps its rotation and the photo its corners.
@@ -196,7 +195,7 @@ describe('支付截图 on the sheet', () => {
   const shot = (n: number) => new File([readFileSync(join(GENERATED_DIR, `print-pg${n}.png`))], `IMG_50${10 + n}.png`, { type: 'image/png' });
 
   async function confirmedWith(count: number) {
-    const scene = await scenario(server, alice).at('pending', { materials: ['m01', 'm02'] });
+    const scene = await scenario(server, alice).at('project', { materials: ['m01', 'm02'] });
     const invoice = byFileName(scene.reached, sample('m01').name);
     let latest = scene.reached;
     for (let n = 1; n <= count; n += 1) latest = await screenshot(latest, invoice.materialId, shot(n));

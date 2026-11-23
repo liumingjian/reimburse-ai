@@ -196,14 +196,15 @@ const ACTIONS: Record<ActionName, Traits> = {
     },
   },
   confirm_review: { ready: atStep(['confirm_review'], { code: 'not_ready', message: CONFIRM_REVIEW_ERRORS.notReady }) },
-  exclude_material: {},
+  exclude_material: { ready: facts => facts.confirmation === 'confirmed' ? { code: 'inclusion_locked', message: '请先重新打开上传再修改材料。' } : null },
+  restore_material: { ready: facts => facts.confirmation === 'confirmed' ? { code: 'inclusion_locked', message: '请先重新打开上传再修改材料。' } : null },
   // A batch stopped by 发票占用 has no pending items to answer; excluding the held material is the way out.
   answer_pending: { ready: (facts) => (facts.parse && facts.parse.blockers.length === 0 ? null : { code: 'not_ready', message: ACTION_COPY.notAnswering }) },
   change_dining_evidence: {
     ready: (facts) => {
-      if (facts.confirmation === 'confirmed') return { code: 'dining_evidence_locked', message: '整单明细已确认，请先重新打开上传再修改餐饮材料。' };
+      if (facts.confirmation === 'confirmed') return { code: 'dining_evidence_locked', message: '整单明细已确认，请先重新打开上传再修改参考材料或费用详情。' };
       return inventoried(facts) && facts.parse?.waiting === 0 && facts.parse.blockers.length === 0
-        ? null : { code: 'not_ready', message: '当前材料盘点完成后才能修改餐饮材料。' };
+        ? null : { code: 'not_ready', message: '当前材料盘点完成后才能修改参考材料或费用详情。' };
     },
   },
   set_home_city: { ownsFreeze: true, ready: (_facts, _step, erp) => (erp?.attempted ? { code: 'home_city_locked', message: HOME_CITY_ERRORS.locked } : null) },

@@ -178,18 +178,18 @@ const SCENARIO_PROJECTS = new Set(GOLDENS.project.projectAssignment.projects.map
 
 // The scenario builder's ladder (server/src/test/scenario.ts), one rung per call.
 const ladder = {
-  async upload(fault: MockOptions['fault'] = null): Promise<Driven> {
+  async upload(fault: MockOptions['fault'] = null, files = UPLOADED): Promise<Driven> {
     const adapter = createMockAdapter({ seed: null, fault, ...FAST });
     // The mock's fixture book has more projects than the scenario's; the user removes them.
     for (const project of (await adapter.getProjectBook()).projects) {
       if (!SCENARIO_PROJECTS.has(project.number)) ok(await adapter.deleteProject({ number: project.number }));
     }
     const taskId = snapshotOf(await adapter.createTask({ homeCity: GOLDENS.upload.task.homeCity })).task.taskId;
-    const snapshot = snapshotOf(await adapter.uploadBatch(taskId, UPLOADED.map(sampleFile)));
+    const snapshot = snapshotOf(await adapter.uploadBatch(taskId, files.map(sampleFile)));
     return { adapter, taskId, snapshot };
   },
-  async pending(fault: MockOptions['fault'] = null): Promise<Driven> {
-    const { adapter, taskId, snapshot } = await ladder.upload(fault);
+  async pending(fault: MockOptions['fault'] = null, files = UPLOADED): Promise<Driven> {
+    const { adapter, taskId, snapshot } = await ladder.upload(fault, files);
     ok(await adapter.startInventory(taskId, snapshot.step.stepToken));
     return { adapter, taskId, snapshot: await settled(adapter, taskId, (current) => current.inventory.status === 'done') };
   },
@@ -225,7 +225,7 @@ async function afterErpWrite(fault: MockOptions['fault'], done: (snapshot: TaskS
 
 const SCENES: Record<GoldenScenario, () => Promise<TaskSnapshot>> = {
   upload: async () => (await ladder.upload()).snapshot,
-  pending: async () => (await ladder.pending()).snapshot,
+  pending: async () => (await ladder.pending(null, GOLDENS.pending.batches.flatMap((batch) => batch.files.map((file) => file.fileName)))).snapshot,
   project: async () => (await ladder.project()).snapshot,
   review: async () => (await ladder.review()).snapshot,
   'choose-action': async () => (await ladder.actions()).snapshot,

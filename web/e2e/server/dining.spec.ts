@@ -24,8 +24,8 @@ test('餐饮发票缺小票时直接补传，配对为招待费，可切换原�
   const read = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
   await expect.poll(async () => (await read()).stage).toBe('pending');
   await page.goto(`/#/task/${taskId}/pending`);
-  await expect(page.getByRole('button', { name: '补传餐饮小票' })).toBeVisible();
-  await page.getByLabel('补传餐饮小票', { exact: true }).setInputFiles(samples.slice(1));
+  await expect(page.getByRole('button', { name: '补充账单' })).toBeVisible();
+  await page.getByLabel('补充账单', { exact: true }).setInputFiles(samples.slice(1));
   await expect(page).toHaveURL(new RegExp(`#/task/${taskId}/inventory$`));
   await expect.poll(async () => (await read()).stage).toBe('project');
   await expect.poll(async () => (await read()).lines.length).toBe(1);
@@ -82,7 +82,7 @@ test('补传未识别的真实小票原件，手工填写独立金额并一次�
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect.poll(async () => (await read()).stage).toBe('pending');
   await page.goto(`/#/task/${taskId}/pending`);
-  await page.getByLabel('补传餐饮小票', { exact: true }).setInputFiles([
+  await page.getByLabel('补充账单', { exact: true }).setInputFiles([
     { name: '手工餐饮小票.pdf', mimeType: 'application/pdf', buffer: bytes },
     { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('unsupported') },
   ]);
@@ -122,4 +122,52 @@ test('补传未识别的真实小票原件，手工填写独立金额并一次�
   await expect(preview.getByRole('tab', { name: '餐饮小票：手工餐饮小票.pdf' })).toBeVisible();
   await preview.getByRole('tab', { name: `发票：${sample.fileName}` }).click();
   await expect(preview.getByRole('img', { name: `${sample.fileName} 原件` })).toBeVisible();
+});
+
+test('餐饮发票确认无账单后仍可填写实际用餐日期', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signIn(page);
+  await page.goto('/#/tasks');
+  await page.getByRole('button', { name: '新建报销任务' }).click();
+  const dialog = page.getByRole('dialog', { name: '新建报销任务' });
+  await dialog.getByLabel('常驻城市').fill('杭州');
+  await dialog.getByRole('button', { name: '创建并上传材料' }).click();
+  await expect(page).toHaveURL(/#\/task\/[^/]+\/upload$/);
+  const taskId = /#\/task\/([^/]+)\//.exec(page.url())?.[1] ?? '';
+  const sample = SAMPLE_MATERIALS.find((candidate) => candidate.file.startsWith('m11'))!;
+  await page.getByLabel('拖入文件，或点击选择', { exact: true }).setInputFiles({ name: sample.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, sample.file)) });
+  await page.getByRole('button', { name: '开始材料盘点' }).click();
+  const read = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  await expect.poll(async () => (await read()).stage).toBe('pending');
+  await page.goto(`/#/task/${taskId}/pending`);
+  await expect(page.getByRole('button', { name: '补充账单' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '忽略发票' })).toBeVisible();
+  await page.getByRole('button', { name: '确认没有账单' }).click();
+  await expect.poll(async () => (await read()).stage).toBe('project');
+  await page.goto(`/#/task/${taskId}/pending`);
+  await page.getByRole('button', { name: '查看或修改费用详情' }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '查看或修改费用详情' }).click();
+  await expect(page.getByLabel('实际用餐日期')).toHaveValue((await read()).lines[0]!.date);
+  await page.getByLabel('实际用餐日期').fill('2026-08-12');
+  await page.getByRole('button', { name: '保存费用详情' }).click();
+  await expect.poll(async () => (await read()).lines[0]?.date).toBe('2026-08-12');
+  await page.reload();
+  await page.getByRole('button', { name: '查看或修改费用详情' }).click();
+  await page.getByRole('button', { name: '确认没有账单' }).click();
+  await expect(page.getByLabel('实际用餐日期')).toHaveValue('2026-08-12');
+  expect((await read()).lines[0]).toMatchObject({ date: '2026-08-12', grossAmount: '240.00', referenceMaterialIds: [] });
+  expect((await page.request.post('/api/project-book/intake', { data: { number: 'P-2307', name: '客户招待' } })).ok()).toBe(true);
+  const act = async (name: string, body: Record<string, unknown>) => {
+    const before = await read();
+    const response = await page.request.post(`/api/tasks/${taskId}/actions/${name}`, { data: { ...body, stepToken: before.step.stepToken } });
+    expect(response.ok()).toBe(true);
+    return TaskSnapshotSchema.parse(await response.json());
+  };
+  const current = await read();
+  const review = await act('submit-project-assignment', { purpose: '客户招待', projects: { [current.lines[0]!.lineId]: 'P-2307' } });
+  await act('confirm-review', { digest: review.confirmation.digest });
+  await page.goto(`/#/task/${taskId}/print`);
+  await expect(page.getByRole('list', { name: '打印稿页面' }).locator('.page-hdr')).toHaveText(['No.1 · 08-12 · 招待费 · 240.00'], { timeout: 60_000 });
+  expect((await read()).printSheet.pages).toEqual([expect.objectContaining({ kind: 'voucher', bottom: null })]);
 });

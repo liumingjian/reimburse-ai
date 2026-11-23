@@ -68,9 +68,8 @@ export async function materialRows(tx: Tx, taskId: string): Promise<MaterialRow[
   const rows = await tx
     .selectFrom('material')
     .innerJoin('blob', 'blob.sha256', 'material.blob_sha256')
-    .leftJoin('material_exclusion', 'material_exclusion.material_id', 'material.material_id')
     .selectAll('material')
-    .select(['blob.size', 'blob.mime', 'blob.medium as sniffed', sql<number>`material.rowid`.as('row_no'), sql<number>`material_exclusion.exclusion_id IS NOT NULL`.as('excluded')])
+    .select(['blob.size', 'blob.mime', 'blob.medium as sniffed', sql<number>`material.rowid`.as('row_no'), sql<number>`EXISTS (SELECT 1 FROM material_exclusion e WHERE e.material_id = material.material_id AND e.revision > COALESCE((SELECT MAX(r.revision) FROM material_restoration r WHERE r.material_id = material.material_id), -1))`.as('excluded')])
     .where('material.task_id', '=', taskId)
     .orderBy(sql`material.rowid`)
     .execute();
@@ -127,10 +126,12 @@ async function loadOwnFacts(tx: Tx, task: TaskTable, materials?: readonly Materi
   const results = current ? await tx.selectFrom('parse_result').select(['material_id', 'detail', 'created_at']).where('run_id', '=', current.run_id).orderBy('revision').execute() : [];
   // Answers outlive runs: a re-derived item with the same id meets its latest answer.
   const answers = new Map<string, PendingAnswer>();
+  const restorations = await tx.selectFrom('material_restoration').selectAll().where('task_id', '=', task.task_id).execute();
   if (current) {
     const uploads = await lastScreenshotUploads(tx, task.task_id);
-    for (const row of await tx.selectFrom('pending_answer').select(['item_id', 'answer', 'revision']).where('task_id', '=', task.task_id).orderBy('revision').execute()) {
+    for (const row of await tx.selectFrom('pending_answer').select(['item_id', 'material_id', 'answer', 'revision']).where('task_id', '=', task.task_id).orderBy('revision').execute()) {
       const answer = JSON.parse(row.answer) as PendingAnswer;
+      if (restorations.some(r => r.material_id === row.material_id && r.revision > row.revision) && typeof answer === 'object' && answer !== null && 'choice' in answer && answer.choice === 'exclude') continue;
       if (supersededByScreenshot(row.item_id, answer, row.revision, uploads)) answers.delete(row.item_id);
       else answers.set(row.item_id, answer);
     }

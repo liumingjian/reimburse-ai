@@ -4,6 +4,7 @@ import { CheckmarkFilled, TrashCan, WarningAltFilled } from '@carbon/icons-react
 import {
   DINING_INVOICE_KEY,
   segmentKey,
+  rideTripFields,
   manualKindOf,
   normalizePendingAnswer,
   validatePendingAnswer,
@@ -33,7 +34,7 @@ import { StatusTag } from '../shell/StatusTag';
 import { useAction } from '../shell/useAction';
 import { ActionGroup } from '../shell/ActionGroup';
 import { LodgingPreview } from './LodgingPreview';
-import { DiningEvidence, DiningInvoiceSelect } from './DiningEvidence';
+import { PendingEvidence, DiningInvoiceSelect } from './DiningEvidence';
 import { LatestUploadRejections } from './LatestUploadRejections';
 import { DiningPreview } from './DiningPreview';
 import { DuplicateBlockers } from './DuplicateBlockers';
@@ -217,8 +218,12 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
   const resolved = item.status === 'resolved';
   const chosen = fieldAnswer(item.answer)[PENDING_CHOICE_KEY];
   // 手工补填 opens its form here instead of answering (#342).
-  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE);
-  const fills = (key: string) => key === MANUAL_FILL_CHOICE && item.manualKinds.length > 0;
+  const [filling, setFilling] = useState(chosen === MANUAL_FILL_CHOICE || (chosen === 'confirm_none' && (!!item.rideTrips || !!item.expenseDetails)));
+  const [details, setDetails] = useState<FieldAnswer>(fieldAnswer(item.answer));
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const fills = (key: string) => key === MANUAL_FILL_CHOICE && (item.manualKinds.length > 0 || !!item.expenseDetails);
+  const [absence, setAbsence] = useState(chosen === 'confirm_none');
+  const tripCount = Math.max(1, Math.min(100, Number(details.tripCount) || 1));
   const manual = item.choices.some((choice) => choice.key === 'manual');
   const excludes = item.choices.some((choice) => choice.key === 'exclude');
   const screenshot = group !== undefined && chosen !== 'exclude';
@@ -269,8 +274,15 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
             kind={choice.key === 'exclude' ? 'ghost' : 'secondary'}
             className={chosen === choice.key || (filling && fills(choice.key)) ? 'app-toggle is-selected' : 'app-toggle'}
             aria-pressed={chosen === choice.key || (filling && fills(choice.key))}
-            disabled={resolved || state.busy}
-            onClick={() => (fills(choice.key) ? setFilling(true) : void onSubmit({ [PENDING_CHOICE_KEY]: choice.key }))}
+            disabled={(resolved && !item.expenseDetails) || state.busy || (!!item.expenseDetails && !diningAllowed)}
+            onClick={() => {
+              if (item.expenseDetails && ['manual_fill', 'confirm_none'].includes(choice.key)) {
+                setAbsence(choice.key === 'confirm_none');
+                setFilling(true);
+                if (choice.key === 'confirm_none' && !item.rideTrips && details.choice !== MANUAL_FILL_CHOICE) void onSubmit({ choice: choice.key });
+              } else if (fills(choice.key)) setFilling(true);
+              else void onSubmit({ [PENDING_CHOICE_KEY]: choice.key });
+            }}
           >
             {choice.label}
           </Button>
@@ -286,7 +298,21 @@ function ChoiceForm({ item, fileName, onSubmit, screenshots: group, state, dinin
           </Button>
         ) : null}
       </ActionGroup>
-      {filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
+      {filling && item.expenseDetails ? <form className="app-form" aria-label="填写费用详情" onSubmit={(event) => {
+        event.preventDefault();
+        const answer = { ...details, ...(item.rideTrips ? { tripCount: String(tripCount) } : {}), choice: absence && item.rideTrips ? 'confirm_none' : MANUAL_FILL_CHOICE };
+        const errors = validatePendingAnswer(item, answer);
+        setDetailErrors(errors);
+        if (!Object.keys(errors).length) void onSubmit(answer);
+      }}>
+        {item.rideTrips ? <TextInput id={`trip-count-${item.itemId}`} labelText="行程段数" type="number" min={1} max={100} value={tripCount} onChange={(event) => {
+          const count = Number(event.target.value);
+          setDetails(previous => Object.fromEntries(Object.entries({ ...previous, tripCount: String(count) }).filter(([key]) => !key.startsWith('segments[') || rideTripFields(Math.max(1, count)).some(field => field.key === key))));
+        }} /> : null}
+        {detailErrors.tripCount ? <p role="alert">{detailErrors.tripCount}</p> : null}
+        <FieldInputs idPrefix={`expense-${item.itemId}`} fields={item.rideTrips ? rideTripFields(tripCount) : item.expenseDetails} values={details} errors={detailErrors} disabled={state.busy || !diningAllowed} onChange={setDetails} />
+        <Button type="submit" disabled={state.busy || !diningAllowed}>保存费用详情</Button>
+      </form> : filling ? <ManualForm diningAllowed={diningAllowed} item={item} fileName={fileName} onSubmit={onSubmit} state={state} /> : null}
     </div>
   );
 }
@@ -450,7 +476,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
   };
   // A resolved screenshot item the filer can still change (#332): reachable from the all-done view too.
   const diningAllowed = snapshot.allowedActions.includes('change_dining_evidence');
-  const reopenable = (item: PendingItem) => (diningAllowed && item.dining?.kind === 'receipt') || item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
+  const reopenable = (item: PendingItem) => (diningAllowed && (item.dining?.kind === 'receipt' || !!item.expenseDetails)) || item.screenshotGroup !== null && !item.screenshotGroup.locked && fieldAnswer(item.answer)[PENDING_CHOICE_KEY] !== 'exclude';
 
   // 选中项的详情：左边原件，右边标题、原因与表单，再往下是读出的字段。
   const detailOf = (item: PendingItem) => {
@@ -474,7 +500,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
               screenshots={groupOf(item)}
               diningAllowed={diningAllowed}
             />
-            <DiningEvidence key={item.itemId + JSON.stringify(item.dining)} item={item} disabled={busy || !diningAllowed}
+            <PendingEvidence key={item.itemId + JSON.stringify(item.dining)} item={item} disabled={busy || !diningAllowed}
               onAssign={async (address, value) => { settle(await run((adapter) => adapter.answerPendingItem(taskId, address, { value }, snapshot.step.stepToken))); }}
               onUpload={async (files) => {
                 const outcome = await run((adapter) => adapter.supplementDiningEvidence(taskId, { pendingItemId: item.itemId, files }, snapshot.step.stepToken));
@@ -528,7 +554,7 @@ export function PendingPage({ snapshot }: { snapshot: TaskSnapshot }) {
                           {reopenable(item) ? (
                             <div>
                               <Button kind="ghost" size="sm" aria-expanded={opened?.itemId === item.itemId} onClick={() => setSelectedId(opened?.itemId === item.itemId ? null : item.itemId)}>
-                                {item.dining?.kind === 'receipt' ? '查看或修改关联' : STAY_TRIO_COPY.screenshot.reopen}
+                                {item.expenseDetails ? '查看或修改费用详情' : item.dining?.kind === 'receipt' ? '查看或修改关联' : STAY_TRIO_COPY.screenshot.reopen}
                               </Button>
                             </div>
                           ) : null}

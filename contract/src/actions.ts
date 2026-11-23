@@ -82,7 +82,7 @@ export const segmentKey = (index: number): string => `segment-${index}`;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)\.\d{2}$/;
 
-type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & Partial<Pick<PendingItem, 'allocation' | 'manualKinds'>>;
+type AnswerTarget = Pick<PendingItem, 'kind' | 'fields' | 'choices'> & Partial<Pick<PendingItem, 'allocation' | 'manualKinds' | 'expenseDetails' | 'rideTrips'>>;
 
 // 返回按字段 key 归档的错误；空对象表示合法。值先 trim 再判定。
 export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer): Record<string, string> {
@@ -110,6 +110,21 @@ export function validatePendingAnswer(item: AnswerTarget, answer: PendingAnswer)
   if (item.kind === 'choice') {
     const chosen = (values[PENDING_CHOICE_KEY] ?? '').trim();
     if (!item.choices.some((choice) => choice.key === chosen)) errors[PENDING_CHOICE_KEY] = PENDING_ANSWER_ERRORS.choice;
+    else if ((chosen === MANUAL_FILL_CHOICE || chosen === 'confirm_none') && item.rideTrips) {
+      const count = Number(values.tripCount);
+      if (!Number.isInteger(count) || count < 1 || count > 100) errors.tripCount = '请填写 1 至 100 段行程。';
+      else {
+        Object.assign(errors, fieldErrors(rideTripFields(count), values));
+        for (let i = 0; count > 1 && i < count; i += 1) if (Number(values[`segments[${i}].amount`]) <= 0) errors[`segments[${i}].amount`] = ALLOCATION_ERRORS.amount;
+        const indices = Object.keys(values).filter(key => key.startsWith('segments['));
+        if (indices.some(key => !rideTripFields(count).some(field => field.key === key))) errors.tripCount = '行程序号不连续，请重新填写。';
+        if (count > 1 && !Object.keys(errors).length) {
+          const sum = Array.from({ length: count }, (_, i) => Math.round(Number(values[`segments[${i}].amount`]) * 100)).reduce((a, b) => a + b, 0);
+          if (sum !== Math.round(Number(item.rideTrips.total) * 100)) errors.tripCount = ALLOCATION_ERRORS.notConserved((sum / 100).toFixed(2), item.rideTrips.total);
+        }
+      }
+    }
+    else if (chosen === MANUAL_FILL_CHOICE && item.expenseDetails) Object.assign(errors, fieldErrors(item.expenseDetails, values));
     else if (chosen === MANUAL_FILL_CHOICE && item.manualKinds?.length) {
       const manual = manualKindOf(item, values);
       if (!manual) errors[MANUAL_KIND_KEY] = PENDING_ANSWER_ERRORS.kind;
@@ -146,14 +161,16 @@ function fieldErrors(fields: readonly PendingField[], values: FieldAnswer): Reco
 }
 
 // 去掉首尾空白后的答复；只保留该项定义的键（逐段分摊只保留 amounts 或 giveUp）。
-export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'> & Partial<Pick<PendingItem, 'manualKinds'>>, answer: PendingAnswer): PendingAnswer {
+export function normalizePendingAnswer(item: Pick<PendingItem, 'kind' | 'fields'> & Partial<Pick<PendingItem, 'manualKinds' | 'expenseDetails' | 'rideTrips'>>, answer: PendingAnswer): PendingAnswer {
   if (item.kind === 'allocation') {
     if (!isAllocationAnswer(answer)) return { amounts: [] };
     return 'giveUp' in answer ? { giveUp: true } : { amounts: answer.amounts.map((amount) => amount.trim()) };
   }
   const values = fieldAnswer(answer);
   const manual = item.kind === 'choice' && values[PENDING_CHOICE_KEY]?.trim() === MANUAL_FILL_CHOICE ? manualKindOf(item, values) : undefined;
-  const keys = manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key), ...(manual.diningAssignment ? [DINING_INVOICE_KEY] : [])] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
+  if (item.rideTrips && ['manual_fill', 'confirm_none'].includes(values.choice ?? '')) return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.trim()]));
+  const details = item.kind === 'choice' && values[PENDING_CHOICE_KEY]?.trim() === MANUAL_FILL_CHOICE ? item.expenseDetails : undefined;
+  const keys = details ? [PENDING_CHOICE_KEY, ...details.map((field) => field.key)] : manual ? [PENDING_CHOICE_KEY, MANUAL_KIND_KEY, ...manual.fields.map((field) => field.key), ...(manual.diningAssignment ? [DINING_INVOICE_KEY] : [])] : item.kind === 'choice' ? [PENDING_CHOICE_KEY] : item.fields.map((field) => field.key);
   const out: Record<string, string> = {};
   for (const key of keys) out[key] = (values[key] ?? '').trim();
   return out;
@@ -344,6 +361,7 @@ export const ACTION_NAMES = [
   'assign-project-lines',
   'submit-project-assignment',
   'exclude-material',
+  'restore-material',
   'set-home-city',
   'start-erp-write',
   'reconcile',
@@ -351,3 +369,11 @@ export const ACTION_NAMES = [
   'refill',
 ] as const;
 export type ActionName = (typeof ACTION_NAMES)[number];
+
+// Repeated expense facts, independent of the original invoice fields.
+export function rideTripFields(count: number): PendingField[] {
+  return Array.from({ length: count }, (_, i) => [
+    ['date', '行程日期', 'date'], ['city', '费用城市', 'text'], ['origin', '起点', 'text'], ['destination', '终点', 'text'],
+    ...(count > 1 ? [['amount', '价税合计', 'money']] : []),
+  ].map(([key, label, format]) => ({ key: `segments[${i}].${key}`, label: `第 ${i + 1} 段 · ${label}`, format: format as PendingField['format'], placeholder: '', required: true }))).flat();
+}

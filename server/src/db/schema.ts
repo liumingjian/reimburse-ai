@@ -485,6 +485,7 @@ export interface Schema {
   material: MaterialTable;
   upload_rejection: UploadRejectionTable;
   material_exclusion: MaterialExclusionTable;
+  material_restoration: { material_id: string; task_id: string; revision: number };
   inventory_run: InventoryRunTable;
   upload_reopen: UploadReopenTable;
 }

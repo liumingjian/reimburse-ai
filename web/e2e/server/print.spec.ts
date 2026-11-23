@@ -125,7 +125,7 @@ test('去打印：生成合并打印稿，旋转、四角裁剪，下载 PDF；�
   await expectLoaded(taxi.locator('img.app-page-image'));
   await expectLoaded(hotel.locator('img.app-page-image'));
   // The absence was recorded at inventory (确认没有支付截图 above), so the notice says so instead of asking again (#213).
-  await expect(page.getByRole('status', { name: '打印提醒' })).toContainText('No.2 住宿发票在盘点时已确认没有支付截图');
+  await expect(page.getByRole('status', { name: '打印提醒' })).toHaveCount(0);
 
   // Rotate the folio: the page image is rendered again and the button flips.
   const hotelImage = hotel.locator('img.app-page-image');

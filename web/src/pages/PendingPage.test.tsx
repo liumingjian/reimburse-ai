@@ -118,8 +118,8 @@ describe('待确认项', () => {
     fireEvent.click(within(detail()).getByRole('button', { name: '排除此材料' }));
     expect(await within(detail()).findByRole('heading', { name: STAY_TRIO_COPY.screenshot.title('全季酒店_发票.pdf') })).toBeTruthy();
 
-    // 住宿发票缺支付截图：确认没有，住宿发票照常进入明细。
-    fireEvent.click(within(detail()).getByRole('button', { name: STAY_TRIO_COPY.screenshot.confirmNone }));
+    // Complete the seeded legacy screenshot group; the invoice remains in the expense lines.
+    await adapter.completePaymentScreenshots('T1', 'm01');
     expect(await screen.findByRole('heading', { name: '没有待确认项了' })).toBeTruthy();
     expect(screen.getByText('本次盘点的 4 个待确认项都已处理。')).toBeTruthy();
     const link = screen.getByRole('link', { name: '进入项目归属' });
@@ -133,7 +133,7 @@ describe('待确认项', () => {
       { origin: '张江高科', destination: '漕河泾开发区' },
       { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' },
       { choice: 'exclude' },
-      { choice: 'confirm_none' },
+      null,
     ]);
     const taxi = snapshot.materials.find((material) => material.materialId === 'm09');
     expect(taxi?.fields.find((candidate) => candidate.key === 'origin')).toMatchObject({ value: '张江高科', source: 'user', evidence: 'explicit' });
@@ -365,13 +365,13 @@ describe('逐段分摊与阻塞项', () => {
       ['p2', { origin: '张江高科', destination: '漕河泾开发区' }],
       ['p3', { alightTime: '19:06', origin: '静安寺', destination: '虹桥枢纽' }],
       ['p4', { choice: 'exclude' }],
-      ['stay_screenshot_missing.m01', { choice: 'confirm_none' }],
     ] as const;
     for (const [itemId, answer] of answers) {
       snapshot = await adapter.getSnapshot('T1');
       const outcome = await adapter.answerPendingItem('T1', itemId, answer, snapshot.step.stepToken);
       expect(outcome.ok).toBe(true);
     }
+    await adapter.completePaymentScreenshots('T1', 'm01');
     expect((await adapter.getSnapshot('T1')).stage).toBe('pending');
     expect(await screen.findByText('对照原件补填或作出选择。还剩 1 个。')).toBeTruthy();
     expect(screen.queryByRole('link', { name: '进入项目归属' })).toBeNull();
@@ -501,7 +501,7 @@ describe('逐段分摊与阻塞项', () => {
     const wrapper = (value: typeof snapshot) => <AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...value, pendingItems: [item] }} /></AppProvider>;
     const rendered = render(wrapper(snapshot));
     const files = [new File(['bad'], 'notes.txt')];
-    fireEvent.change(within(detail()).getByLabelText('补传餐饮小票'), { target: { files } });
+    fireEvent.change(within(detail()).getByLabelText('补充账单'), { target: { files } });
     await waitFor(() => expect(upload).toHaveBeenCalledWith('T1', { pendingItemId: item.itemId, files }, snapshot.step.stepToken));
     expect(window.location.hash).toBe('#/task/T1/pending');
     rendered.rerender(wrapper(rejected));
@@ -536,7 +536,7 @@ describe('逐段分摊与阻塞项', () => {
     fireEvent.click(itemButton(title));
     expect(within(detail()).getByRole('heading', { name: title })).toBeTruthy();
     expect(within(detail()).getByText(copy.why('3640.00'))).toBeTruthy();
-    expect(within(detail()).getByRole('button', { name: copy.confirmNone })).toBeTruthy();
+    expect(within(detail()).queryByRole('button', { name: copy.confirmNone })).toBeNull();
     expect(within(detail()).getByRole('button', { name: copy.upload })).toBeTruthy();
     expect(within(detail()).getByText(copy.uploadNote, { exact: false })).toBeTruthy();
 
@@ -557,19 +557,13 @@ describe('逐段分摊与阻塞项', () => {
     ]);
   });
 
-  // #332: a resolved 支付截图 item stays reachable from the all-done view, and still takes an upload.
-  test('已处理的支付截图项可以重新展开：「确认没有」之后仍可上传，没有「已传齐」', async () => {
+  test('没有支付截图的任务不会产生可重新展开的截图项', async () => {
     const copy = STAY_TRIO_COPY.screenshot;
     const adapter = renderPending('review');
     await screen.findByRole('heading', { name: '没有待确认项了' });
-    // Seeded with 确认没有: opening it shows the chosen answer and still offers the upload, but no 「已传齐」.
     expect(screen.queryByLabelText('待确认项详情')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: copy.reopen }));
-    expect(within(detail()).getByRole('button', { name: copy.confirmNone }).getAttribute('aria-pressed')).toBe('true');
-    expect(within(detail()).queryByRole('button', { name: copy.complete })).toBeNull();
-    const add = vi.spyOn(adapter, 'addPaymentScreenshots');
-    fireEvent.change(within(detail()).getByLabelText(copy.inputLabel('全季酒店_发票.pdf')), { target: { files: [new File([new Uint8Array([137, 80, 78, 71])], 'IMG_5011.png', { type: 'image/png' })] } });
-    await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: copy.reopen })).toBeNull();
+    expect((await adapter.getSnapshot('T1')).paymentScreenshots).toEqual([]);
   });
 
   test('整单明细确认后，已处理的支付截图项不再能展开增删', async () => {
@@ -577,4 +571,24 @@ describe('逐段分摊与阻塞项', () => {
     await screen.findByRole('heading', { name: '没有待确认项了' });
     expect(screen.queryByRole('button', { name: STAY_TRIO_COPY.screenshot.reopen })).toBeNull();
   });
+});
+
+test('missing ride itinerary opens repeated actual trip fields and clears removed row amounts', async () => {
+  const snapshot = t1Snapshot('pending');
+  const item = { ...snapshot.pendingItems[0]!, itemId: 'ride_itinerary_missing.m09', title: '缺少行程单', kind: 'choice' as const, fields: [], choices: [{ key: 'manual_fill', label: '手工填写' }, { key: 'confirm_none', label: '确认没有账单' }], expenseDetails: [], rideTrips: { total: '69.19' }, status: 'open' as const, answer: null };
+  const adapter = createMockAdapter({ seed: 'pending', fault: null });
+  const answer = vi.spyOn(adapter, 'answerPendingItem').mockResolvedValue({ ok: false, error: { code: 'test', message: 'test' }, snapshot: null });
+  render(<AppProvider store={new AppStore(adapter, { validate: true })}><PendingPage snapshot={{ ...snapshot, allowedActions: [...snapshot.allowedActions, 'change_dining_evidence'], pendingItems: [item] }} /></AppProvider>);
+  fireEvent.click(screen.getByRole('button', { name: '确认没有账单' }));
+  fill('行程段数', '2');
+  expect(screen.getByLabelText('第 2 段 · 价税合计 *')).toBeTruthy();
+  fill('第 2 段 · 价税合计 *', '39.19');
+  fill('行程段数', '1');
+  expect(screen.queryByLabelText('第 2 段 · 价税合计 *')).toBeNull();
+  fill('第 1 段 · 行程日期 *', '2026-08-03');
+  fill('第 1 段 · 费用城市 *', '杭州');
+  fill('第 1 段 · 起点 *', '机场');
+  fill('第 1 段 · 终点 *', '酒店');
+  fireEvent.click(screen.getByRole('button', { name: '保存费用详情' }));
+  await waitFor(() => expect(answer).toHaveBeenCalledWith('T1', item.itemId, { choice: 'confirm_none', tripCount: '1', 'segments[0].date': '2026-08-03', 'segments[0].city': '杭州', 'segments[0].origin': '机场', 'segments[0].destination': '酒店' }, snapshot.step.stepToken));
 });

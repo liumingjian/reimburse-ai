@@ -630,6 +630,7 @@ export function createHttpAdapter(options: HttpAdapterOptions = {}): AppAdapter 
     cropPlacement: (taskId, pageId, slot, corners) => action(taskId, E.cropPlacement, { pageId, slot, corners }),
     assignProjectLines: (taskId, input, stepToken) => action(taskId, E.assignProjectLines, { ...input, stepToken }),
     submitProjectAssignment: (taskId, input, stepToken) => action(taskId, E.submitProjectAssignment, { ...input, stepToken }),
+    restoreMaterial: (taskId, materialId, stepToken) => action(taskId, E.restoreMaterial, { materialId, stepToken }),
     excludeMaterial: (taskId, materialId, stepToken) => action(taskId, E.excludeMaterial, { materialId, stepToken }),
     setTaskHomeCity: (taskId, homeCity, stepToken) => action(taskId, E.setTaskHomeCity, { homeCity, stepToken }),
     startErpWrite: (taskId, stepToken) => action(taskId, E.startErpWrite, { stepToken }),

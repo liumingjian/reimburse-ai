@@ -14,15 +14,7 @@ test('associated hotel bill leads pending review and project previews preserve s
     expect((await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: sample.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, sample.file)) } } })).ok()).toBe(true);
   }
   expect((await page.request.post(`/api/tasks/${taskId}/actions/start-inventory`, { data: { stepToken: (await snapshot()).step.stepToken } })).ok()).toBe(true);
-  await expect.poll(async () => (await snapshot()).pendingItems.some((item) => item.itemId.startsWith('stay_screenshot_missing.'))).toBe(true);
-  await page.goto(`/#/task/${taskId}/pending`);
-  const preview = page.getByRole('region', { name: '住宿材料预览' });
-  await expect(preview.getByRole('tab', { name: /^结账单：/ })).toHaveAttribute('aria-selected', 'true');
-  // The folio PDF is rendered to an image in the original viewer; the invoice is never offered (QA 2026-09-30).
-  await expect(preview.getByRole('img', { name: '全季酒店_结账单.pdf 原件' })).toHaveAttribute('src', /^blob:/);
-  await expect(preview.getByRole('button', { name: '全屏查看', exact: true })).toBeVisible();
-  await expect(preview.getByRole('tab')).toHaveCount(1);
-
+  await expect.poll(async () => (await snapshot()).stage).toBe('project');
   await answerStayGaps(page, taskId);
   await page.request.post('/api/project-book/intake', { data: { number: 'HOTEL-101', name: '住宿项目' } });
   await page.goto(`/#/task/${taskId}/project`);
@@ -102,3 +94,24 @@ for (const state of ['missing', 'unlinked'] as const) {
     expect((await snapshot()).step.stepToken).toBe(before.step.stepToken);
   });
 }
+
+test('invoice-only stay requires actual dates and proceeds without a screenshot acknowledgement', async ({ page }) => {
+  await signIn(page);
+  const created = TaskSnapshotSchema.parse(await (await page.request.post('/api/tasks', { data: { homeCity: '杭州' } })).json());
+  const taskId = created.task.taskId;
+  const snapshot = async () => TaskSnapshotSchema.parse(await (await page.request.get(`/api/tasks/${taskId}`)).json());
+  const sample = SAMPLE_MATERIALS.find((material) => material.file.startsWith('m01'))!;
+  await page.request.post(`/api/tasks/${taskId}/batches`, { multipart: { files: { name: sample.fileName, mimeType: 'application/pdf', buffer: readFileSync(join(GENERATED_DIR, sample.file)) } } });
+  await page.request.post(`/api/tasks/${taskId}/actions/start-inventory`, { data: { stepToken: (await snapshot()).step.stepToken } });
+  await expect.poll(async () => (await snapshot()).stage).toBe('pending');
+  await page.goto(`/#/task/${taskId}/pending`);
+  await expect(page.getByRole('button', { name: '补充账单', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '确认没有账单', exact: true }).click();
+  await page.getByLabel('实际入住日期').fill('2026-08-10');
+  await page.getByLabel('实际离店日期').fill('2026-08-20');
+  await page.getByRole('button', { name: '保存费用详情', exact: true }).click();
+  await expect.poll(async () => (await snapshot()).stage).toBe('project');
+  const done = await snapshot();
+  expect(done.lines[0]).toMatchObject({ date: '2026-08-10', endDate: '2026-08-20', referenceMaterialIds: [] });
+  expect(done.pendingItems.filter((item) => item.status === 'open')).toEqual([]);
+});

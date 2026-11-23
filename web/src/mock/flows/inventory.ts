@@ -10,7 +10,7 @@ import { settlePending } from './pending';
 
 const DEFAULT_PHASE_MS = 450;
 
-export type InventoryFlow = Pick<AppAdapter, 'uploadBatch' | 'startInventory' | 'reopenUpload'> & {
+export type InventoryFlow = Pick<AppAdapter, 'uploadBatch' | 'startInventory' | 'reopenUpload' | 'restoreMaterial'> & {
   // 跨任务重复发票的处置（exclude-material）：把命中的那份移出本次材料，接着划分费用事件。
   excludeDuplicate: AppAdapter['excludeMaterial'];
 };
@@ -61,6 +61,7 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
       options.fault === 'unsupported-material',
       options.allocationRequired === true,
       bus.completeScreenshotGroups(snapshot.task.taskId),
+      new Set(snapshot.paymentScreenshots.map((shot) => shot.voucherMaterialId)),
     );
     const fresh = new Map(result.materials.map((material) => [material.materialId, material]));
     snapshot.materials = snapshot.materials.map((material) => fresh.get(material.materialId) ?? removedMaterial(material));
@@ -183,6 +184,13 @@ export function createInventoryFlow(bus: MockBus): InventoryFlow {
         if (snapshot.erp.status !== 'idle') return { error: { code: 'erp_started', message: REOPEN_UPLOAD_ERRORS.erpStarted } };
         invalidateForMaterialChange(snapshot);
         snapshot.task.updatedAt = bus.now();
+        return snapshot;
+      }),
+    restoreMaterial: async (taskId, materialId, stepToken) =>
+      bus.withStep(taskId, stepToken, (snapshot) => {
+        if (snapshot.confirmation.status === 'confirmed') return { error: { code: 'inclusion_locked', message: '请先重新打开上传再修改材料。' } };
+        if (!bus.removedMaterials(taskId).delete(materialId)) return { error: { code: 'not_excluded', message: '这份材料未被排除。' } };
+        settleInventory(snapshot);
         return snapshot;
       }),
     // 重复发票：只接受阻塞项上的那份材料。移出后重新结算这一版盘点（没有别的重复就进入待确认项或项目归属）。

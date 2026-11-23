@@ -1,5 +1,5 @@
 {
-  "revision": 23,
+  "revision": 22,
   "task": {
     "taskId": "00000000-0000-4000-8000-000000000001",
     "name": "2000-01-01 新建报销",
@@ -64,9 +64,7 @@
       "linkedMaterialIds": [
         "00000000-0000-4000-8000-000000000004"
       ],
-      "pendingItemIds": [
-        "stay_screenshot_missing.00000000-0000-4000-8000-000000000003"
-      ],
+      "pendingItemIds": [],
       "originalUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
       "previewUrl": "/api/tasks/00000000-0000-4000-8000-000000000001/files/b2a31fda65ebb26fdf5421748e72c31592163c46d588560e522d8c69d04d6818",
       "variants": [],
@@ -323,37 +321,7 @@
       "grossAmount": "3640.00"
     }
   ],
-  "pendingItems": [
-    {
-      "itemId": "stay_screenshot_missing.00000000-0000-4000-8000-000000000003",
-      "materialId": "00000000-0000-4000-8000-000000000003",
-      "title": "住宿发票「全季酒店_发票.pdf」缺少支付截图",
-      "why": "住宿报销要发票、结账单、支付截图三样。这张住宿发票（价税合计 3640.00 元）需要支付截图。可以在这里上传支付截图（JPG、PNG，可一次选多张），上传后会重新盘点，截图金额合计不少于发票价税合计就算齐了；确实没有，就选「确认没有支付截图」，打印稿这一页不放支付截图。",
-      "kind": "choice",
-      "resolver": "要你处理",
-      "fields": [],
-      "choices": [
-        {
-          "key": "confirm_none",
-          "label": "确认没有支付截图"
-        },
-        {
-          "key": "exclude",
-          "label": "排除这份材料"
-        }
-      ],
-      "allocation": null,
-      "screenshotGroup": {
-        "screenshotIds": [],
-        "locked": true
-      },
-      "manualKinds": [],
-      "status": "resolved",
-      "answer": {
-        "choice": "confirm_none"
-      }
-    }
-  ],
+  "pendingItems": [],
   "blockers": [],
   "lines": [
     {
@@ -388,6 +356,9 @@
       "taxAmount": "206.04"
     }
   ],
+  "reimbursementSummary": {
+    "status": "ready"
+  },
   "lodgingEvidence": [
     {
       "materialId": "00000000-0000-4000-8000-000000000003",
@@ -651,7 +622,7 @@
   },
   "step": {
     "kind": "reconcile",
-    "stepToken": "00000000-0000-4000-8000-000000000001.23"
+    "stepToken": "00000000-0000-4000-8000-000000000001.22"
   },
   "allowedActions": [
     "reconcile",
@@ -659,8 +630,5 @@
     "print",
     "summary",
     "void_task"
-  ],
-  "reimbursementSummary": {
-    "status": "ready"
-  }
+  ]
 }

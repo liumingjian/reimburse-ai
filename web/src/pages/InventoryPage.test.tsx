@@ -199,12 +199,12 @@ describe('材料盘点', () => {
     expect(screen.getByText('读取 PDF 文本层与二维码')).toBeTruthy();
     expect(screen.getByText('读取照片票面')).toBeTruthy();
 
-    expect(await screen.findByRole('link', { name: '处理 4 个待确认项' })).toBeTruthy();
+    expect(await screen.findByRole('link', { name: '处理 3 个待确认项' })).toBeTruthy();
     expect(screen.queryByLabelText('盘点进度')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '费用事件 No.1-3' }));
     expect(screen.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeTruthy();
     // The step bar shows the pending item count.
-    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('4 项待处理')).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: '流程阶段' })).getByText('3 项待处理')).toBeTruthy();
   });
 
   test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项变成 5 个', async () => {

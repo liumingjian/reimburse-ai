@@ -185,13 +185,13 @@ test('上传后开始材料盘点：先看到分阶段进度，再看到结果',
   await expect(page.getByRole('status')).toHaveText(/^正在盘点：/);
   await expect(page.getByLabel('盘点进度')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('inventory-progress.png'), fullPage: true });
-  await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15000 });
   await expect(page.getByLabel('盘点进度')).toBeHidden();
   await page.getByRole('button', { name: '费用事件 No.1-3', exact: true }).click();
   await expect(page.getByText('打车发票与行程单配对：26.69 + 20.85 + 21.65 = 69.19，按分守恒')).toBeVisible();
-  await page.getByRole('link', { name: '处理 4 个待确认项' }).click();
+  await page.getByRole('link', { name: '处理 3 个待确认项' }).click();
   await expect(page.getByRole('heading', { name: '待确认项' })).toBeVisible();
-  await expect(page.getByText('还剩 4 个')).toBeVisible();
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
 });
 
 test('?fault=unsupported-material：曹操行程单成为不支持的版式，待确认项 5 个', async ({ page }) => {

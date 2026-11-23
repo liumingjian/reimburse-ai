@@ -1,5 +1,7 @@
 # Rule parsers: material kinds with pluggable layouts, manual fill and tiered edits
 
+**Amended by [ADR-0043](0043-reference-materials-are-optional.md) (2026-11-23).** The missing companion document rules for lodging and dining now follow the shared invoice flow. Employees can enter missing expense details directly.
+
 With no model in the loop, rule parsers and the user are the only producers of 字段候选 (field candidates). We split parsing into two levels, a coarse 材料种类 (material kind) and pluggable 版式 (layouts), so a new vendor layout plugs in without touching downstream code. We also let the user edit any field, within limits set by where the value came from. Decided in [#154](https://github.com/liumingjian/reimburse-ai/issues/154).
 
 ## Decisions

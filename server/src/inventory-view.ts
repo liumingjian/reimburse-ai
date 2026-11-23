@@ -8,11 +8,12 @@ import { deriveDiningEvidence, diningProblem } from './dining-evidence';
 import { KINDS, type EventDraft } from './kind-policy';
 import { CATEGORIES, fieldLabel, slotOf, type Slot } from './parse/slots';
 import { chosen, EXCLUDE, givenUpOf, settle, type AnswerCheck, type Answerable, type StoredAnswers } from './pending/answers';
+import { missingReference } from './pending/missing-reference';
 import { editAddress, editedValue, type Editable } from './pending/edits';
 import { COMPANY_RULES, deriveCategory, type CompanyRules } from './rules/company-rules';
 import { proposeFolio, type FolioProposal, type ProposalStay } from './folio-proposal';
 import { checkPayments, type LabelledStay } from './stay-payments';
-import { checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
+import { adoptedStayDates, checkStayTrios, stayVoucherIds, type ScreenshotGroup, type StayTrio, type TrioVoucher } from './stay-trio';
 
 // The pure projection of one inventory run: uploaded materials, their parser outcomes and the stored answers in; the
 // materials view, derived 待确认项 (pending items), expense events, candidate lines and inventory counts out. Nothing
@@ -566,6 +567,7 @@ export function inventoryView(
       w.resolved && !w.reference ? [{ materialId: w.m.materialId, fileName: w.m.fileName, kind: w.resolved.kind, layout: w.resolved.layout ?? '', kindLabel: w.resolved.kindLabel, values: w.values, ok: !w.items.some(isOpen) }] : [],
     ),
     allocationAnswers(answers),
+    answers,
   );
   for (const w of includedWorked) {
     for (const item of transport.items.get(w.m.materialId) ?? []) {
@@ -693,19 +695,21 @@ export function inventoryView(
   // 支付截图 materials, placed with the 住宿 invoices (ADR-0032), only over a finished run like the trio below.
   const invoiceNo = new Map([...new Set(drafts.map((d) => d.material.materialId))].map((id, index) => [id, index + 1]));
   const folioValues = new Map(folios.map((folio) => [folio.materialId, folio.values]));
+  const adoptedDates = new Map(stayInvoices.map((invoice) => [invoice.materialId, adoptedStayDates(invoice.materialId, stays.get(invoice.materialId), answers)]));
   const paymentStays = stayInvoices.map((invoice): LabelledStay => {
     const stay = stays.get(invoice.materialId);
     const hotel = stay ? folioValues.get(stay.folioId)?.['hotelName'] : undefined;
+    const dates = adoptedDates.get(invoice.materialId);
     const seller = invoice.values['sellerName'];
     const totalAmount = invoice.values['totalAmount'] ?? '';
     return {
       invoiceId: invoice.materialId,
       totalAmount,
-      checkIn: stay?.checkIn ?? null,
-      checkOut: stay?.checkOut ?? null,
+      checkIn: dates?.checkIn ?? null,
+      checkOut: dates?.checkOut ?? null,
       issueDate: invoice.values['issueDate'] ?? null,
       hotelNames: [hotel, seller].filter((name): name is string => Boolean(name)),
-      label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, stay ? `${stay.checkIn}~${stay.checkOut}` : null, totalAmount),
+      label: PAYMENT_COPY.stayLabel(`发票${invoiceNo.get(invoice.materialId)}`, hotel ?? seller ?? null, dates ? `${dates.checkIn}~${dates.checkOut}` : null, totalAmount),
     };
   });
   const shots = includedWorked.flatMap((w) => (w.resolved?.kind === 'payment_screenshot' && !w.items.some(isOpen) ? [{ materialId: w.m.materialId, fileName: w.m.fileName, values: w.values }] : []));
@@ -734,13 +738,33 @@ export function inventoryView(
   if (results && waiting === 0) {
     const unpairedPaidAmounts = [...new Set(diningReceipts.filter((receipt) => !linked.has(receipt.m.materialId)).flatMap((receipt) => receipt.values['paidAmount'] ? [receipt.values['paidAmount']] : []))];
     for (const { material, draft } of ordered) {
-      if (draft.category.code !== 'hospitality' || receiptByInvoice.has(material.materialId)) continue;
-      const mismatch = unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes(draft.grossAmount);
+      if (draft.category.code !== 'hospitality' || (receiptByInvoice.has(material.materialId) && !answers.has(`${DINING_ITEM_CODES.receiptMissing}.${material.materialId}`))) continue;
+      const mismatch = !receiptByInvoice.has(material.materialId) && unpairedPaidAmounts.length > 0 && !unpairedPaidAmounts.includes(draft.grossAmount);
       const code = mismatch ? DINING_ITEM_CODES.amountMismatch : DINING_ITEM_CODES.receiptMissing;
       const copy = mismatch ? DINING_COPY.amountMismatch : DINING_COPY.receiptMissing;
       const why = mismatch ? DINING_COPY.amountMismatch.why(draft.grossAmount, unpairedPaidAmounts) : DINING_COPY.receiptMissing.why(draft.grossAmount);
-      const item = settle(choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]), answers);
-      item.dining = { kind: 'invoice', supplement: 'receipt' };
+      const base = choice(`${code}.${material.materialId}`, material.materialId, copy.title(material.fileName), why, [EXCLUDE]);
+      const proposed = mismatch ? base : missingReference(base, [{ key: 'date', label: '实际用餐日期', required: true, format: 'date', placeholder: 'YYYY-MM-DD' }]);
+      const item = settle(proposed, answers);
+      if (!fieldAnswer(item.answer).date && !mismatch) item.answer = { ...fieldAnswer(item.answer), date: draft.date };
+      if (receiptByInvoice.has(material.materialId)) {
+        delete item.referenceSupplement;
+        item.title = `餐饮发票「${material.fileName}」的用餐日期`;
+        item.why = '';
+      } else {
+        item.dining = { kind: 'invoice', supplement: 'receipt' };
+      }
+      const receiptId = receiptByInvoice.get(material.materialId);
+      const receipt = diningReceipts.find(receipt => receipt.m.materialId === receiptId);
+      const manualDate = fieldAnswer(item.answer).choice === MANUAL_FILL_CHOICE ? fieldAnswer(item.answer).date : undefined;
+      const receiptDate = receipt?.values.receiptDate;
+      if (receipt && manualDate && receiptDate && receiptDate !== manualDate) {
+        const conflictId = `dining_date_conflict.${material.materialId}.${receiptId}.${manualDate}.${receiptDate}`;
+        const conflict = settle(choice(conflictId, receipt.m.materialId, '餐饮小票日期与手工填写的用餐日期不同', `手工填写：${manualDate}；餐饮小票：${receiptDate}`, [{ key: 'adopt', label: '采用餐饮小票日期' }, { ...EXCLUDE, label: '排除餐饮小票，保留手工日期' }]), answers);
+        diningItems.set(receipt.m.materialId, [conflict]);
+        answerables.set(conflict.itemId, { item: conflict });
+        pendingItems.push(conflict);
+      }
       diningItems.set(material.materialId, [item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
@@ -763,7 +787,7 @@ export function inventoryView(
       item.dining = { kind: 'receipt', supplement: null, assignment: assignmentOf(decision.receiptId) };
       item.status = decision.kind === 'selected_paired' ? 'resolved' : 'open';
       item.answer = { value: decision.invoiceId };
-      diningItems.set(decision.receiptId, [item]);
+      diningItems.set(decision.receiptId, [...(diningItems.get(decision.receiptId) ?? []), item]);
       answerables.set(item.itemId, { item });
       pendingItems.push(item);
     }
@@ -799,11 +823,16 @@ export function inventoryView(
     const key = leg === null ? material.materialId : `${material.materialId}.${leg}`;
     const eventId = `event.${key}`;
     const stay = stays.get(material.materialId);
-    const draft = stay ? { ...own, date: stay.checkIn, endDate: stay.checkOut } : own;
+    const detail = diningItems.get(material.materialId)?.find((item) => item.expenseDetails && item.status === 'resolved');
+    const adoptedReceipt = diningReceipts.find(receipt => receipt.m.materialId === receiptByInvoice.get(material.materialId));
+    const adoptedDate = diningItems.get(adoptedReceipt?.m.materialId ?? '')?.find(item => item.itemId.startsWith('dining_date_conflict.') && fieldAnswer(item.answer).choice === 'adopt') ? adoptedReceipt?.values.receiptDate : undefined;
+    const actualDate = adoptedDate ?? (detail && fieldAnswer(detail.answer)[PENDING_CHOICE_KEY] === MANUAL_FILL_CHOICE ? fieldAnswer(detail.answer)['date'] : undefined);
+    const dates = adoptedDates.get(material.materialId);
+    const draft = dates ? { ...own, date: dates.checkIn, endDate: dates.checkOut } : actualDate ? { ...own, date: actualDate } : own;
     const receiptId = receiptByInvoice.get(material.materialId);
     const referenceMaterialIds = stay ? [stay.folioId] : receiptId ? [receiptId] : legReferences;
     const trip = { city: draft.city ?? null, origin: draft.origin ?? null, destination: draft.destination ?? null };
-    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
+    events.push({ eventId, no: index + 1, voucherMaterialId: material.materialId, referenceMaterialIds, category: draft.category, summary: draft.summary, evidenceNote: detail && !receiptId ? (actualDate ? `无餐饮小票；实际用餐日期由员工填写：${actualDate}` : '员工确认没有餐饮小票，按发票金额与开票日期报销') : dates && !stay ? `无结账单；实际住宿日期由员工填写：${dates.checkIn} 至 ${dates.checkOut}` : stay?.note ?? legNote, date: draft.date, endDate: draft.endDate, ...trip, grossAmount: draft.grossAmount });
     lines.push({
       lineId: `line.${key}`,
       no: index + 1,
