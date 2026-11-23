@@ -187,9 +187,9 @@ test('补填与排除：全部处理完显示没有待确认项了，并能进�
   await expect(detail(page).getByRole('heading', { name: '不支持的材料类型' })).toBeVisible();
 
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
-  // 住宿发票还没有支付截图（#213）：确认没有。
+  // Complete the actual legacy screenshot group seeded for this demo.
   await expect(detail(page).getByRole('heading', { name: '住宿发票「全季酒店_发票.pdf」缺少支付截图' })).toBeVisible();
-  await detail(page).getByRole('button', { name: '确认没有支付截图' }).click();
+  await detail(page).getByRole('button', { name: '已传齐' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('pending-empty.png'), fullPage: true });
   // 待确认项之后是项目归属（整单确认在项目归属之后）。

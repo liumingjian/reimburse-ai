@@ -29,7 +29,7 @@ const FIXTURE_FILES = [
   '办公用品_发票.pdf',
 ];
 
-async function answerTheRest(page: Page) {
+async function answerTheRest(page: Page, hasLegacyScreenshots = true) {
   await item(page, '补填起点与终点').click();
   await detail(page).getByLabel('起点 *').fill('张江高科');
   await detail(page).getByLabel('终点 *').fill('漕河泾开发区');
@@ -41,8 +41,10 @@ async function answerTheRest(page: Page) {
   await save(page).click();
   await expect(detail(page).getByRole('heading', { name: '不支持的材料类型' })).toBeVisible();
   await detail(page).getByRole('button', { name: '排除此材料' }).click();
-  await expect(detail(page).getByRole('heading', { name: '住宿发票「全季酒店_发票.pdf」缺少支付截图' })).toBeVisible();
-  await detail(page).getByRole('button', { name: '确认没有支付截图' }).click();
+  if (hasLegacyScreenshots) {
+    await expect(detail(page).getByRole('heading', { name: '住宿发票「全季酒店_发票.pdf」缺少支付截图' })).toBeVisible();
+    await detail(page).getByRole('button', { name: '已传齐' }).click();
+  }
 }
 
 test('?allocation=1：出现逐段分摊待确认项；不守恒显示服务端错误，守恒后通过；不显示处理人', async ({ page }, testInfo) => {
@@ -130,8 +132,8 @@ test('?duplicate=1：上传后整批停，显示重复发票表与命中的任�
   // 出路照内核「把文件移出」：移出后阻塞解除，接着划分费用事件与待确认项。
   await page.getByRole('button', { name: '移出 铁路电子客票_0809.pdf' }).click();
   await expect(page.getByRole('table', { name: '重复发票' })).toHaveCount(0);
-  await expect(page.getByText('还剩 4 个')).toBeVisible();
-  await answerTheRest(page);
+  await expect(page.getByText('还剩 3 个')).toBeVisible();
+  await answerTheRest(page, false);
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
   await page.getByRole('link', { name: '进入项目归属' }).click();
   await expect(page.getByRole('checkbox', { name: /^选择明细 No\.\d+$/ })).toHaveCount(8);

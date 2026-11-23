@@ -46,9 +46,9 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await expect(page.getByRole('heading', { name: /^上传批次 #1$/ })).toHaveText('上传批次 #1');
   await page.getByRole('button', { name: '开始材料盘点' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/inventory$/);
-  await expect(page.getByRole('link', { name: '处理 4 个待确认项' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: '处理 3 个待确认项' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/^\d{4}-\d{2}-\d{2} 新建报销$/).first()).toBeVisible();
-  await page.getByRole('link', { name: '处理 4 个待确认项' }).click();
+  await page.getByRole('link', { name: '处理 3 个待确认项' }).click();
   await expect(page).toHaveURL(/#\/task\/T4\/pending$/);
 
   // 4. 待确认项。
@@ -62,7 +62,6 @@ test('全流程：从登录一路走到完成，上传 sample-materials 的 11 �
   await detail.getByLabel('终点 *').fill('虹桥枢纽');
   await detail.getByRole('button', { name: '保存并标记已处理' }).click();
   await detail.getByRole('button', { name: '排除此材料' }).click();
-  await detail.getByRole('button', { name: '确认没有支付截图' }).click();
   await expect(page.getByRole('heading', { name: '没有待确认项了' })).toBeVisible();
 
   // 5. 项目归属（项目簿用夹具默认值）与报销事由。

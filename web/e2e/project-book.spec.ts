@@ -45,7 +45,7 @@ test('?book=empty：从待确认项走到项目归属时被引导进维护入口
   await detail.getByLabel('终点 *').fill('虹桥枢纽');
   await detail.getByRole('button', { name: '保存并标记已处理' }).click();
   await detail.getByRole('button', { name: '排除此材料' }).click();
-  await detail.getByRole('button', { name: '确认没有支付截图' }).click();
+  await detail.getByRole('button', { name: '已传齐' }).click();
   await page.getByRole('link', { name: '进入项目归属' }).click();
 
   await expect(h1(page, '先维护个人项目簿')).toBeVisible();
